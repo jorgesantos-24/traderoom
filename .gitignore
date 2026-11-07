@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+coverage/
+playwright-report/
+test-results/
+# Load-test session cookies (live credentials for throwaway users)
+tests/k6/.sessions.json
+# Acceptance run output (logs, session cookies of throwaway users)
+tests/load/results/

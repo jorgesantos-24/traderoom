@@ -1,0 +1,5 @@
+* text=auto
+# Files that run or are parsed on the Linux VM must keep LF line endings.
+*.sh text eol=lf
+infra/** text eol=lf
+db/migrations/*.sql text eol=lf

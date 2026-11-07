@@ -1,0 +1,36 @@
+{
+  "name": "traderoom",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:deps": "docker compose up -d --wait",
+    "dev:api": "npm run dev -w @traderoom/api",
+    "dev:ws": "npm run dev -w @traderoom/ws",
+    "dev:worker": "npm run dev:worker -w @traderoom/api",
+    "dev:web": "npm run dev -w @traderoom/web",
+    "build": "npm run build -w @traderoom/shared && npm run build -w @traderoom/api -w @traderoom/ws -w @traderoom/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:int": "npm run test:int --workspaces --if-present",
+    "db:migrate": "npm run migrate -w @traderoom/api -- up",
+    "db:rollback": "npm run migrate -w @traderoom/api -- down",
+    "test:e2e": "npm run e2e -w @traderoom/web",
+    "test:acceptance": "node tests/load/acceptance.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2"
+  },
+  "overrides": {
+    "node-pg-migrate": {
+      "glob": "14.0.4"
+    }
+  }
+}

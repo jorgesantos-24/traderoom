@@ -1,0 +1,44 @@
+[Unit]
+Description=Traderoom HTTP API (Fastify)
+Documentation=file:///opt/traderoom/current/README.md
+Wants=network-online.target
+After=network-online.target redis-server.service traderoom-secrets.service
+Requires=traderoom-secrets.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=traderoom
+Group=traderoom
+WorkingDirectory=/opt/traderoom/current
+EnvironmentFile=/etc/traderoom/traderoom.env
+# Built at boot from Secret Manager into RAM (tmpfs); never written to disk.
+EnvironmentFile=/run/traderoom/secrets.env
+Environment=NODE_ENV=production
+Environment=NODE_OPTIONS=--max-old-space-size=256
+ExecStart=/usr/bin/node apps/api/dist/main.js
+Restart=always
+RestartSec=2
+TimeoutStopSec=20
+KillSignal=SIGTERM
+LimitNOFILE=200000
+
+# Sandboxing: the app only reads its release and writes nothing on disk (logs go to journald).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
