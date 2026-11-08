@@ -1,3 +1,4 @@
+import { parseOtcOverride } from '@traderoom/shared';
 import { Backoff } from '../lib/backoff.js';
 import type { Logger } from '../lib/log.js';
 import type { Counter, Registry } from '../lib/metrics.js';
@@ -128,6 +129,9 @@ export class Relay {
   private priceWriteInFlight = false;
   private snapshotInFlight = false;
   private reloadInFlight = false;
+  private overrideInFlight = false;
+  /** Last raw `otc:override` seen; only a change is re-applied. */
+  private lastOverrideRaw: string | null = null;
   private started = false;
 
   private readonly m: RelayCounters;
@@ -210,10 +214,12 @@ export class Relay {
     this.applyAssets(await this.deps.sinks.loadAssets());
     // New OTC assets write their history first, so the first chart already has candles.
     await this.syncOtc();
+    await this.pollOverride();
     this.started = true;
     this.connections.binance.start();
     this.connections.binance_backup.start();
     this.every(this.opts.otcTickMs, () => this.tickOtc());
+    this.every(this.opts.otcTickMs, () => void this.pollOverride());
     this.every(this.opts.windowMs, () => this.flushWindow());
     this.every(this.opts.evaluateMs, () => this.evaluate());
     this.every(this.opts.snapshotMs, () => this.snapshot());
@@ -322,6 +328,26 @@ export class Relay {
   private syncOtc(): Promise<void> {
     const list = this.assetList.flatMap((a) => (a.otc ? [{ id: a.id, symbol: a.symbol, otc: a.otc }] : []));
     return this.otc.sync(list, this.now());
+  }
+
+  /** Reads the override from Redis and hands it to the OTC generator when it changed. */
+  private async pollOverride(): Promise<void> {
+    const read = this.deps.sinks.readOverride;
+    if (!read || this.overrideInFlight) return;
+    this.overrideInFlight = true;
+    try {
+      const raw = await read();
+      if (raw === this.lastOverrideRaw) return;
+      this.lastOverrideRaw = raw;
+      const wire = parseOtcOverride(raw);
+      this.otc.setOverride(wire, this.now());
+      if (wire) this.deps.log.info({ symbol: wire.symbol, targetPrice: wire.targetPrice, closeMs: wire.closeMs }, 'otc override applied');
+      else this.deps.log.info({ invalid: raw !== null }, 'otc override cleared');
+    } catch (err) {
+      this.deps.log.error({ err }, 'failed to read otc override');
+    } finally {
+      this.overrideInFlight = false;
+    }
   }
 
   /** OTC ticks skip the source selector: the generator is their only source. */

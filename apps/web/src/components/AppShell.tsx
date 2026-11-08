@@ -139,9 +139,9 @@ export function AppShell({
           {user.role === 'admin' && (
             <Link
               href="/admin"
-              aria-current={pathname === '/admin' ? 'page' : undefined}
+              aria-current={pathname.startsWith('/admin') ? 'page' : undefined}
               onClick={closeHistory}
-              className={navItemCls(pathname === '/admin' && !historyOpen)}
+              className={navItemCls(pathname.startsWith('/admin') && !historyOpen)}
             >
               <NavIcon name="/admin" />
               Admin

@@ -1,11 +1,11 @@
 // Requires `npm run dev:deps` and `npm run db:migrate` first.
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import type { Redis } from 'ioredis';
 import type { HealthResponse } from '@traderoom/shared';
-import { RedisKeys } from '@traderoom/shared';
 import { loadConfig } from '../src/config.js';
 import { createPool } from '../src/lib/db.js';
 import { createRedis } from '../src/lib/redis.js';
@@ -15,6 +15,8 @@ const envFile = fileURLToPath(new URL('../../../.env', import.meta.url));
 if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 const config = loadConfig();
+/** Own key: a running ws keeps rewriting the real feed:last_tick_ms every 200 ms. */
+const TICK_KEY = `feed:last_tick_ms:test:${randomUUID()}`;
 let pool: pg.Pool;
 let redis: Redis;
 
@@ -24,7 +26,7 @@ beforeAll(() => {
 });
 
 afterAll(async () => {
-  await redis.del(RedisKeys.feedLastTickMs);
+  await redis.del(TICK_KEY);
   await Promise.all([pool.end(), redis.quit()]);
 });
 
@@ -43,6 +45,7 @@ describe('schema', () => {
       'kyc_submissions',
       'ledger',
       'orders',
+      'otc_overrides',
       'password_resets',
       'price_snapshots',
       'sessions',
@@ -95,7 +98,7 @@ describe('GET /api/health against real Postgres and Redis', () => {
             await redis.ping();
           },
           getLastTickMs: async () => {
-            const v = await redis.get(RedisKeys.feedLastTickMs);
+            const v = await redis.get(TICK_KEY);
             return v === null ? null : Number(v);
           },
           now: () => Date.now(),
@@ -113,19 +116,19 @@ describe('GET /api/health against real Postgres and Redis', () => {
   }
 
   it('is 503 with no feed, 200 with a fresh tick, 503 with an old tick', async () => {
-    await redis.del(RedisKeys.feedLastTickMs);
+    await redis.del(TICK_KEY);
     const none = await health();
     expect(none.status).toBe(503);
     expect(none.body.checks.postgres.ok).toBe(true);
     expect(none.body.checks.redis.ok).toBe(true);
     expect(none.body.checks.feed.ok).toBe(false);
 
-    await redis.set(RedisKeys.feedLastTickMs, String(Date.now()));
+    await redis.set(TICK_KEY, String(Date.now()));
     const fresh = await health();
     expect(fresh.status).toBe(200);
     expect(fresh.body.status).toBe('ok');
 
-    await redis.set(RedisKeys.feedLastTickMs, String(Date.now() - 10_000));
+    await redis.set(TICK_KEY, String(Date.now() - 10_000));
     const old = await health();
     expect(old.status).toBe(503);
   });

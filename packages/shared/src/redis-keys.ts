@@ -10,4 +10,6 @@ export const RedisKeys = {
   candles: (symbol: string, interval: string) => `candles:${symbol}:${interval}`,
   /** Epoch ms until which no REST call may go to Binance (set after a 429/418). */
   binanceRestBackoffUntil: 'binance:rest:backoff_until',
+  /** Active OTC price override (JSON `OtcOverrideWire`), one for the whole system. */
+  otcOverride: 'otc:override',
 } as const;

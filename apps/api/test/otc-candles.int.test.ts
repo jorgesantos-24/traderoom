@@ -51,20 +51,31 @@ afterAll(async () => {
 });
 
 describe('OTC candles', () => {
-  it('builds UTC-aligned OHLC candles from stored prices', async () => {
+  it('builds UTC-aligned OHLC candles; each opens at the previous close', async () => {
     const src = createOtcCandleSource(pool, createAssetRepo(pool, { ttlMs: 0 }), { now: () => T0 + 100_000 });
     expect(await src.has(SYMBOL)).toBe(true);
     expect(await src.has('BTCUSDT')).toBe(false);
     expect(await src.candles(SYMBOL, '1m', 5)).toEqual([
       { t: T0, o: 1, h: 3, l: 0.5, c: 2, v: 0 },
-      { t: T0 + 60_000, o: 5, h: 5, l: 4, c: 4, v: 0 },
+      // Opens at the previous close (2), not at its own first price (5); the low reaches the open.
+      { t: T0 + 60_000, o: 2, h: 5, l: 2, c: 4, v: 0 },
     ]);
-    // Only the newest bucket when the limit is 1.
+    // Only the newest bucket when the limit is 1, still opening at the close before it.
     const one = await createOtcCandleSource(pool, createAssetRepo(pool, { ttlMs: 0 }), { now: () => T0 + 100_000 }).candles(
       SYMBOL,
       '1m',
       1,
     );
-    expect(one).toEqual([{ t: T0 + 60_000, o: 5, h: 5, l: 4, c: 4, v: 0 }]);
+    expect(one).toEqual([{ t: T0 + 60_000, o: 2, h: 5, l: 2, c: 4, v: 0 }]);
+  });
+
+  it('after a missing bucket (feed down) the candle opens at its own first price', async () => {
+    await pool.query('insert into price_snapshots (asset_id, price, captured_at) values ($1, 7, $2), ($1, 8, $3)', [
+      assetId,
+      new Date(T0 + 300_000),
+      new Date(T0 + 330_000),
+    ]);
+    const src = createOtcCandleSource(pool, createAssetRepo(pool, { ttlMs: 0 }), { now: () => T0 + 340_000 });
+    expect((await src.candles(SYMBOL, '1m', 6)).at(-1)).toEqual({ t: T0 + 300_000, o: 7, h: 8, l: 7, c: 8, v: 0 });
   });
 });

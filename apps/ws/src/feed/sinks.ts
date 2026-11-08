@@ -18,6 +18,8 @@ export interface RelaySinks {
   loadAssets(): Promise<FeedAsset[]>;
   /** Newest stored price of an asset (OTC restarts continue from it). Optional: without it OTC starts fresh. */
   lastPrice?(assetId: number): Promise<number | null>;
+  /** Raw `otc:override` value. Optional: without it no override is ever applied. */
+  readOverride?(): Promise<string | null>;
 }
 
 export function toPriceRecord(t: Tick): PriceRecord {

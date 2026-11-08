@@ -13,6 +13,7 @@ import { DEFAULT_ORDER_LIMITS } from '../src/services/order-limits.js';
 import type { CandleService } from '../src/services/candles.js';
 import type { OrderService } from '../src/services/orders.js';
 import type { WalletService } from '../src/services/wallet.js';
+import type { OtcOverrideService } from '../src/services/otc-override.js';
 
 export const okHealth: HealthDeps = {
   pingPostgres: async () => {},
@@ -99,6 +100,12 @@ export const unusedAdmin: AdminService = {
   listAudit: notUsed('admin.listAudit'),
 };
 
+export const unusedOtcOverride: OtcOverrideService = {
+  get: notUsed('otcOverride.get'),
+  apply: notUsed('otcOverride.apply'),
+  release: notUsed('otcOverride.release'),
+};
+
 export function fakeAssets(
   input: Array<Omit<AssetRow, 'kind' | 'category'> & Partial<Pick<AssetRow, 'kind' | 'category'>>> = [
     { id: 1, symbol: 'BTCUSDT', display: 'BTC/USD', payoutPct: 87 },
@@ -151,6 +158,7 @@ export function testApp(o: TestAppOptions = {}): Promise<FastifyInstance> {
       admin: o.deps?.admin ?? unusedAdmin,
       payments: o.deps?.payments ?? unusedPayments,
       kyc: o.deps?.kyc ?? unusedKyc,
+      otcOverride: o.deps?.otcOverride ?? unusedOtcOverride,
       metrics: o.deps?.metrics ?? new Registry(),
     },
     {

@@ -19,7 +19,7 @@ import { auditLabel, AUDIT_LABEL, describeAudit } from '../lib/admin';
 import { api, ApiError, NETWORK_ERROR, newIdempotencyKey } from '../lib/api';
 import { useUser } from '../lib/auth';
 import { formatDateTime, formatMoney, parseMoneyToCents } from '../lib/format';
-import { navigate, useLocation } from '../lib/router';
+import { Link, navigate, useLocation } from '../lib/router';
 import { useSessionData } from '../lib/session-data';
 import { usePaged } from '../lib/use-paged';
 
@@ -75,7 +75,12 @@ export function AdminPage() {
 
   return (
     <AppShell>
-      <h1 className="mb-4 text-xl font-semibold">Administração</h1>
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+        <h1 className="text-xl font-semibold">Administração</h1>
+        <Link href="/admin/otc-override" className="text-sm font-medium text-brand hover:underline">
+          Intervenção no preço OTC →
+        </Link>
+      </div>
       <div role="status" aria-live="polite" className="sr-only" data-testid="admin-notice">
         {notice}
       </div>

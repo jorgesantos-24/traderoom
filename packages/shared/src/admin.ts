@@ -75,6 +75,8 @@ export const AUDIT_ACTIONS = [
   'withdrawal.reject',
   'kyc.approve',
   'kyc.reject',
+  'otc.override',
+  'otc.override.release',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 

@@ -18,6 +18,7 @@ import { createNovusGateway } from './lib/novus.js';
 import { createPaymentService } from './services/payments.js';
 import { WEBHOOK_PATH } from './routes/payments.js';
 import { createKycService } from './services/kyc.js';
+import { createOtcOverrideService } from './services/otc-override.js';
 
 const config = loadConfig();
 const pool = createPool(config);
@@ -88,6 +89,7 @@ const app = await buildApp(
       requireKyc: (userId) => kyc.requireApproved(userId),
     }),
     kyc,
+    otcOverride: createOtcOverrideService({ pool, redis }),
     metrics,
   },
   {
