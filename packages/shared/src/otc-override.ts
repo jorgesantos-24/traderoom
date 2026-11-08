@@ -54,6 +54,32 @@ export function otcOverridePhase(nowMs: number, closeMs: number, holdMs = OTC_OV
   return 'release';
 }
 
+/** Scheduled mode: how far ahead a candle can be booked. */
+export const OTC_OVERRIDE_SCHEDULE_HORIZON_MS = 60 * 60_000;
+/** Scheduled mode: smallest body, in price ticks (10^-price_decimals), and its step. */
+export const OTC_OVERRIDE_MIN_TICKS = 10;
+export const OTC_OVERRIDE_TICKS_STEP = 5;
+
+export const OVERRIDE_DIRECTIONS = ['up', 'down'] as const;
+export type OverrideDirection = (typeof OVERRIDE_DIRECTIONS)[number];
+
+/**
+ * One price tick as a fraction of the open: the unit of the scheduled body. `decimals` is the
+ * asset's price grid (price_decimals).
+ */
+export function overrideTickPct(openPrice: number, decimals: number): number {
+  return 10 ** -decimals / openPrice;
+}
+
+/**
+ * Scheduled target: open × (1 ± ticks × tickPct), on the price grid. With tickPct from
+ * overrideTickPct this is open ± ticks price ticks.
+ */
+export function scheduledTarget(openPrice: number, direction: OverrideDirection, ticks: number, decimals: number): number {
+  const sign = direction === 'up' ? 1 : -1;
+  return Number((openPrice * (1 + sign * ticks * overrideTickPct(openPrice, decimals))).toFixed(decimals));
+}
+
 export const PRICE_OVERRIDE_KINDS = ['otc', 'market'] as const;
 export type PriceOverrideKind = (typeof PRICE_OVERRIDE_KINDS)[number];
 
@@ -69,8 +95,22 @@ export const OtcOverrideWire = z.object({
    */
   jitter: z.boolean().optional(),
   symbol: z.string(),
-  targetPrice: z.string(),
+  /** Absent only with `schedule`: the ws resolves the target at the candle open. */
+  targetPrice: z.string().optional(),
   basePrice: z.string(),
+  /**
+   * Scheduled mode (market, 1m): the target is open ± ticks, with open the last tick before the
+   * rollover to `openMs`. Before openMs nothing is touched; rampStartMs is openMs.
+   */
+  schedule: z
+    .object({
+      openMs: z.number().int(),
+      direction: z.enum(OVERRIDE_DIRECTIONS),
+      ticks: z.number().int().positive(),
+      /** assets.max_override_pct: the target never sits further than this from the real price. */
+      maxOverridePct: z.number().positive(),
+    })
+    .optional(),
   closeMs: z.number().int(),
   rampStartMs: z.number().int(),
   holdMs: z.number().int(),
@@ -88,14 +128,34 @@ export function parseOtcOverride(raw: string | null): OtcOverrideWire | null {
   }
 }
 
-export const OtcOverrideInput = z.object({
-  assetId: z.number().int().positive('Ativo inválido.'),
-  interval: z.enum(CANDLE_INTERVALS, 'Intervalo inválido.'),
-  targetPrice: z.number('Informe o preço alvo.').positive('Informe o preço alvo.').finite('Preço alvo inválido.'),
-  rampMs: z.number().int().min(500).max(60_000).default(OTC_OVERRIDE_RAMP_DEFAULT_MS),
-  /** Aplica no candle seguinte mesmo que ainda haja tempo. */
-  nextCandle: z.boolean().default(false),
+export const OtcOverrideScheduleInput = z.object({
+  /** Candle open, epoch ms (absolute, not a local time). */
+  atMs: z
+    .number('Informe o horário.')
+    .int('Horário inválido.')
+    .refine((v) => v % CANDLE_INTERVAL_MS['1m'] === 0, 'Horário inválido: tem que ser o início de um minuto.'),
+  direction: z.enum(OVERRIDE_DIRECTIONS, 'Direção inválida.'),
+  ticks: z
+    .number('Informe o tamanho do corpo.')
+    .int('Ticks inválidos.')
+    .min(OTC_OVERRIDE_MIN_TICKS, `O corpo mínimo é ${OTC_OVERRIDE_MIN_TICKS} ticks.`)
+    .multipleOf(OTC_OVERRIDE_TICKS_STEP, `O corpo é em múltiplos de ${OTC_OVERRIDE_TICKS_STEP} ticks.`),
 });
+export type OtcOverrideScheduleInput = z.infer<typeof OtcOverrideScheduleInput>;
+
+export const OtcOverrideInput = z
+  .object({
+    assetId: z.number().int().positive('Ativo inválido.'),
+    interval: z.enum(CANDLE_INTERVALS, 'Intervalo inválido.'),
+    /** Immediate mode. Ignored with `schedule`. */
+    targetPrice: z.number('Informe o preço alvo.').positive('Informe o preço alvo.').finite('Preço alvo inválido.').optional(),
+    rampMs: z.number().int().min(500).max(60_000).default(OTC_OVERRIDE_RAMP_DEFAULT_MS),
+    /** Aplica no candle seguinte mesmo que ainda haja tempo. */
+    nextCandle: z.boolean().default(false),
+    /** Scheduled mode (market assets, 1m): a future candle, a color and a body size. */
+    schedule: OtcOverrideScheduleInput.optional(),
+  })
+  .refine((v) => v.schedule !== undefined || v.targetPrice !== undefined, { message: 'Informe o preço alvo.', path: ['targetPrice'] });
 export type OtcOverrideInput = z.infer<typeof OtcOverrideInput>;
 
 export interface OtcOverrideView {
@@ -107,8 +167,11 @@ export interface OtcOverrideView {
   /** Casas decimais do ativo (otc_decimals, ou price_decimals no mercado). */
   decimals: number;
   intervalSec: number;
-  targetPrice: number;
+  /** Null for a scheduled override until the ws resolves it at the candle open. */
+  targetPrice: number | null;
   basePrice: number;
+  /** Set for the scheduled mode. */
+  schedule: { direction: OverrideDirection; ticks: number } | null;
   /** Preço atual em `px:<symbol>`, ou null se o feed não tem cotação. */
   currentPrice: number | null;
   candleOpenMs: number;

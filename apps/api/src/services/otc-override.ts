@@ -7,15 +7,18 @@ import {
   OTC_OVERRIDE_LANDING_MS,
   OTC_OVERRIDE_MIN_LEAD_MS,
   OTC_OVERRIDE_RELEASE_MS,
+  OTC_OVERRIDE_SCHEDULE_HORIZON_MS,
   otcOverridePhase,
   otcOverrideRampStartMs,
   RedisKeys,
   type AuditAction,
   type OtcOverrideAsset,
   type OtcOverrideInput,
+  type OtcOverrideScheduleInput,
   type OtcOverrideState,
   type OtcOverrideView,
   type OtcOverrideWire,
+  type OverrideDirection,
   type PriceOverrideKind,
   type PublicOverrideState,
 } from '@traderoom/shared';
@@ -54,8 +57,10 @@ interface Row {
   display: string;
   decimals: number;
   interval_sec: number;
-  target_price: string;
+  target_price: string | null;
   base_price: string;
+  direction: OverrideDirection | null;
+  body_ticks: number | null;
   candle_open_ms: string;
   candle_close_ms: string;
   ramp_ms: number;
@@ -63,9 +68,19 @@ interface Row {
   created_at: Date;
 }
 
+interface AssetRow {
+  id: number;
+  symbol: string;
+  kind: PriceOverrideKind;
+  enabled: boolean;
+  decimals: number | null;
+  max_override_pct: string;
+  market_jitter: boolean;
+}
+
 const ROW_SELECT = `
   select o.id::text as id, o.kind, o.asset_id, a.symbol, a.display, coalesce(a.otc_decimals, a.price_decimals) as decimals, o.interval_sec,
-         o.target_price::text as target_price, o.base_price::text as base_price,
+         o.target_price::text as target_price, o.base_price::text as base_price, o.direction, o.body_ticks,
          o.candle_open_ms::text as candle_open_ms, o.candle_close_ms::text as candle_close_ms,
          o.ramp_ms, o.created_by::text as created_by, o.created_at
     from otc_overrides o join assets a on a.id = o.asset_id`;
@@ -117,8 +132,9 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
       display: r.display,
       decimals: r.decimals,
       intervalSec: r.interval_sec,
-      targetPrice: Number(r.target_price),
+      targetPrice: r.target_price === null ? null : Number(r.target_price),
       basePrice: Number(r.base_price),
+      schedule: r.direction !== null && r.body_ticks !== null ? { direction: r.direction, ticks: r.body_ticks } : null,
       currentPrice: currentPrice === null ? null : Number(currentPrice),
       candleOpenMs: Number(r.candle_open_ms),
       candleCloseMs: closeMs,
@@ -138,6 +154,65 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
     const r = rows[0];
     if (!r) return 'Já existe um override ativo.';
     return `Já existe um override ativo (ativo ${r.symbol}, faltam ${seconds(Number(r.candle_close_ms) - now())}).`;
+  }
+
+  /**
+   * Scheduled mode: books the 1m candle opening at atMs. Nothing is priced now; the ws resolves the
+   * target from the open (last tick before the rollover) and only touches ticks from atMs on.
+   */
+  async function applyScheduled(
+    c: pg.PoolClient,
+    adminId: string,
+    asset: AssetRow,
+    base: string,
+    s: OtcOverrideScheduleInput,
+    nowMs: number,
+  ): Promise<{ wire: OtcOverrideWire; view: OtcOverrideView; ttlMs: number }> {
+    if (s.atMs <= nowMs + OTC_OVERRIDE_MIN_LEAD_MS) {
+      throw new AppError(400, ErrorCode.ValidationFailed, `schedule.atMs: o minuto tem que começar daqui a mais de ${OTC_OVERRIDE_MIN_LEAD_MS / 1000} s.`);
+    }
+    if (s.atMs > nowMs + OTC_OVERRIDE_SCHEDULE_HORIZON_MS) {
+      throw new AppError(400, ErrorCode.ValidationFailed, `schedule.atMs: só dá para agendar até ${OTC_OVERRIDE_SCHEDULE_HORIZON_MS / 60_000} min à frente.`);
+    }
+    const openMs = s.atMs;
+    const closeMs = openMs + CANDLE_INTERVAL_MS['1m'];
+    // The ramp spans the whole candle: from the open to the landing.
+    const rampMs = closeMs - openMs - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS;
+    const { rows } = await c.query<{ id: string }>(
+      `insert into otc_overrides (asset_id, kind, interval_sec, target_price, base_price, candle_open_ms, candle_close_ms, ramp_ms,
+                                  direction, body_ticks, created_by, created_at)
+       values ($1, 'market', 60, null, $2, $3, $4, $5, $6, $7, $8, $9) returning id::text as id`,
+      [asset.id, base, openMs, closeMs, rampMs, s.direction, s.ticks, adminId, new Date(nowMs)],
+    );
+    const inserted = rows[0];
+    if (!inserted) throw new Error('otc override insert returned no row');
+    await audit(c, adminId, 'otc.override', {
+      overrideId: inserted.id,
+      kind: 'market',
+      assetId: asset.id,
+      symbol: asset.symbol,
+      interval: '1m',
+      basePrice: base,
+      candleOpenMs: openMs,
+      candleCloseMs: closeMs,
+      rampStartMs: openMs,
+      schedule: { atMs: s.atMs, direction: s.direction, ticks: s.ticks },
+    });
+    const wire: OtcOverrideWire = {
+      id: inserted.id,
+      kind: 'market',
+      jitter: asset.market_jitter,
+      symbol: asset.symbol,
+      basePrice: base,
+      closeMs,
+      rampStartMs: openMs,
+      holdMs: OTC_OVERRIDE_HOLD_MS,
+      releaseMs: OTC_OVERRIDE_RELEASE_MS,
+      schedule: { openMs, direction: s.direction, ticks: s.ticks, maxOverridePct: Number(asset.max_override_pct) },
+    };
+    const { rows: vrows } = await c.query<Row>(`${ROW_SELECT} where o.id = $1`, [inserted.id]);
+    // TTL from closeMs, like the immediate mode: the key outlives the release.
+    return { wire, view: toView(vrows[0] as Row, base, nowMs), ttlMs: closeMs + OTC_OVERRIDE_RELEASE_MS - nowMs + 10_000 };
   }
 
   return {
@@ -173,19 +248,12 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
       let wire: OtcOverrideWire;
       let view: OtcOverrideView;
       let ttlMs: number;
+      const schedule = input.schedule;
       try {
         ({ wire, view, ttlMs } = await inTransaction(pool, async (c) => {
           const nowMs = now();
           await expireFinished(c, nowMs);
-          const { rows: arows } = await c.query<{
-            id: number;
-            symbol: string;
-            kind: PriceOverrideKind;
-            enabled: boolean;
-            decimals: number | null;
-            max_override_pct: string;
-            market_jitter: boolean;
-          }>(
+          const { rows: arows } = await c.query<AssetRow>(
             `select id, symbol, kind, enabled, coalesce(otc_decimals, price_decimals) as decimals,
                     max_override_pct::text as max_override_pct, market_jitter
                from assets where id = $1`,
@@ -194,6 +262,9 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
           const asset = arows[0];
           if (!asset) throw new AppError(404, ErrorCode.NotFound, 'Ativo não encontrado.');
           const market = asset.kind === 'market';
+          if (schedule && !market) {
+            throw new AppError(400, ErrorCode.BadRequest, 'O modo agendado só vale para ativos de mercado.');
+          }
           if (market && input.interval !== '1m') {
             throw new AppError(400, ErrorCode.BadRequest, 'Ativos de mercado só aceitam intervenção no candle de 1m.');
           }
@@ -208,6 +279,8 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
           if (base === null) {
             throw new AppError(409, ErrorCode.Conflict, `Sem cotação atual para ${asset.symbol}. O feed de preços está rodando?`);
           }
+          if (schedule) return applyScheduled(c, adminId, asset, base, schedule, nowMs);
+          if (input.targetPrice === undefined) throw new AppError(400, ErrorCode.ValidationFailed, 'targetPrice: informe o preço alvo.');
           const target = Number(input.targetPrice.toFixed(decimals));
           if (!(target > 0)) throw new AppError(400, ErrorCode.ValidationFailed, 'targetPrice: preço alvo inválido para as casas decimais do ativo.');
           if (market) {
@@ -276,7 +349,12 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
           return { wire: w, view: toView(vrows[0] as Row, base, nowMs), ttlMs: closeMs + OTC_OVERRIDE_RELEASE_MS - nowMs + 10_000 };
         }));
       } catch (err) {
-        if (isUniqueViolation(err)) throw new AppError(409, ErrorCode.Conflict, await busyMessage());
+        if (isUniqueViolation(err)) {
+          // Scheduled: the slot is busy for the booked time, a bad request like any other invalid time.
+          throw schedule
+            ? new AppError(400, ErrorCode.BadRequest, await busyMessage())
+            : new AppError(409, ErrorCode.Conflict, await busyMessage());
+        }
         throw err;
       }
 
@@ -315,7 +393,7 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
     },
 
     async publicState(symbol) {
-      const { rows } = await pool.query<{ target_price: string; candle_close_ms: string }>(
+      const { rows } = await pool.query<{ target_price: string | null; candle_close_ms: string }>(
         `select o.target_price::text as target_price, o.candle_close_ms::text as candle_close_ms
            from otc_overrides o join assets a on a.id = o.asset_id
           where o.active and a.symbol = $1 and o.candle_close_ms + $2 > $3`,
@@ -323,8 +401,12 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
       );
       const r = rows[0];
       if (!r) return { active: false, untilMs: null, targetPrice: null };
-      // Announced from creation, before the ramp moves anything.
-      return { active: true, untilMs: Number(r.candle_close_ms) + OTC_OVERRIDE_RELEASE_MS, targetPrice: Number(r.target_price) };
+      // Announced from creation, before the ramp moves anything. Scheduled: no target until the ws resolves it.
+      return {
+        active: true,
+        untilMs: Number(r.candle_close_ms) + OTC_OVERRIDE_RELEASE_MS,
+        targetPrice: r.target_price === null ? null : Number(r.target_price),
+      };
     },
   };
 }

@@ -22,6 +22,10 @@ export interface RelaySinks {
   lastPrice?(assetId: number): Promise<number | null>;
   /** Raw `otc:override` value. Optional: without it no override is ever applied. */
   readOverride?(): Promise<string | null>;
+  /** Scheduled override: stores the target resolved at its candle's open. Optional. */
+  saveOverrideTarget?(id: string, price: string): Promise<void>;
+  /** Scheduled override: the stored target_price (null until frozen). Optional. */
+  loadOverrideTarget?(id: string): Promise<string | null>;
 }
 
 export function toPriceRecord(t: Tick): PriceRecord {
@@ -98,6 +102,16 @@ export async function loadEnabledAssets(pool: pg.Pool): Promise<LoadedAssets> {
     (ok ? out.assets : out.invalid).push(a);
   }
   return out;
+}
+
+/** First write wins: a ws restarted mid-candle must not replace the target the candle was steered to. */
+export async function saveOverrideTarget(pool: pg.Pool, id: string, price: string): Promise<void> {
+  await pool.query('update otc_overrides set target_price = $2 where id = $1::bigint and target_price is null', [id, price]);
+}
+
+export async function loadOverrideTarget(pool: pg.Pool, id: string): Promise<string | null> {
+  const { rows } = await pool.query<{ p: string | null }>('select target_price::text as p from otc_overrides where id = $1::bigint', [id]);
+  return rows[0]?.p ?? null;
 }
 
 export async function lastPrice(pool: pg.Pool, assetId: number): Promise<number | null> {

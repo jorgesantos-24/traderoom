@@ -1,4 +1,12 @@
-import { OTC_OVERRIDE_HOLD_MS, OTC_OVERRIDE_LANDING_MS, OTC_OVERRIDE_RAMP_DEFAULT_MS, otcOverrideRampStartMs, type Candle } from '@traderoom/shared';
+import {
+  OTC_OVERRIDE_HOLD_MS,
+  OTC_OVERRIDE_LANDING_MS,
+  OTC_OVERRIDE_RAMP_DEFAULT_MS,
+  otcOverrideRampStartMs,
+  scheduledTarget,
+  type Candle,
+  type OverrideDirection,
+} from '@traderoom/shared';
 
 export type Ohlc = Pick<Candle, 't' | 'o' | 'h' | 'l' | 'c'>;
 
@@ -93,4 +101,37 @@ export function phaseAt(nowMs: number, o: { rampStartMs: number; holdStartMs: nu
   if (nowMs < o.holdStartMs) return 'ramp';
   if (nowMs <= o.candleCloseMs) return 'hold';
   return 'release';
+}
+
+/**
+ * "HH:MM" in the browser's time zone → the epoch ms of that minute, the next time it happens after
+ * `nowMs` (today, or tomorrow if it already passed). Null when the text is not a time.
+ */
+export function localMinuteToEpoch(hhmm: string, nowMs: number): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  const d = new Date(nowMs);
+  d.setHours(h, min, 0, 0);
+  if (d.getTime() <= nowMs) d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
+
+/** Epoch ms → "HH:MM" in the browser's time zone. */
+export function epochToLocalMinute(ms: number): string {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/** The scheduled candle as projected now: opens at `open`, closes `ticks` price ticks away. */
+export function projectedCandle(
+  open: number,
+  direction: OverrideDirection,
+  ticks: number,
+  decimals: number,
+): { o: number; c: number; offsetPct: number } {
+  const c = scheduledTarget(open, direction, ticks, decimals);
+  return { o: open, c, offsetPct: (Math.abs(c - open) / open) * 100 };
 }

@@ -2,15 +2,17 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import type { Redis } from 'ioredis';
 import {
   OTC_OVERRIDE_HOLD_MS,
   OTC_OVERRIDE_LANDING_MS,
+  OTC_OVERRIDE_MIN_LEAD_MS,
   OTC_OVERRIDE_RAMP_DEFAULT_MS,
   OTC_OVERRIDE_RELEASE_MS,
+  OTC_OVERRIDE_SCHEDULE_HORIZON_MS,
   OtcOverrideInput,
   parseOtcOverride,
   RedisKeys,
@@ -21,7 +23,8 @@ import {
 // The real generator, driven by the wire this API writes: the same code the ws runs.
 import { OtcFeed, OtcWalk } from '../../ws/src/feed/otc.js';
 import { BAND_FRACTION } from '../../ws/src/feed/override-path.js';
-import { insertSnapshots, toPriceRecord, type SnapshotRow } from '../../ws/src/feed/sinks.js';
+import { PriceOverride } from '../../ws/src/feed/price-override.js';
+import { insertSnapshots, loadOverrideTarget, saveOverrideTarget, toPriceRecord, type SnapshotRow } from '../../ws/src/feed/sinks.js';
 import { loadConfig } from '../src/config.js';
 import { AppError } from '../src/lib/errors.js';
 import { createPool } from '../src/lib/db.js';
@@ -31,6 +34,7 @@ import { createAuthService } from '../src/services/auth.js';
 import { createOrderLimitsRepo } from '../src/services/order-limits.js';
 import { createOrderService, redisDueScheduler, redisPriceReader } from '../src/services/orders.js';
 import { createOtcOverrideService, type OtcOverrideService } from '../src/services/otc-override.js';
+import { createOverrideMarkSource } from '../src/services/override-marks.js';
 import { settleOrder } from '../src/services/settlement.js';
 import { CookieJar, testApp } from './helpers.js';
 
@@ -462,6 +466,35 @@ describe('HTTP: /api/admin/otc-override', () => {
     expect(await redis.get(KEY)).toBeNull();
     expect((await admin('POST', '/api/admin/otc-override', { assetId: ids.market, interval: '1m', targetPrice: 1 })).statusCode).toBe(400);
   });
+
+  it('scheduled: 400 off a minute edge and for ticks under 10 or off the 5 step; TTL counted from closeMs', async () => {
+    const admin = await signedIn('admin');
+    await redis.set(RedisKeys.price(MKT), JSON.stringify({ p: '50000.00', ts: Date.now(), rt: Date.now(), src: 'binance' }), 'PX', 600_000);
+    const atMs = Math.floor(Date.now() / MIN) * MIN + 3 * MIN;
+    const post = (schedule: object) => admin('POST', '/api/admin/otc-override', { assetId: ids.mkt, interval: '1m', schedule });
+
+    const edge = await post({ atMs: atMs + 1500, direction: 'up', ticks: 10 });
+    expect(edge.statusCode).toBe(400);
+    expect(edge.json<{ error: { message: string } }>().error.message).toMatch(/início de um minuto/);
+    const few = await post({ atMs, direction: 'up', ticks: 5 });
+    expect(few.statusCode).toBe(400);
+    expect(few.json<{ error: { message: string } }>().error.message).toMatch(/mínimo é 10 ticks/);
+    expect((await post({ atMs, direction: 'up', ticks: 12 })).statusCode).toBe(400);
+    expect((await post({ atMs, direction: 'sideways', ticks: 10 })).statusCode).toBe(400);
+    expect(await redis.get(KEY)).toBeNull();
+
+    const ok = await post({ atMs, direction: 'down', ticks: 15 });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json<{ override: { schedule: unknown; targetPrice: unknown } }>().override).toMatchObject({
+      schedule: { direction: 'down', ticks: 15 },
+      targetPrice: null,
+    });
+    const ttl = await redis.pttl(KEY);
+    const expected = atMs + MIN + OTC_OVERRIDE_RELEASE_MS + 10_000 - Date.now();
+    expect(ttl).toBeGreaterThan(expected - 5000);
+    expect(ttl).toBeLessThanOrEqual(expected + 1000);
+    expect((await admin('DELETE', '/api/admin/otc-override')).json()).toEqual({ released: true });
+  });
 });
 
 describe('market assets (1m close only)', () => {
@@ -627,5 +660,139 @@ describe('market assets (1m close only)', () => {
       ids.mkt,
     ]);
     expect(rows[0]?.n).toBe('0');
+  });
+});
+
+describe('scheduled override (market, 1m)', () => {
+  const OPEN = T0 + 10 * MIN;
+  const sched = (o: Partial<{ atMs: number; direction: 'up' | 'down'; ticks: number }> = {}) =>
+    input({ assetId: ids.mkt, schedule: { atMs: OPEN, direction: 'up', ticks: 20, ...o } });
+
+  beforeEach(async () => {
+    clock = T0 + 20_000;
+    await redis.set(RedisKeys.price(MKT), JSON.stringify({ p: '50000.00', ts: clock, rt: clock, src: 'binance' }), 'PX', 600_000);
+  });
+
+  it('books a future minute: no target yet, the ramp starts at the open, the wire carries the schedule', async () => {
+    const v = await svc.apply(adminId, sched());
+    expect(v).toMatchObject({
+      kind: 'market',
+      symbol: MKT,
+      targetPrice: null,
+      schedule: { direction: 'up', ticks: 20 },
+      candleOpenMs: OPEN,
+      candleCloseMs: OPEN + MIN,
+      rampStartMs: OPEN,
+      holdStartMs: OPEN + MIN - OTC_OVERRIDE_HOLD_MS,
+    });
+    expect(parseOtcOverride(await redis.get(KEY))).toEqual({
+      id: v.id,
+      kind: 'market',
+      jitter: true,
+      symbol: MKT,
+      basePrice: '50000.00',
+      closeMs: OPEN + MIN,
+      rampStartMs: OPEN,
+      holdMs: OTC_OVERRIDE_HOLD_MS,
+      releaseMs: OTC_OVERRIDE_RELEASE_MS,
+      schedule: { openMs: OPEN, direction: 'up', ticks: 20, maxOverridePct: 0.1 },
+    });
+    const { rows } = await pool.query<{ target_price: string | null; direction: string; body_ticks: number; ramp_ms: number }>(
+      'select target_price::text as target_price, direction, body_ticks, ramp_ms from otc_overrides where id = $1',
+      [v.id],
+    );
+    expect(rows[0]).toEqual({ target_price: null, direction: 'up', body_ticks: 20, ramp_ms: MIN - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS });
+    expect(await svc.publicState(MKT)).toEqual({ active: true, untilMs: OPEN + MIN + OTC_OVERRIDE_RELEASE_MS, targetPrice: null });
+  });
+
+  it('400 in the past, inside the minimum lead, past the horizon, on an OTC asset, and with the slot taken', async () => {
+    await expectAppError(svc.apply(adminId, sched({ atMs: T0 })), 400, /mais de 6 s/);
+    // The next minute opens in 40 s: fine. At 55 s into the minute it is inside the lead.
+    clock = T0 + MIN - OTC_OVERRIDE_MIN_LEAD_MS + 1;
+    await expectAppError(svc.apply(adminId, sched({ atMs: T0 + MIN })), 400, /mais de 6 s/);
+    clock = T0 + 20_000;
+    await expectAppError(svc.apply(adminId, sched({ atMs: T0 + OTC_OVERRIDE_SCHEDULE_HORIZON_MS + MIN })), 400, /60 min/);
+    await expectAppError(svc.apply(adminId, input({ assetId: ids.a, schedule: { atMs: OPEN, direction: 'up', ticks: 10 } })), 400, /mercado/);
+    await expectAppError(svc.apply(adminId, input({ assetId: ids.mkt, interval: '5m', schedule: { atMs: OPEN, direction: 'up', ticks: 10 } })), 400, /1m/);
+    expect(await redis.get(KEY)).toBeNull();
+
+    // Exactly at the horizon is still allowed; then the slot is taken.
+    const first = await svc.apply(adminId, sched({ atMs: T0 + OTC_OVERRIDE_SCHEDULE_HORIZON_MS }));
+    expect(first.candleOpenMs).toBe(T0 + OTC_OVERRIDE_SCHEDULE_HORIZON_MS);
+    await expectAppError(svc.apply(adminId, sched()), 400, /Já existe um override ativo/);
+    // An immediate one is still a 409, as before.
+    await expectAppError(svc.apply(adminId, input({ assetId: ids.mkt, targetPrice: 50_010 })), 409);
+  });
+
+  it('cancelled before the open with the usual release: row ended, key gone, slot free', async () => {
+    const v = await svc.apply(adminId, sched());
+    clock = OPEN - 5000;
+    expect(await svc.release(adminId)).toBe(true);
+    expect(await redis.get(KEY)).toBeNull();
+    const { rows } = await pool.query<{ active: boolean }>('select active from otc_overrides where id = $1', [v.id]);
+    expect(rows[0]).toEqual({ active: false });
+    expect((await svc.apply(adminId, sched({ atMs: OPEN + MIN }))).candleOpenMs).toBe(OPEN + MIN);
+  });
+
+  it('the ws resolves the target from the open: the previous candle is raw, the close is open + ticks, saved once', async () => {
+    const v = await svc.apply(adminId, sched({ ticks: 25 }));
+    const wire = parseOtcOverride(await redis.get(KEY));
+    if (!wire) throw new Error('no wire');
+    const saved: string[] = [];
+    const ov = new PriceOverride(wire, clock, { decimals: 2, volPerSqrtS: null, onTarget: (p) => saved.push(p) });
+    const tick = (at: number, p: number) => ({ symbol: MKT, price: p.toFixed(2), value: p, ts: at, recvMs: at, provider: 'binance' as const });
+    // Previous minute: untouched.
+    for (let at = OPEN - 10_000; at < OPEN; at += 500) {
+      const t = tick(at, 50_001);
+      expect(ov.apply(t, at)).toEqual(t);
+    }
+    let close = 0;
+    for (let at = OPEN; at <= OPEN + MIN; at += 250) {
+      const out = ov.apply(tick(at, 50_002), at, ov.needsOpen(at) ? 50_001 : undefined);
+      expect(out.ov).toBe(v.id);
+      if (at === OPEN + MIN) close = out.value;
+    }
+    expect(saved).toEqual(['50001.25']);
+    expect(close).toBeGreaterThan(50_001);
+    await saveOverrideTarget(pool, v.id, saved[0]!);
+    // First write wins: a restarted ws cannot move it.
+    await saveOverrideTarget(pool, v.id, '50009.99');
+    const state = await svc.get();
+    expect(state.override).toMatchObject({ id: v.id, targetPrice: 50_001.25 });
+
+    // The candle mark shows up once the target is known.
+    const marks = createOverrideMarkSource(pool);
+    const candle = { t: OPEN, o: 50_001, h: 50_002, l: 50_000, c: 50_001.25, v: 0 };
+    expect(await marks.marks(MKT, '1m', [candle])).toEqual([{ openMs: OPEN, targetPrice: 50_001.25, direction: 'up' }]);
+  });
+
+  // Its own minute: earlier tests leave marked rows on OPEN.
+  const BOOKED = OPEN + 5 * MIN;
+
+  it('ws restarted inside the candle: the second run reads target_price and closes where the mark points', async () => {
+    const v = await svc.apply(adminId, sched({ atMs: BOOKED, ticks: 20 }));
+    const wire = parseOtcOverride(await redis.get(KEY));
+    if (!wire) throw new Error('no wire');
+    const tick = (at: number, p: number) => ({ symbol: MKT, price: p.toFixed(2), value: p, ts: at, recvMs: at, provider: 'binance' as const });
+    expect(await loadOverrideTarget(pool, v.id)).toBeNull();
+
+    // First run: open 50 001, freezes 50 001.20 and saves it, then dies at +40 s.
+    const first = new PriceOverride(wire, BOOKED - 1000, { decimals: 2, volPerSqrtS: null, onTarget: (p) => void saveOverrideTarget(pool, v.id, p) });
+    for (let at = BOOKED; at <= BOOKED + 40_000; at += 250) first.apply(tick(at, 50_002), at, first.needsOpen(at) ? 50_001 : undefined);
+    await vi.waitFor(async () => expect(await loadOverrideTarget(pool, v.id)).toBe('50001.20000000'));
+
+    // Second run: no bucketOpen, first tick 50 030 (it alone would give 50 030.20).
+    const persisted = Number(await loadOverrideTarget(pool, v.id));
+    const saved: string[] = [];
+    const second = new PriceOverride(wire, BOOKED + 41_000, { decimals: 2, volPerSqrtS: null, persistedTarget: persisted, onTarget: (p) => saved.push(p) });
+    let close = 0;
+    for (let at = BOOKED + 41_000; at <= BOOKED + MIN; at += 250) {
+      const out = second.apply(tick(at, 50_030), at, undefined);
+      if (at === BOOKED + MIN) close = out.value;
+    }
+    expect(close).toBe(50_001.2);
+    expect(saved).toEqual([]);
+    const marks = await createOverrideMarkSource(pool).marks(MKT, '1m', [{ t: BOOKED, o: 50_001, h: 50_030, l: 50_001, c: close, v: 0 }]);
+    expect(marks).toEqual([{ openMs: BOOKED, targetPrice: close, direction: 'up' }]);
   });
 });

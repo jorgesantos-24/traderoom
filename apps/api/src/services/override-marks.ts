@@ -43,11 +43,12 @@ export function createOverrideMarkSource(pool: pg.Pool): OverrideMarkSource {
       const last = candles.at(-1);
       if (!first || !last) return [];
       // Ended overrides count. Left out: one released before its candle closed, or whose publish failed
-      // (ended_at set right away): the close was not the target, so the candle is not marked.
+      // (ended_at set right away): the close was not the target, so the candle is not marked. A scheduled
+      // override has no target until the ws resolves it in its candle: no mark before that.
       const { rows } = await pool.query<{ o: string; c: string; p: string }>(
         `select o.candle_open_ms::text as o, o.candle_close_ms::text as c, o.target_price::text as p
            from otc_overrides o join assets a on a.id = o.asset_id
-          where a.symbol = $1 and o.candle_open_ms >= $2 and o.candle_open_ms < $3
+          where a.symbol = $1 and o.candle_open_ms >= $2 and o.candle_open_ms < $3 and o.target_price is not null
             and (o.ended_at is null or o.ended_at >= to_timestamp(o.candle_close_ms / 1000.0))`,
         [symbol, first.t, last.t + CANDLE_INTERVAL_MS[interval]],
       );

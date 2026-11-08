@@ -255,3 +255,147 @@ describe('PriceOverride with OverridePath', () => {
     expect(Math.abs(atClose.out.value - Number(UP))).toBeLessThanOrEqual(band + 1e-9);
   });
 });
+
+describe('PriceOverride, scheduled mode (market, 1m)', () => {
+  /** The booked candle: [OPEN, CLOSE), the ramp from the open. */
+  const OPEN = START;
+  const FREEZE = OPEN + (LAND - OPEN) / 2;
+
+  function scheduled(over: Partial<NonNullable<OtcOverrideWire['schedule']>> = {}, jitter = true): OtcOverrideWire {
+    const { targetPrice: _drop, ...rest } = wire({ rampStartMs: OPEN, jitter });
+    return { ...rest, schedule: { openMs: OPEN, direction: 'up', ticks: 20, maxOverridePct: 1, ...over } };
+  }
+
+  /** Flat real price, one tick every 250 ms; `price(t)` overrides it. */
+  function drive(ov: PriceOverride, from: number, until: number, open: number, price: (t: number) => number = () => 76_000) {
+    const out: Array<{ t: number; real: Tick; out: Tick }> = [];
+    for (let t = from; t <= until; t += 250) {
+      const p = price(t).toFixed(8);
+      const r: Tick = { symbol: 'BTCUSDT', price: p, value: Number(p), ts: t - 15, recvMs: t - 3, provider: 'binance' };
+      out.push({ t, real: r, out: ov.apply(r, t, ov.needsOpen(t) && !Number.isNaN(open) ? open : undefined) });
+    }
+    return out;
+  }
+
+  it('before the open every tick is raw: the previous candle closes on its own', () => {
+    const ov = new PriceOverride(scheduled(), OPEN - 30_000, opts(1));
+    expect(ov.needsOpen(OPEN - 1)).toBe(false);
+    for (const s of drive(ov, OPEN - 30_000, OPEN - 1, 76_000, (t) => 76_000 + Math.sin(t / 900) * 3)) {
+      expect(s.out).toEqual(s.real);
+      expect(s.out.ov).toBeUndefined();
+    }
+    expect(ov.needsOpen(OPEN)).toBe(true);
+    expect(Number.isNaN(ov.targetPrice)).toBe(true);
+  });
+
+  it('the target is derived from the open (the tick before the rollover), not from the first tick of the candle', () => {
+    const saved: string[] = [];
+    const ov = new PriceOverride(scheduled({ ticks: 20 }), OPEN - 5000, { ...opts(2), onTarget: (p) => saved.push(p) });
+    drive(ov, OPEN - 5000, OPEN - 250, 0);
+    // The first tick of the candle is 76 003, the open (last tick of the previous minute) 76 000.50.
+    const first = ov.apply({ symbol: 'BTCUSDT', price: '76003.00000000', value: 76_003, ts: OPEN, recvMs: OPEN, provider: 'binance' }, OPEN, 76_000.5);
+    expect(first.ov).toBe('7');
+    expect(ov.targetPrice).toBe(76_000.7);
+    expect(ov.resolveTarget(76_000.5)).toBe(76_000.7);
+    expect(ov.resolveTarget(50_000)).toBe(50_000.2);
+    const steps = drive(ov, OPEN + 250, CLOSE, 0, () => 76_003);
+    expect(saved).toEqual(['76000.70']);
+    const atClose = steps.find((s) => s.t === CLOSE)!;
+    expect(atClose.out.value).toBeGreaterThan(76_000.5);
+  });
+
+  it('down: open − ticks', () => {
+    const ov = new PriceOverride(scheduled({ direction: 'down', ticks: 15 }), OPEN, opts(3));
+    drive(ov, OPEN, OPEN, 76_000);
+    expect(ov.targetPrice).toBe(75_999.85);
+  });
+
+  it('immediate mode: resolveTarget is the wire price, whatever the open', () => {
+    const ov = new PriceOverride(wire(), START, opts(4));
+    expect(ov.resolveTarget(1)).toBe(76_100);
+    expect(ov.needsOpen(RAMP_START)).toBe(false);
+  });
+
+  it('the clamp shrinks the offset against max_override_pct in the first half of the ramp, then freezes', () => {
+    const saved: string[] = [];
+    // 500 ticks (5.00) on 76 000 with a 0.005% limit (3.80): clamped to 380 at the open.
+    const ov = new PriceOverride(scheduled({ ticks: 500, maxOverridePct: 0.005 }), OPEN, { ...opts(5), onTarget: (p) => saved.push(p) });
+    drive(ov, OPEN, OPEN, 76_000);
+    expect(ov.bodyTicks).toBe(380);
+    expect(ov.targetPrice).toBe(76_003.8);
+    // The market falls 1.00 in the first half: 75 999 × 1.00005 − 76 000 = 2.79995 → 279 ticks.
+    drive(ov, OPEN + 250, FREEZE - 1, 0, () => 75_999);
+    expect(ov.bodyTicks).toBe(279);
+    expect(ov.targetPrice).toBe(76_002.79);
+    // It never grows back, and after the half nothing moves it.
+    drive(ov, FREEZE, CLOSE, 0, (t) => (t < FREEZE + 5000 ? 76_000 : 75_990));
+    expect(ov.bodyTicks).toBe(279);
+    expect(saved).toEqual(['76002.79']);
+  });
+
+  it('with a body of a few ticks, the hold band stays under it: the close keeps the color on 200 seeds', () => {
+    for (let k = 0; k < 200; k++) {
+      for (const direction of ['up', 'down'] as const) {
+        const ov = new PriceOverride(scheduled({ ticks: 10, direction }), OPEN, opts(1000 + k));
+        // The market drifts 0.30 against the color through the candle.
+        const sign = direction === 'up' ? -1 : 1;
+        const steps = drive(ov, OPEN, CLOSE, 76_000, (t) => 76_000 + (sign * 0.3 * (t - OPEN)) / 60_000);
+        const atClose = steps.find((s) => s.t === CLOSE)!.out.value;
+        if (direction === 'up') expect(atClose, `seed ${k}`).toBeGreaterThan(76_000);
+        else expect(atClose, `seed ${k}`).toBeLessThan(76_000);
+      }
+    }
+  });
+
+  it('ws restarted inside the candle (no bucketOpen): the persisted target wins over the first tick', () => {
+    for (let k = 0; k < 50; k++) {
+      const saved: string[] = [];
+      const at = OPEN + 20_000;
+      // Installed late, as after a restart: first tick 76 010, the persisted target 76 000.70.
+      const ov = new PriceOverride(scheduled({ ticks: 20, maxOverridePct: 0.001 }), at, {
+        ...opts(1500 + k),
+        persistedTarget: 76_000.7,
+        onTarget: (p) => saved.push(p),
+      });
+      const steps = drive(ov, at, CLOSE, Number.NaN, () => 76_010);
+      expect(ov.targetPrice).toBe(76_000.7);
+      // No open: the body is unknown, so the hold is exact; the close is where the mark points.
+      expect(steps.find((s) => s.t === CLOSE)!.out.value).toBe(76_000.7);
+      // Frozen already: no clamp (the 0.001% limit would have cut it), nothing saved again.
+      expect(saved).toEqual([]);
+    }
+  });
+
+  it('the persisted target is preferred even when the open is known', () => {
+    const ov = new PriceOverride(scheduled({ ticks: 20 }), OPEN, { ...opts(7), persistedTarget: 76_000.4 });
+    expect(ov.resolveTarget(76_000)).toBe(76_000.4);
+    drive(ov, OPEN, OPEN, 76_000);
+    expect(ov.targetPrice).toBe(76_000.4);
+  });
+
+  it('no bucketOpen and nothing persisted: falls back to the first tick', () => {
+    const ov = new PriceOverride(scheduled({ ticks: 20 }), OPEN + 5000, opts(8));
+    expect(ov.resolveTarget(undefined, 76_010)).toBe(76_010.2);
+    drive(ov, OPEN + 5000, OPEN + 5000, Number.NaN, () => 76_010);
+    expect(ov.targetPrice).toBe(76_010.2);
+  });
+
+  it('a body clamped to 1 tick holds exactly on the target (band 0): the color holds on 200 seeds', () => {
+    for (let k = 0; k < 200; k++) {
+      for (const direction of ['up', 'down'] as const) {
+        // 0.000001% of 76 000 is 0.00076: no room at all, so the clamp floors the body at 1 tick.
+        const ov = new PriceOverride(scheduled({ ticks: 50, direction, maxOverridePct: 0.000001 }), OPEN, opts(2000 + k));
+        const steps = drive(ov, OPEN, CLOSE, 76_000);
+        expect(ov.bodyTicks).toBe(1);
+        const want = direction === 'up' ? 76_000.01 : 75_999.99;
+        for (const s of steps.filter((x) => x.t >= LAND && x.t <= CLOSE)) expect(s.out.value, `seed ${k}`).toBe(want);
+      }
+    }
+  });
+
+  it('jitter: false lands exactly on the resolved target', () => {
+    const ov = new PriceOverride(scheduled({ ticks: 25 }, false), OPEN, opts(6));
+    const steps = drive(ov, OPEN, CLOSE, 76_000);
+    expect(steps.find((s) => s.t === CLOSE)!.out.value).toBe(76_000.25);
+  });
+});

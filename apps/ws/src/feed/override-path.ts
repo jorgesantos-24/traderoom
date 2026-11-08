@@ -27,6 +27,8 @@ export interface OverridePathInit {
   volPerSqrtS: number | null;
   decimals: number;
   normal: NormalSource;
+  /** Largest hold band in ticks (scheduled mode: body − 1, so the close keeps the candle's color). 0: exact hold. */
+  maxBandTicks?: number;
 }
 
 export class OverridePath {
@@ -38,15 +40,15 @@ export class OverridePath {
   /** Last shown ramp prices in ticks (newest last, at most 3), starting with x0. */
   private readonly shown: number[];
   private readonly x0: number;
-  private readonly targetX: number;
+  private targetX: number;
   private readonly landMs: number;
   private readonly sigma: number;
-  private readonly dir: number;
+  private dir: number;
   private readonly normal: NormalSource;
   private readonly tick: number;
-  private readonly target: number;
+  private target: number;
   /** Hold band in whole ticks. */
-  readonly bandTicks: number;
+  bandTicks: number;
 
   constructor(init: OverridePathInit) {
     this.x = init.x0;
@@ -64,9 +66,22 @@ export class OverridePath {
     const bodySigma = (SIGMA_FACTOR * Math.abs(init.targetX - init.x0)) / Math.sqrt(spanS);
     this.sigma = init.volPerSqrtS === null ? bodySigma : Math.min(init.volPerSqrtS, bodySigma);
 
-    const body = Math.abs(this.target - Math.exp(init.x0));
-    const ticks = Math.round((BAND_FRACTION * body) / this.tick);
-    this.bandTicks = Math.max(BAND_MIN_TICKS, ticks);
+    this.bandTicks = this.band(init.maxBandTicks);
+  }
+
+  private band(maxBandTicks: number | undefined): number {
+    const body = Math.abs(this.target - Math.exp(this.x0));
+    const ticks = Math.max(BAND_MIN_TICKS, Math.round((BAND_FRACTION * body) / this.tick));
+    return maxBandTicks === undefined ? ticks : Math.max(0, Math.min(ticks, maxBandTicks));
+  }
+
+  /** Moves the target during the ramp (the bridge follows from where it is); ignored once landed. */
+  setTarget(targetX: number, maxBandTicks?: number): void {
+    if (this.landed) return;
+    this.targetX = targetX;
+    this.target = Math.exp(targetX);
+    this.dir = Math.sign(targetX - this.x0);
+    this.bandTicks = this.band(maxBandTicks);
   }
 
   /** Hold band in price units (± around the target). */
@@ -130,6 +145,10 @@ export class OverridePath {
 
   /** OU around the target in log-price, reflected at the band; every tick shows a new price. */
   private hold(dtS: number): void {
+    if (this.bandTicks === 0) {
+      this.x = this.targetX;
+      return;
+    }
     const bandX = (this.bandTicks * this.tick) / this.target;
     const theta = Math.LN2 / HOLD_HALF_LIFE_S;
     // Stationary sd ≈ half the band.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { OTC_OVERRIDE_HOLD_MS, OTC_OVERRIDE_LANDING_MS, OTC_OVERRIDE_RAMP_DEFAULT_MS } from '@traderoom/shared';
-import { editedCandle, phaseAt, priceScale, priceToY, rampPlan, requiredSpeed, withLiveCandle, yToPrice } from './otc-override';
+import { editedCandle, epochToLocalMinute, localMinuteToEpoch, phaseAt, priceScale, priceToY, projectedCandle, rampPlan, requiredSpeed, withLiveCandle, yToPrice } from './otc-override';
 
 describe('withLiveCandle', () => {
   const hist = [
@@ -57,5 +57,25 @@ describe('ramp', () => {
   it('phases', () => {
     const o = { rampStartMs: 100, holdStartMs: 200, candleCloseMs: 300 };
     expect([50, 150, 250, 300, 301].map((t) => phaseAt(t, o))).toEqual(['waiting', 'ramp', 'hold', 'hold', 'release']);
+  });
+});
+
+describe('scheduled mode helpers', () => {
+  it('turns a local HH:MM into the absolute epoch of its next occurrence', () => {
+    const now = new Date(2026, 10, 8, 14, 30, 20).getTime();
+    expect(localMinuteToEpoch('14:35', now)).toBe(new Date(2026, 10, 8, 14, 35).getTime());
+    // Already passed today: tomorrow.
+    expect(localMinuteToEpoch('14:30', now)).toBe(new Date(2026, 10, 9, 14, 30).getTime());
+    expect(localMinuteToEpoch('25:00', now)).toBeNull();
+    expect(localMinuteToEpoch('', now)).toBeNull();
+    expect(localMinuteToEpoch('14:35', now)! % 60_000).toBe(0);
+    expect(epochToLocalMinute(new Date(2026, 10, 8, 9, 5).getTime())).toBe('09:05');
+  });
+
+  it('projects the candle as open ± ticks on the price grid', () => {
+    expect(projectedCandle(76_000, 'up', 20, 2)).toMatchObject({ o: 76_000, c: 76_000.2 });
+    const down = projectedCandle(76_000, 'down', 15, 2);
+    expect(down.c).toBe(75_999.85);
+    expect(down.offsetPct).toBeCloseTo((0.15 / 76_000) * 100, 10);
   });
 });

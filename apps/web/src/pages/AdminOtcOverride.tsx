@@ -4,8 +4,12 @@ import {
   CANDLE_INTERVAL_MS,
   candleBucket,
   OTC_OVERRIDE_MIN_LEAD_MS,
+  OTC_OVERRIDE_MIN_TICKS,
   OTC_OVERRIDE_RAMP_DEFAULT_MS,
+  OTC_OVERRIDE_SCHEDULE_HORIZON_MS,
+  OTC_OVERRIDE_TICKS_STEP,
   type CandleInterval,
+  type OverrideDirection,
   type OtcOverrideAsset,
   type OtcOverrideView,
 } from '@traderoom/shared';
@@ -17,7 +21,10 @@ import { serverClock } from '../lib/clock';
 import { formatCountdown, formatPrice } from '../lib/format';
 import {
   editedCandle,
+  epochToLocalMinute,
   gridStep,
+  localMinuteToEpoch,
+  projectedCandle,
   phaseAt,
   PHASE_LABEL,
   priceScale,
@@ -83,6 +90,11 @@ function OverrideScreen() {
   const [target, setTarget] = useState<number | null>(null);
   const [targetText, setTargetText] = useState('');
   const [nextCandle, setNextCandle] = useState(false);
+  /** Market assets: set the current candle now, or book a future 1m candle. */
+  const [mode, setMode] = useState<'now' | 'schedule'>('now');
+  const [schedTime, setSchedTime] = useState('');
+  const [direction, setDirection] = useState<OverrideDirection | null>(null);
+  const [ticks, setTicks] = useState(OTC_OVERRIDE_MIN_TICKS);
   const [busy, setBusy] = useState<'apply' | 'release' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
@@ -129,6 +141,7 @@ function OverrideScreen() {
   // Market assets: only the 1m close can be set.
   useEffect(() => {
     if (market) setInterval_('1m');
+    else setMode('now');
   }, [market]);
   const quote = useQuote(symbol);
   const price = quote?.price ?? null;
@@ -176,8 +189,29 @@ function OverrideScreen() {
   // Market: the server ramps over the rest of the candle.
   const plan = rampPlan(now, closeMs, market ? 60_000 : undefined);
 
+  const scheduling = market && mode === 'schedule';
+  // The time is read in the browser's zone and sent as an absolute epoch.
+  const atMs = scheduling ? localMinuteToEpoch(schedTime, now) : null;
+  const schedError =
+    !scheduling || schedTime === ''
+      ? null
+      : atMs === null
+        ? 'Horário inválido.'
+        : atMs <= now + OTC_OVERRIDE_MIN_LEAD_MS
+          ? `O minuto tem que começar daqui a mais de ${OTC_OVERRIDE_MIN_LEAD_MS / 1000} s.`
+          : atMs > now + OTC_OVERRIDE_SCHEDULE_HORIZON_MS
+            ? `Só dá para agendar até ${OTC_OVERRIDE_SCHEDULE_HORIZON_MS / 60_000} min à frente.`
+            : null;
+  const ticksOk = Number.isInteger(ticks) && ticks >= OTC_OVERRIDE_MIN_TICKS && ticks % OTC_OVERRIDE_TICKS_STEP === 0;
+  const startSchedule = () => {
+    setMode('schedule');
+    // Default: the minute after next, so there is time to choose.
+    if (schedTime === '') setSchedTime(epochToLocalMinute(candleBucket(now, 60_000).closeMs + 60_000));
+    setActionError(null);
+  };
+
   const activeHere = override !== null && override.assetId === assetId;
-  const canEdit = !active && price !== null;
+  const canEdit = !active && price !== null && !scheduling;
   const live = useMemo(() => withLiveCandle(candles, price, bucket.openMs, CANDLES), [candles, price, bucket.openMs]);
   const distancePct = target !== null && price ? ((target - price) / price) * 100 : null;
   const maxPct = market ? (asset?.maxOverridePct ?? null) : null;
@@ -198,7 +232,29 @@ function OverrideScreen() {
     setTarget(v.trim() !== '' && Number.isFinite(n) && n > 0 ? roundTo(n, decimals) : null);
   };
 
+  const applySchedule = async () => {
+    if (!asset || atMs === null || direction === null || !ticksOk) return;
+    setBusy('apply');
+    setActionError(null);
+    try {
+      const v = await api.admin.applyOtcOverride({
+        assetId: asset.id,
+        interval: '1m',
+        rampMs: OTC_OVERRIDE_RAMP_DEFAULT_MS,
+        nextCandle: false,
+        schedule: { atMs, direction, ticks },
+      });
+      setOverride(v);
+      setNotice(`Agendado: ${v.symbol} às ${epochToLocalMinute(v.candleOpenMs)}, vela ${direction === 'up' ? 'verde' : 'vermelha'} de ${ticks} ticks.`);
+    } catch (err) {
+      setActionError(errMsg(err, 'Não foi possível agendar.'));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const apply = async () => {
+    if (scheduling) return applySchedule();
     if (!asset || target === null) return;
     setBusy('apply');
     setActionError(null);
@@ -211,7 +267,7 @@ function OverrideScreen() {
         nextCandle: useNext,
       });
       setOverride(v);
-      setNotice(`Override aplicado: ${v.symbol} fecha em ${formatPrice(v.targetPrice, v.decimals)}.`);
+      setNotice(`Override aplicado: ${v.symbol} fecha em ${v.targetPrice === null ? '—' : formatPrice(v.targetPrice, v.decimals)}.`);
     } catch (err) {
       setActionError(errMsg(err, 'Não foi possível aplicar.'));
     } finally {
@@ -259,7 +315,9 @@ function OverrideScreen() {
   }
 
   const fmt = (p: number | null) => (p === null ? '—' : formatPrice(p, decimals));
-  const applyBlocked = active || target === null || price === null || (tooLate && !nextCandle) || target === price;
+  const applyBlocked = scheduling
+    ? active || price === null || atMs === null || schedError !== null || direction === null || !ticksOk
+    : active || target === null || price === null || (tooLate && !nextCandle) || target === price;
 
   return (
     <div className="flex flex-col gap-4">
@@ -322,7 +380,7 @@ function OverrideScreen() {
           candles={live}
           decimals={decimals}
           price={price}
-          editTarget={!active ? target : null}
+          editTarget={!active && !scheduling ? target : null}
           activeTarget={activeHere ? override.targetPrice : null}
           canEdit={canEdit}
           onTarget={setTargetPrice}
@@ -339,53 +397,97 @@ function OverrideScreen() {
         <ActivePanel override={override} now={now} onRelease={release} busy={busy === 'release'} />
       ) : (
         <Card className="flex flex-col gap-4 p-4">
-          <div className="flex flex-wrap items-end gap-4">
-            <Field
-              label="Preço alvo"
-              inputMode="decimal"
-              value={targetText}
-              onChange={(e) => onTargetText(e.target.value)}
-              placeholder={price === null ? '' : fmt(price)}
-              className="w-full sm:w-48"
+          {market && (
+            <div role="radiogroup" aria-label="Quando" className="flex gap-1 self-start rounded-control border border-border p-1 text-sm">
+              {(
+                [
+                  ['now', 'Agora'],
+                  ['schedule', 'Agendar'],
+                ] as const
+              ).map(([m, label]) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="radio"
+                  aria-checked={mode === m}
+                  onClick={() => (m === 'schedule' ? startSchedule() : setMode('now'))}
+                  className={cx('rounded-control px-3 py-1', mode === m ? 'bg-brand/15 font-medium text-brand' : 'text-muted hover:text-text')}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          {scheduling ? (
+            <ScheduleForm
+              ids={ids}
+              time={schedTime}
+              onTime={(v) => {
+                setSchedTime(v);
+                setActionError(null);
+              }}
+              atMs={atMs}
+              timeError={schedError}
+              direction={direction}
+              onDirection={setDirection}
+              ticks={ticks}
+              onTicks={setTicks}
+              ticksOk={ticksOk}
+              price={price}
+              decimals={decimals}
+              maxPct={maxPct}
             />
-            <dl className="grid grid-cols-[auto_auto] gap-x-4 gap-y-1 text-sm">
-              <dt className="text-muted">Distância</dt>
-              <dd className={cx('font-mono tabular-nums', distancePct !== null && (distancePct >= 0 ? 'text-up' : 'text-down'))} data-testid="otc-distance">
-                {distancePct === null ? '—' : `${distancePct >= 0 ? '+' : ''}${distancePct.toFixed(3).replace('.', ',')}%`}
-              </dd>
-              {maxPct !== null && (
-                <>
-                  <dt className="text-muted">Limite do ativo</dt>
-                  <dd className={cx('font-mono tabular-nums', overLimit && 'text-down')} data-testid="otc-max-pct">
-                    ±{maxPct.toFixed(3).replace('.', ',')}%{overLimit ? ' (acima do limite)' : ''}
+          ) : (
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-wrap items-end gap-4">
+                <Field
+                  label="Preço alvo"
+                  inputMode="decimal"
+                  value={targetText}
+                  onChange={(e) => onTargetText(e.target.value)}
+                  placeholder={price === null ? '' : fmt(price)}
+                  className="w-full sm:w-48"
+                />
+                <dl className="grid grid-cols-[auto_auto] gap-x-4 gap-y-1 text-sm">
+                  <dt className="text-muted">Distância</dt>
+                  <dd className={cx('font-mono tabular-nums', distancePct !== null && (distancePct >= 0 ? 'text-up' : 'text-down'))} data-testid="otc-distance">
+                    {distancePct === null ? '—' : `${distancePct >= 0 ? '+' : ''}${distancePct.toFixed(3).replace('.', ',')}%`}
                   </dd>
-                </>
+                  {maxPct !== null && (
+                    <>
+                      <dt className="text-muted">Limite do ativo</dt>
+                      <dd className={cx('font-mono tabular-nums', overLimit && 'text-down')} data-testid="otc-max-pct">
+                        ±{maxPct.toFixed(3).replace('.', ',')}%{overLimit ? ' (acima do limite)' : ''}
+                      </dd>
+                    </>
+                  )}
+                  <dt className="text-muted">Velocidade necessária</dt>
+                  <dd className="font-mono tabular-nums" data-testid="otc-speed">
+                    {speed === null
+                      ? '—'
+                      : `${speed.pricePerSec >= 0 ? '+' : ''}${formatPrice(speed.pricePerSec, decimals)}/s (${speed.pctPerSec.toFixed(4).replace('.', ',')}%/s) em ${(plan.rampMs / 1000).toFixed(1).replace('.', ',')} s de rampa`}
+                  </dd>
+                </dl>
+              </div>
+              {tooLate && (
+                <div className="flex flex-col gap-2">
+                  <FormMessage tone="info">
+                    Faltam menos de {OTC_OVERRIDE_MIN_LEAD_MS / 1000} s para o fechamento desta vela: não dá tempo de levar o preço ao alvo.
+                  </FormMessage>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={nextCandle} onChange={(e) => setNextCandle(e.target.checked)} className="size-4 accent-brand" />
+                    Aplicar no próximo candle
+                  </label>
+                </div>
               )}
-              <dt className="text-muted">Velocidade necessária</dt>
-              <dd className="font-mono tabular-nums" data-testid="otc-speed">
-                {speed === null
-                  ? '—'
-                  : `${speed.pricePerSec >= 0 ? '+' : ''}${formatPrice(speed.pricePerSec, decimals)}/s (${speed.pctPerSec.toFixed(4).replace('.', ',')}%/s) em ${(plan.rampMs / 1000).toFixed(1).replace('.', ',')} s de rampa`}
-              </dd>
-            </dl>
-          </div>
-          {tooLate && (
-            <div className="flex flex-col gap-2">
-              <FormMessage tone="info">
-                Faltam menos de {OTC_OVERRIDE_MIN_LEAD_MS / 1000} s para o fechamento desta vela: não dá tempo de levar o preço ao alvo.
-              </FormMessage>
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={nextCandle} onChange={(e) => setNextCandle(e.target.checked)} className="size-4 accent-brand" />
-                Aplicar no próximo candle
-              </label>
             </div>
           )}
           {actionError && <FormMessage tone="error">{actionError}</FormMessage>}
           <div className="flex gap-2">
             <Button onClick={() => void apply()} busy={busy === 'apply'} disabled={applyBlocked}>
-              Aplicar
+              {scheduling ? 'Agendar' : 'Aplicar'}
             </Button>
-            {target !== null && (
+            {!scheduling && target !== null && (
               <Button variant="ghost" onClick={() => onTargetText('')}>
                 Limpar alvo
               </Button>
@@ -419,17 +521,180 @@ function ActivePanel({ override: o, now, onRelease, busy }: { override: OtcOverr
           {formatCountdown(Math.abs(remaining))}
           {phase === 'waiting' && <span className="ml-2 text-muted">rampa em {formatCountdown(o.rampStartMs - now)}</span>}
         </dd>
+        {o.schedule && (
+          <>
+            <dt className="text-muted">Agendado</dt>
+            <dd data-testid="otc-schedule">
+              {epochToLocalMinute(o.candleOpenMs)}, vela{' '}
+              <span className={o.schedule.direction === 'up' ? 'text-up' : 'text-down'}>{o.schedule.direction === 'up' ? 'verde' : 'vermelha'}</span> de{' '}
+              {o.schedule.ticks} ticks
+            </dd>
+          </>
+        )}
         <dt className="text-muted">Alvo</dt>
-        <dd className="font-mono tabular-nums">{fmt(o.targetPrice)}</dd>
+        <dd className="font-mono tabular-nums">{o.targetPrice === null && o.schedule ? 'definido na abertura da vela' : fmt(o.targetPrice)}</dd>
         <dt className="text-muted">Preço base / atual</dt>
         <dd className="font-mono tabular-nums">
           {fmt(o.basePrice)} / {fmt(o.currentPrice)}
         </dd>
       </dl>
       <Button variant="secondary" className="ml-auto" onClick={onRelease} busy={busy}>
-        Soltar override
+        {o.schedule && phase === 'waiting' ? 'Cancelar agendamento' : 'Soltar override'}
       </Button>
     </Card>
+  );
+}
+
+interface ScheduleFormProps {
+  ids: string;
+  /** "HH:MM" in the browser's time zone. */
+  time: string;
+  onTime(v: string): void;
+  atMs: number | null;
+  timeError: string | null;
+  direction: OverrideDirection | null;
+  onDirection(d: OverrideDirection): void;
+  ticks: number;
+  onTicks(n: number): void;
+  ticksOk: boolean;
+  price: number | null;
+  decimals: number;
+  maxPct: number | null;
+}
+
+const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+function ScheduleForm(p: ScheduleFormProps) {
+  const step = (d: number) =>
+    p.onTicks(Math.max(OTC_OVERRIDE_MIN_TICKS, Math.round(p.ticks / OTC_OVERRIDE_TICKS_STEP) * OTC_OVERRIDE_TICKS_STEP + d));
+  return (
+    <div className="flex flex-wrap items-start gap-6">
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={`${p.ids}-at`} className="text-sm font-medium">
+            Minuto (1m)
+          </label>
+          <input
+            id={`${p.ids}-at`}
+            type="time"
+            step={60}
+            value={p.time}
+            onChange={(e) => p.onTime(e.target.value)}
+            className="w-36 rounded-control border border-border bg-field px-3 py-2 text-sm text-text focus:border-brand"
+          />
+          <span className="text-xs text-muted">
+            Horário de {TIME_ZONE}
+            {p.atMs !== null && ` · ${new Date(p.atMs).toLocaleDateString('pt-BR')}`}
+          </span>
+          {p.timeError && <span className="text-sm text-down">{p.timeError}</span>}
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Cor da vela</span>
+          <div role="radiogroup" aria-label="Cor da vela" className="flex gap-2">
+            {(
+              [
+                ['up', 'Verde', 'border-up text-up bg-up/15'],
+                ['down', 'Vermelha', 'border-down text-down bg-down/15'],
+              ] as const
+            ).map(([d, label, on]) => (
+              <button
+                key={d}
+                type="button"
+                role="radio"
+                aria-checked={p.direction === d}
+                onClick={() => p.onDirection(d)}
+                className={cx('rounded-control border px-4 py-2 text-sm font-medium', p.direction === d ? on : 'border-border text-muted hover:text-text')}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={`${p.ids}-ticks`} className="text-sm font-medium">
+            Corpo (ticks)
+          </label>
+          <div className="flex items-center gap-1">
+            <Button variant="secondary" aria-label="Menos 5 ticks" onClick={() => step(-OTC_OVERRIDE_TICKS_STEP)} disabled={p.ticks <= OTC_OVERRIDE_MIN_TICKS}>
+              −
+            </Button>
+            <input
+              id={`${p.ids}-ticks`}
+              type="number"
+              inputMode="numeric"
+              min={OTC_OVERRIDE_MIN_TICKS}
+              step={OTC_OVERRIDE_TICKS_STEP}
+              value={Number.isFinite(p.ticks) ? p.ticks : ''}
+              onChange={(e) => p.onTicks(Number(e.target.value))}
+              className="w-20 rounded-control border border-border bg-field px-3 py-2 text-center font-mono text-sm tabular-nums text-text focus:border-brand"
+            />
+            <Button variant="secondary" aria-label="Mais 5 ticks" onClick={() => step(OTC_OVERRIDE_TICKS_STEP)}>
+              +
+            </Button>
+          </div>
+          <span className={cx('text-xs', p.ticksOk ? 'text-muted' : 'text-down')}>
+            Mínimo {OTC_OVERRIDE_MIN_TICKS}, em múltiplos de {OTC_OVERRIDE_TICKS_STEP}. 1 tick = {formatPrice(10 ** -p.decimals, p.decimals)}.
+          </span>
+        </div>
+      </div>
+      <ProjectedCandle price={p.price} direction={p.direction} ticks={p.ticksOk ? p.ticks : null} decimals={p.decimals} maxPct={p.maxPct} />
+    </div>
+  );
+}
+
+/** Preview: the booked candle as it would close if it opened at the current price. */
+function ProjectedCandle({
+  price,
+  direction,
+  ticks,
+  decimals,
+  maxPct,
+}: {
+  price: number | null;
+  direction: OverrideDirection | null;
+  ticks: number | null;
+  decimals: number;
+  maxPct: number | null;
+}) {
+  if (price === null || direction === null || ticks === null) {
+    return (
+      <div className="flex h-40 w-56 items-center justify-center rounded-control border border-dashed border-border px-4 text-center text-sm text-muted">
+        Escolha a cor e o corpo para ver a vela projetada.
+      </div>
+    );
+  }
+  const k = projectedCandle(price, direction, ticks, decimals);
+  const over = maxPct !== null && k.offsetPct > maxPct;
+  const up = direction === 'up';
+  const H = 140;
+  const top = 26;
+  const bottom = H - 26;
+  const color = up ? 'var(--color-up)' : 'var(--color-down)';
+  const fmt = (n: number) => formatPrice(n, decimals);
+  return (
+    <figure className="flex items-center gap-3" data-testid="otc-projected">
+      <svg width={48} height={H} role="img" aria-label={`Vela ${up ? 'verde' : 'vermelha'} de ${fmt(k.o)} a ${fmt(k.c)}`}>
+        <line x1={24} x2={24} y1={top - 12} y2={bottom + 12} stroke={color} strokeWidth={1.5} />
+        <rect x={12} y={top} width={24} height={bottom - top} fill={color} rx={2} />
+      </svg>
+      <figcaption className="grid grid-cols-[auto_auto] gap-x-3 gap-y-1 text-sm">
+        <span className="text-muted">Abre</span>
+        <span className="font-mono tabular-nums">{fmt(k.o)}</span>
+        <span className="text-muted">Fecha</span>
+        <span className="font-mono tabular-nums">{fmt(k.c)}</span>
+        <span className="text-muted">Corpo</span>
+        <span className="font-mono tabular-nums">
+          {up ? '+' : '−'}
+          {fmt(Math.abs(k.c - k.o))} ({k.offsetPct.toFixed(3).replace('.', ',')}%)
+        </span>
+        <span className="col-span-2 max-w-64 text-xs text-muted">Projeção com a abertura no preço de agora; o alvo sai da abertura da vela.</span>
+        {over && maxPct !== null && (
+          <span className="col-span-2 max-w-64 text-xs text-warn" data-testid="otc-projected-over">
+            Acima do limite do ativo (±{maxPct.toFixed(3).replace('.', ',')}%): o corpo será reduzido no início da vela.
+          </span>
+        )}
+      </figcaption>
+    </figure>
   );
 }
 
