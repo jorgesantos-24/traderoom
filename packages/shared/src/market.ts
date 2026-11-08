@@ -78,8 +78,21 @@ export interface Candle {
   v: number;
 }
 
+export type CandleMarkDirection = 'up' | 'down' | 'flat';
+
+/** A candle whose close the platform set (price override). Stays after the override ends. */
+export interface CandleMark {
+  /** Open time of the candle in the response that carries the mark (same as Candle.t). */
+  openMs: number;
+  targetPrice: number;
+  /** target vs that candle's open. */
+  direction: CandleMarkDirection;
+}
+
 export interface CandlesResponse {
   symbol: string;
   interval: CandleInterval;
   candles: Candle[];
+  /** One per marked candle; candles without an override have none. */
+  marks: CandleMark[];
 }

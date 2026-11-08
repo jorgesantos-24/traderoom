@@ -234,6 +234,30 @@ describe('GET /api/candles', () => {
     expect(seen).toEqual([['BTCUSDT', '1m', 500]]);
   });
 
+  it('returns no marks when no candle had an override', async () => {
+    const res = await get('/api/candles?symbol=BTCUSDT');
+    expect(res.json<CandlesResponse>().marks).toEqual([]);
+  });
+
+  it('passes the candles to the mark source and returns its marks', async () => {
+    const asked: unknown[][] = [];
+    app = await testApp({
+      candles: fakeCandles,
+      deps: {
+        overrideMarks: {
+          marks: async (...args) => {
+            asked.push(args);
+            return [{ openMs: args[2][1]!.t, targetPrice: 2, direction: 'up' }];
+          },
+        },
+      },
+    });
+    const res = await app.inject({ method: 'GET', url: '/api/candles?symbol=BTCUSDT&interval=5m', headers: { cookie: `sid=${FAKE_SID}` } });
+    const body = res.json<CandlesResponse>();
+    expect(asked).toEqual([['BTCUSDT', '5m', body.candles]]);
+    expect(body.marks).toEqual([{ openMs: body.candles[1]!.t, targetPrice: 2, direction: 'up' }]);
+  });
+
   it.each([
     ['/api/candles', 'symbol'],
     ['/api/candles?symbol=BTC/USDT', 'symbol'],
