@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import type { AdminWithdrawalView } from '@traderoom/shared';
 import { api, ApiError } from '../lib/api';
-import { formatDateTime, formatMoney, PIX_KEY_LABEL, WITHDRAWAL_STATUS_LABEL } from '../lib/format';
+import { formatBrl, formatDateTime, formatFxRate, formatMoney, PIX_KEY_LABEL, WITHDRAWAL_STATUS_LABEL } from '../lib/format';
 import { usePaged } from '../lib/use-paged';
 import { Dialog } from './Dialog';
 import { PagedFooter } from './PagedFooter';
@@ -96,7 +96,10 @@ export function WithdrawalsTab({ onNotice }: { onNotice(m: string): void }) {
                       <div className="text-xs text-muted">{PIX_KEY_LABEL[w.pixKeyType]}</div>
                       <div className="break-all">{w.pixKey}</div>
                     </td>
-                    <td className="tabular whitespace-nowrap px-4 py-2 text-right font-semibold">{formatMoney(w.amountCents)}</td>
+                    <td className="tabular whitespace-nowrap px-4 py-2 text-right font-semibold">
+                      {formatBrl(w.pixAmountCents)}
+                      <div className="text-xs font-normal text-muted">{formatMoney(w.amountCents)}</div>
+                    </td>
                     <td className="px-4 py-2">
                       <div>{WITHDRAWAL_STATUS_LABEL[w.status]}</div>
                       {w.lastError && w.status === 'approved' && <div className="text-xs text-down">{w.lastError}</div>}
@@ -134,7 +137,8 @@ export function WithdrawalsTab({ onNotice }: { onNotice(m: string): void }) {
         {confirm && (
           <>
             <p className="text-sm">
-              Enviar <strong>{formatMoney(confirm.amountCents)}</strong> por Pix para a chave {PIX_KEY_LABEL[confirm.pixKeyType]}{' '}
+              Enviar <strong>{formatBrl(confirm.pixAmountCents)}</strong> ({formatMoney(confirm.amountCents)};{' '}
+              {formatFxRate(confirm.fxRate)}) por Pix para a chave {PIX_KEY_LABEL[confirm.pixKeyType]}{' '}
               <strong className="break-all">{confirm.pixKey}</strong> ({confirm.userName})? O dinheiro sai do saldo da empresa na Novus e não
               dá para desfazer.
             </p>

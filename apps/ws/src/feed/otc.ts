@@ -283,6 +283,8 @@ export interface OtcFeedDeps {
   /** Writes generated history for a brand-new asset, so its chart is not empty. */
   writeHistory(rows: readonly OtcHistoryRow[]): Promise<void>;
   normal?: NormalSource;
+  /** Clock for assets started after others finished their history. Default: the `now` given to sync. */
+  now?: () => number;
   onError(err: unknown, symbol: string): void;
 }
 
@@ -300,21 +302,27 @@ export class OtcFeed {
     this.normal = deps.normal ?? cryptoNormal();
   }
 
-  /** Adds new assets (async: may write history first), updates parameters, drops removed ones. */
-  sync(assets: readonly OtcAsset[], now: number): Promise<void> {
+  /**
+   * Adds new assets (async: may write history first), updates parameters, drops removed ones.
+   * New assets start one at a time: a first boot writes 48 h of history per asset, and doing them
+   * all at once starves a small database's connection pool. An asset that fails to start is retried
+   * on the next sync.
+   */
+  async sync(assets: readonly OtcAsset[], now: number): Promise<void> {
     const keep = new Set(assets.map((a) => a.symbol));
     for (const s of this.walks.keys()) if (!keep.has(s)) this.walks.delete(s);
-    const starts: Array<Promise<void>> = [];
+    const pending: OtcAsset[] = [];
     for (const a of assets) {
       const cur = this.walks.get(a.symbol);
       if (cur) {
         cur.walk.setParams(a.otc);
         cur.asset = a;
       } else if (!this.starting.has(a.symbol)) {
-        starts.push(this.begin(a, now));
+        this.starting.add(a.symbol);
+        pending.push(a);
       }
     }
-    return Promise.all(starts).then(() => undefined);
+    for (const [i, a] of pending.entries()) await this.begin(a, i === 0 || !this.deps.now ? now : this.deps.now());
   }
 
   /** Applies the active override to its asset only; every other walk is released. */
@@ -325,7 +333,6 @@ export class OtcFeed {
   }
 
   private async begin(a: OtcAsset, now: number): Promise<void> {
-    this.starting.add(a.symbol);
     try {
       const last = await this.deps.lastPrice(a.id);
       let walk: OtcWalk;

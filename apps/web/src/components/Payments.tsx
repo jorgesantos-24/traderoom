@@ -3,12 +3,16 @@ import QRCode from 'qrcode';
 import { PIX_KEY_TYPES, type DepositView, type PaymentsInfo, type PixKeyType } from '@traderoom/shared';
 import { api, ApiError } from '../lib/api';
 import {
+  brlToUsdCents,
   DEPOSIT_STATUS_LABEL,
+  formatBrl,
   formatDateTime,
+  formatFxRate,
   formatMoney,
   formatSignedMoney,
   parseMoneyToCents,
   PIX_KEY_LABEL,
+  usdToBrlCents,
   WITHDRAWAL_STATUS_LABEL,
 } from '../lib/format';
 import { navigate } from '../lib/router';
@@ -71,6 +75,20 @@ function usePaymentsInfo(open: boolean) {
   return { info, error };
 }
 
+/** Live conversion preview between the amount typed and the other currency. */
+function ConversionBox({ rate, label, value }: { rate: number | null; label: string; value: string }) {
+  if (!rate) {
+    return <FormMessage tone="error">Cotação do dólar indisponível no momento. Tente novamente em instantes.</FormMessage>;
+  }
+  return (
+    <div className="rounded-control border border-border bg-field px-3 py-2" data-testid="fx-preview">
+      <div className="text-xs text-muted">{label}</div>
+      <div className="tabular text-lg font-bold text-up">{value}</div>
+      <div className="text-xs text-muted">Cotação: {formatFxRate(rate)}</div>
+    </div>
+  );
+}
+
 const centsToText = (c: number) => (c / 100).toFixed(c % 100 === 0 ? 0 : 2).replace('.', ',');
 
 /** Pix deposit: amount (+ CPF the first time) → QR code and copia e cola → confirmation. */
@@ -123,7 +141,7 @@ export function DepositDialog({ open, onClose }: { open: boolean; onClose(): voi
     e.preventDefault();
     if (!info || cents === null) return;
     if (cents < info.depositMinCents || cents > info.depositMaxCents) {
-      setError(`O depósito deve ser entre ${formatMoney(info.depositMinCents)} e ${formatMoney(info.depositMaxCents)}.`);
+      setError(`O depósito deve ser entre ${formatBrl(info.depositMinCents)} e ${formatBrl(info.depositMaxCents)}.`);
       return;
     }
     setBusy(true);
@@ -174,7 +192,7 @@ export function DepositDialog({ open, onClose }: { open: boolean; onClose(): voi
                   cents === p ? 'border-up bg-up/10 text-up' : 'border-border text-muted hover:text-text',
                 )}
               >
-                {formatMoney(p)}
+                {formatBrl(p)}
               </button>
             ))}
           </div>
@@ -183,7 +201,12 @@ export function DepositDialog({ open, onClose }: { open: boolean; onClose(): voi
             inputMode="decimal"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            hint={`Mínimo ${formatMoney(info.depositMinCents)}. Cai na conta real assim que o Pix for confirmado.`}
+            hint={`Mínimo ${formatBrl(info.depositMinCents)}. Você paga em reais e o saldo entra em dólares.`}
+          />
+          <ConversionBox
+            rate={info.depositRate}
+            label="Você recebe na conta real"
+            value={cents !== null && info.depositRate ? formatMoney(brlToUsdCents(cents, info.depositRate)) : '—'}
           />
           {info.cpf ? (
             <p className="text-xs text-muted">CPF do pagador: {info.cpf}</p>
@@ -203,7 +226,7 @@ export function DepositDialog({ open, onClose }: { open: boolean; onClose(): voi
             <Button variant="ghost" onClick={onClose}>
               Cancelar
             </Button>
-            <Button type="submit" variant="up" busy={busy} disabled={cents === null}>
+            <Button type="submit" variant="up" busy={busy} disabled={cents === null || !info.depositRate}>
               Gerar Pix
             </Button>
           </div>
@@ -213,7 +236,10 @@ export function DepositDialog({ open, onClose }: { open: boolean; onClose(): voi
       {deposit && deposit.status === 'pending' && (
         <div className="flex flex-col items-center gap-3 text-center" data-testid="deposit-pix">
           <p className="text-sm">
-            Pague <strong className="tabular">{formatMoney(deposit.amountCents)}</strong> pelo app do seu banco:
+            Pague <strong className="tabular">{formatBrl(deposit.amountCents)}</strong> pelo app do seu banco:
+          </p>
+          <p className="-mt-2 text-xs text-muted" data-testid="deposit-usd">
+            Você recebe <strong className="tabular text-up">{formatMoney(deposit.usdCents)}</strong> ({formatFxRate(deposit.fxRate)})
           </p>
           {qr ? (
             <img src={qr} alt="QR Code do Pix" className="size-56 rounded-control bg-white p-2" />
@@ -244,7 +270,7 @@ export function DepositDialog({ open, onClose }: { open: boolean; onClose(): voi
       {deposit && deposit.status === 'paid' && (
         <>
           <FormMessage tone="success">
-            Depósito de {formatMoney(deposit.amountCents)} confirmado! O valor já está na sua conta real.
+            Depósito de {formatBrl(deposit.amountCents)} confirmado! {formatMoney(deposit.usdCents)} já estão na sua conta real.
           </FormMessage>
           <div className="flex justify-end">
             <Button onClick={onClose}>Começar a negociar</Button>
@@ -283,7 +309,7 @@ export function WithdrawDialog({ open, onClose }: { open: boolean; onClose(): vo
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<number | null>(null);
+  const [done, setDone] = useState<{ usd: number; brl: number } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -305,7 +331,7 @@ export function WithdrawDialog({ open, onClose }: { open: boolean; onClose(): vo
     setError(null);
     try {
       const w = await api.createWithdrawal({ amountCents: cents, pixKeyType: keyType, pixKey: key });
-      setDone(w.amountCents);
+      setDone({ usd: w.amountCents, brl: w.pixAmountCents });
       void refreshWallet();
     } catch (err) {
       setError(errMsg(err, 'Não foi possível pedir o saque.'));
@@ -329,7 +355,7 @@ export function WithdrawDialog({ open, onClose }: { open: boolean; onClose(): vo
           </div>
           <div className="flex items-end gap-2">
             <Field
-              label="Valor (R$)"
+              label="Valor (US$)"
               inputMode="decimal"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
@@ -342,6 +368,11 @@ export function WithdrawDialog({ open, onClose }: { open: boolean; onClose(): vo
               </Button>
             )}
           </div>
+          <ConversionBox
+            rate={info.withdrawRate}
+            label="Você recebe via Pix"
+            value={cents !== null && info.withdrawRate ? formatBrl(usdToBrlCents(cents, info.withdrawRate)) : '—'}
+          />
           <div className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Tipo de chave Pix</span>
             <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Tipo de chave Pix">
@@ -377,7 +408,7 @@ export function WithdrawDialog({ open, onClose }: { open: boolean; onClose(): vo
             <Button variant="ghost" onClick={onClose}>
               Cancelar
             </Button>
-            <Button type="submit" busy={busy} disabled={cents === null || key.trim() === ''}>
+            <Button type="submit" busy={busy} disabled={cents === null || key.trim() === '' || !info.withdrawRate}>
               Pedir saque
             </Button>
           </div>
@@ -387,7 +418,7 @@ export function WithdrawDialog({ open, onClose }: { open: boolean; onClose(): vo
       {done !== null && (
         <>
           <FormMessage tone="success">
-            Pedido de saque de {formatMoney(done)} enviado. Ele está em análise e você acompanha o andamento na Carteira.
+            Pedido de saque de {formatMoney(done.usd)} ({formatBrl(done.brl)} via Pix) enviado. Ele está em análise e você acompanha o andamento na Carteira.
           </FormMessage>
           <div className="flex justify-end">
             <Button onClick={onClose}>Fechar</Button>
@@ -431,7 +462,8 @@ export function PaymentsHistory() {
           id: d.id,
           at: d.createdAt,
           kind: 'Depósito Pix',
-          cents: d.amountCents,
+          cents: d.usdCents,
+          brl: d.amountCents,
           status: d.status,
           label: DEPOSIT_STATUS_LABEL[d.status],
           note: null as string | null,
@@ -441,6 +473,7 @@ export function PaymentsHistory() {
           at: w.createdAt,
           kind: `Saque Pix (${PIX_KEY_LABEL[w.pixKeyType]})`,
           cents: -w.amountCents,
+          brl: w.pixAmountCents,
           status: w.status,
           label: WITHDRAWAL_STATUS_LABEL[w.status],
           note: w.note,
@@ -473,7 +506,7 @@ export function PaymentsHistory() {
               <div className="min-w-0">
                 <div className="font-medium">{r.kind}</div>
                 <div className="text-xs text-muted">
-                  {formatDateTime(r.at)}
+                  {formatDateTime(r.at)} · {formatBrl(r.brl)}
                   {r.note ? ` — ${r.note}` : ''}
                 </div>
               </div>

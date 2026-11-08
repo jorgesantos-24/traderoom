@@ -147,7 +147,7 @@ provision() {
     g monitoring uptime create traderoom-health --resource-type uptime-url \
       --resource-labels "host=$TRADEROOM_DOMAIN,project_id=$GCP_PROJECT" \
       --protocol https --path /api/health --port 443 --period 1 --timeout 10 \
-      --validate-ssl --status-classes 2xx
+      --validate-ssl=true --status-classes=2xx
   fi
 
   ip=$(g compute addresses describe "$IP_NAME" --region "$REGION" --format='value(address)')
@@ -185,13 +185,15 @@ harden_sql() {
   fi
 }
 
-ssh_vm() { g compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --command "$1"; }
-scp_vm() { g compute scp --zone "$ZONE" --tunnel-through-iap "$@"; }
+ssh_vm() { g compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --strict-host-key-checking=no --command "$1"; }
+scp_vm() { g compute scp --zone "$ZONE" --tunnel-through-iap --strict-host-key-checking=no "$@"; }
+# Local scratch inside the repo (gitignored): gcloud on Windows cannot read Git Bash's /tmp.
+WORK=.deploy
+fresh_dir() { rm -rf "${WORK:?}/$1" && mkdir -p "$WORK/$1" && printf '%s' "$WORK/$1"; }
 
 setup() {
-  : "${ACME_EMAIL:?set ACME_EMAIL (contact for the TLS certificate)}"
   local stage db_host
-  stage=$(mktemp -d)
+  stage=$(fresh_dir setup)
   trap 'rm -rf "$stage"' RETURN
   db_host=$(g sql instances describe "$SQL" --format='value(ipAddresses.filter("type:PRIVATE").extract(ipAddress).flatten())')
   [[ -n $db_host ]] || { echo "Cloud SQL $SQL has no private IP (run provision first)" >&2; exit 1; }
@@ -209,6 +211,8 @@ setup() {
 
   log 'staging VM files'
   cp -r infra/systemd infra/sysctl infra/redis infra/Caddyfile infra/vm/*.sh "$stage/"
+  # No contact e-mail: the certificate is issued without one (ACME allows it).
+  [[ -n $ACME_EMAIL ]] || sed -i '/^\temail {\$TRADEROOM_ACME_EMAIL}$/d' "$stage/Caddyfile"
   # Non-secret settings. Secrets (DATABASE_URL, RESEND_API_KEY, NOVUS_*) are built at boot by fetch-secrets.sh.
   cat >"$stage/traderoom.env" <<EOF
 GCP_PROJECT=$GCP_PROJECT
@@ -259,13 +263,16 @@ release() {
   tarball="traderoom-$id.tar.gz"
 
   log 'build'
-  npm ci --no-audit --no-fund
+  # SKIP_NPM_CI=1 keeps the current node_modules (e.g. dev servers on Windows lock them).
+  [[ ${SKIP_NPM_CI:-0} == 1 ]] || npm ci --no-audit --no-fund
   npm run typecheck
   npm test
   npm run build
 
   log "pack $tarball"
-  tar -czf "/tmp/$tarball" \
+  local out
+  out=$(fresh_dir release)/$tarball
+  tar -czf "$out" \
     package.json package-lock.json README.md db/migrations \
     packages/shared/package.json packages/shared/dist \
     apps/api/package.json apps/api/dist \
@@ -273,9 +280,9 @@ release() {
     apps/web/package.json apps/web/dist
 
   log 'upload and install'
-  scp_vm "/tmp/$tarball" "$VM:/tmp/$tarball"
+  scp_vm "$out" "$VM:/tmp/$tarball"
   ssh_vm "sudo /opt/traderoom/bin/release.sh /tmp/$tarball"
-  rm -f "/tmp/$tarball"
+  rm -rf "$WORK/release"
   log "live: https://$TRADEROOM_DOMAIN"
 }
 

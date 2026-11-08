@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import type { KycSubmitRequest } from '@traderoom/shared';
 import { loadConfig } from '../src/config.js';
+import { fixedFx } from '../src/lib/fx.js';
 import { createPool } from '../src/lib/db.js';
 import { createMemoryKycStore } from '../src/lib/kyc-storage.js';
 import type { PaymentGateway } from '../src/lib/novus.js';
@@ -119,7 +120,7 @@ describe('KYC service', () => {
 
     // Payments check KYC first.
     const gateway = {} as PaymentGateway;
-    const pay = createPaymentService({ pool, gateway, webhookSecrets: [], postbackUrl: null, requireKyc: (u) => kyc.requireApproved(u) });
+    const pay = createPaymentService({ pool, gateway, webhookSecrets: [], postbackUrl: null, fx: fixedFx(5), requireKyc: (u) => kyc.requireApproved(u) });
     await expect(pay.requestWithdrawal(b, { amountCents: 5000, pixKeyType: 'CPF', pixKey: CPFS[1]! })).rejects.toMatchObject({
       statusCode: 403,
     });

@@ -15,3 +15,6 @@ tests/load/results/
 # Firebase service account and other local credentials
 secrets/
 *-firebase-adminsdk-*.json
+
+# deploy.sh scratch (release tarballs, VM setup staging)
+.deploy/

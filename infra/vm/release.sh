@@ -33,7 +33,12 @@ source /run/traderoom/secrets.env
 set +a
 (cd "$dir" && node apps/api/dist/cli/migrate.js up)
 
-previous=$(readlink -f "$ROOT/current" 2>/dev/null || true)
+# Only a real previous release counts: on a first deploy (or a broken link) there is nothing to roll back to.
+previous=''
+if [[ -L $ROOT/current ]]; then
+  previous=$(readlink -e "$ROOT/current" 2>/dev/null || true)
+  [[ $previous == "$ROOT"/releases/* ]] || previous=''
+fi
 switch_to() {
   ln -sfn "$1" "$ROOT/current.tmp"
   mv -Tf "$ROOT/current.tmp" "$ROOT/current"
@@ -63,6 +68,8 @@ if ! healthy; then
     echo "rolling back to $(basename "$previous") (migrations are forward-only and stay applied)" >&2
     switch_to "$previous"
     systemctl restart traderoom-worker traderoom-api traderoom-ws
+  else
+    echo 'no previous release to roll back to; this one stays in place for diagnosis' >&2
   fi
   exit 1
 fi

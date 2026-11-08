@@ -78,26 +78,26 @@ test('admin credits, blocks and unblocks a user, edits an asset, and every actio
   await page.getByRole('link', { name: 'Admin' }).click();
   await expect(page.getByRole('heading', { name: 'Administração' })).toBeVisible();
 
-  // Search and credit R$ 50,00.
+  // Search and credit US$ 50,00.
   await page.getByLabel('Buscar por nome ou e-mail').fill(userEmail);
   const row = page.getByTestId('admin-user-row').filter({ hasText: userEmail });
   await expect(page.getByTestId('admin-user-row')).toHaveCount(1);
   await row.getByRole('button', { name: /Ajustar saldo/ }).click();
   const dialog = page.getByRole('dialog', { name: 'Ajustar saldo' });
-  await dialog.getByLabel('Valor (R$)').fill('50');
+  await dialog.getByLabel('Valor (US$)').fill('50');
   await dialog.getByRole('button', { name: 'Lançar crédito' }).click();
   await expect(dialog.getByText('Descreva o motivo (mínimo 3 caracteres).')).toBeVisible();
   await dialog.getByLabel('Motivo').fill('Bônus E2E');
   await expect(dialog.getByText(/Saldo após o ajuste/)).toContainText('50,00');
   await dialog.getByRole('button', { name: 'Lançar crédito' }).click();
   await expect(dialog).toBeHidden();
-  await expect.poll(async () => nb(await row.textContent())).toContain('R$ 50,00');
-  await expect(page.getByTestId('admin-notice')).toContainText('Crédito de R$');
+  await expect.poll(async () => nb(await row.textContent())).toContain('US$ 50,00');
+  await expect(page.getByTestId('admin-notice')).toContainText('Crédito de US$');
 
   // A debit larger than the balance is refused before it is sent.
   await row.getByRole('button', { name: /Ajustar saldo/ }).click();
   await dialog.getByText('Débito').click();
-  await dialog.getByLabel('Valor (R$)').fill('60');
+  await dialog.getByLabel('Valor (US$)').fill('60');
   await dialog.getByLabel('Motivo').fill('Teste de limite');
   await dialog.getByRole('button', { name: 'Lançar débito' }).click();
   await expect(dialog.getByText(/O débito máximo é/)).toBeVisible();
@@ -106,7 +106,7 @@ test('admin credits, blocks and unblocks a user, edits an asset, and every actio
 
   // The user sees the credit in the wallet.
   await client.goto('/wallet');
-  await expect.poll(async () => nb(await client.getByTestId('wallet-balance').textContent())).toBe('R$ 50,00');
+  await expect.poll(async () => nb(await client.getByTestId('wallet-balance').textContent())).toBe('US$ 50,00');
   await expect(client.getByTestId('ledger-row').first()).toContainText('Bônus E2E');
 
   // Block: the user's session ends and login is refused.
@@ -124,7 +124,7 @@ test('admin credits, blocks and unblocks a user, edits an asset, and every actio
   await expect(row).toContainText('Ativo');
   await login(client, userEmail);
   await expect(client).toHaveURL(/\/traderoom$/);
-  await expect.poll(async () => nb(await client.getByTestId('balance').textContent())).toBe('R$ 50,00');
+  await expect.poll(async () => nb(await client.getByTestId('balance').textContent())).toBe('US$ 50,00');
 
   // Asset editor: invalid payout is blocked, a valid one saves.
   await page.getByRole('tab', { name: 'Ativos' }).click();

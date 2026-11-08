@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { formatCountdown, formatDuration, formatMoney, formatPrice, formatSignedMoney, parseMoneyToCents, pricePrecision } from './format';
+import { brlToUsdCents, formatBrl, formatCountdown, formatDuration, formatFxRate, formatMoney, formatPrice, formatSignedMoney, parseMoneyToCents, pricePrecision } from './format';
 
 const nbsp = (s: string) => s.replace(/ /g, ' ');
 
 describe('money', () => {
-  it('formats cents as BRL', () => {
-    expect(nbsp(formatMoney(187_000))).toBe('R$ 1.870,00');
-    expect(nbsp(formatSignedMoney(870))).toBe('+R$ 8,70');
-    expect(nbsp(formatSignedMoney(-1000))).toBe('−R$ 10,00');
-    expect(nbsp(formatSignedMoney(0))).toBe('R$ 0,00');
+  it('formats balances as USD and Pix amounts as BRL', () => {
+    expect(nbsp(formatMoney(187_000))).toBe('US$ 1.870,00');
+    expect(nbsp(formatSignedMoney(870))).toBe('+US$ 8,70');
+    expect(nbsp(formatSignedMoney(-1000))).toBe('−US$ 10,00');
+    expect(nbsp(formatSignedMoney(0))).toBe('US$ 0,00');
+    expect(nbsp(formatBrl(5000))).toBe('R$ 50,00');
+    expect(nbsp(formatFxRate(5.5035))).toBe('US$ 1 = R$ 5,5035');
+    expect(brlToUsdCents(10_000, 5.5035)).toBe(1817);
   });
 
   it.each([
@@ -18,6 +21,8 @@ describe('money', () => {
     ['25.5', 2550],
     ['1.000,00', 100_000],
     ['R$ 10', 1000],
+    ['US$ 10', 1000],
+    ['$10', 1000],
     [' 7 ', 700],
   ])('parses %j', (input, cents) => {
     expect(parseMoneyToCents(input)).toBe(cents);

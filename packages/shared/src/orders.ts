@@ -10,7 +10,7 @@ export const ACCOUNT_KINDS = ['real', 'demo'] as const;
 export type AccountKind = (typeof ACCOUNT_KINDS)[number];
 export const AccountKindSchema = z.enum(ACCOUNT_KINDS, 'Conta inválida: use real ou demo.');
 
-/** Demo balance at sign-up, and what "recarregar" restores it to (R$ 10.000,00). */
+/** Demo balance at sign-up, and what "recarregar" restores it to (US$ 10.000,00). */
 export const DEMO_START_CENTS = 1_000_000;
 
 /** Send a unique value per order attempt; retries with the same value return the same order. */

@@ -114,7 +114,7 @@ export function OrderPanel({ account, asset, limits, quote, feedStatus, balanceC
         <legend className="sr-only">Valor</legend>
         <div className="order-1 flex min-w-0 items-stretch rounded-control border border-border bg-field focus-within:border-brand">
           <label htmlFor={`${ids}-stake`} className="flex min-w-0 flex-1 flex-col px-2.5 py-1 lg:px-3 lg:py-1.5">
-            <span className="text-[11px] text-muted">Valor (R$)</span>
+            <span className="text-[11px] text-muted">Valor (US$)</span>
             <input
               id={`${ids}-stake`}
               inputMode="decimal"
@@ -158,7 +158,7 @@ export function OrderPanel({ account, asset, limits, quote, feedStatus, balanceC
                   active ? 'bg-brand/15 text-brand' : 'bg-field text-muted hover:text-text',
                 )}
               >
-                R$ {c / 100}
+                $ {c / 100}
               </button>
             );
           })}

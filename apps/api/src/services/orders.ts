@@ -172,7 +172,7 @@ export function createOrderService(deps: OrderServiceDeps): OrderService {
         );
       }
       if (input.stakeCents < limits.minStakeCents || input.stakeCents > limits.maxStakeCents) {
-        const fmt = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        const fmt = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'USD' });
         throw new AppError(
           400,
           ErrorCode.ValidationFailed,

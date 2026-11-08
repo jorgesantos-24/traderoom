@@ -82,7 +82,7 @@ const EYE_OFF = (
 
 /**
  * Balance in the header with a dropdown to switch between the real and the demo account,
- * hide the balances, and refill the demo account to R$ 10.000.
+ * hide the balances, and refill the demo account to US$ 10.000.
  */
 export function AccountSwitcher() {
   const { account, setAccount, accounts, wallet, refreshWallet, refillDemo } = useSessionData();

@@ -172,6 +172,39 @@ describe('OtcFeed', () => {
     await feed.sync([], 2000);
     expect(feed.tick(2500)).toEqual([]);
   });
+
+  it('starts new assets one at a time and retries one that failed on the next sync', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let failFirst = true;
+    const errors: string[] = [];
+    let clock = 1_800_000_000_000;
+    const feed = new OtcFeed({
+      lastPrice: async (id) => {
+        if (id === 2 && failFirst) {
+          failFirst = false;
+          throw new Error('timeout exceeded when trying to connect');
+        }
+        return null;
+      },
+      writeHistory: async () => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 0));
+        inFlight--;
+      },
+      normal: seeded(7),
+      now: () => (clock += 60_000), // each later start sees the time moved on
+      onError: (_err, symbol) => void errors.push(symbol),
+    });
+    const assets = [1, 2, 3].map((id) => ({ id, symbol: `A${id}OTC`, otc: ADA }));
+    await feed.sync(assets, clock);
+    expect(maxInFlight).toBe(1);
+    expect(errors).toEqual(['A2OTC']);
+    expect(feed.tick(clock + 500).map((t) => t.symbol).sort()).toEqual(['A1OTC', 'A3OTC']);
+    await feed.sync(assets, clock + 1000);
+    expect(feed.tick(clock + 1500).map((t) => t.symbol).sort()).toEqual(['A1OTC', 'A2OTC', 'A3OTC']);
+  });
 });
 
 describe('OtcWalk override', () => {

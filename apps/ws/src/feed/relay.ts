@@ -204,6 +204,7 @@ export class Relay {
     this.otc = new OtcFeed({
       lastPrice: (id) => deps.sinks.lastPrice?.(id) ?? Promise.resolve(null),
       writeHistory: (rows) => deps.sinks.writeSnapshots(rows),
+      now: () => this.now(),
       onError: (err) => otcErrors.report(err, this.now()),
     });
   }
@@ -212,8 +213,10 @@ export class Relay {
   async start(): Promise<void> {
     if (this.started) return;
     this.applyAssets(await this.deps.sinks.loadAssets());
-    // New OTC assets write their history first, so the first chart already has candles.
-    await this.syncOtc();
+    // New OTC assets write their history before they tick, so their first chart already has candles.
+    // That can take minutes on a first boot; it runs in the background so Binance and every OTC
+    // asset that already has history go live right away.
+    void this.syncOtc();
     await this.pollOverride();
     this.started = true;
     this.connections.binance.start();
@@ -314,10 +317,11 @@ export class Relay {
       if (this.started && this.applyAssets(assets)) {
         this.deps.log.info({ assets: assets.map((a) => a.symbol) }, 'enabled assets changed; resubscribing');
         for (const l of this.listeners) l.onAssets?.(this.assetList);
-        void this.syncOtc();
         this.connections.binance.restart();
         this.connections.binance_backup.restart();
       }
+      // Also retries OTC assets that failed to start (e.g. the database was briefly unreachable).
+      if (this.started) void this.syncOtc();
     } catch (err) {
       this.deps.log.error({ err }, 'failed to reload assets; keeping current list');
     } finally {

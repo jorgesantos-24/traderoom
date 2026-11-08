@@ -103,8 +103,8 @@ describe('auth against real Postgres and Redis', () => {
       user.id,
     ]);
     expect(acct).toEqual([
-      { kind: 'demo', balance_cents: '1000000', currency: 'BRL' },
-      { kind: 'real', balance_cents: '0', currency: 'BRL' },
+      { kind: 'demo', balance_cents: '1000000', currency: 'USD' },
+      { kind: 'real', balance_cents: '0', currency: 'USD' },
     ]);
     const { rows: u } = await pool.query<{ password_hash: string }>('select password_hash from users where id = $1', [
       user.id,

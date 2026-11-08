@@ -26,7 +26,7 @@ const Ctx = createContext<SessionData | null>(null);
 
 const ACCOUNT_KEY = 'traderoom:account';
 
-/** New visitors start on the demo account, as the R$ 10.000 there is free to practise with. */
+/** New visitors start on the demo account, as the US$ 10.000 there is free to practise with. */
 export function readAccount(): AccountKind {
   try {
     return localStorage.getItem(ACCOUNT_KEY) === 'real' ? 'real' : 'demo';

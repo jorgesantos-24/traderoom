@@ -332,7 +332,7 @@ function AdjustForm({ user, onCancel, onDone }: { user: AdminUserView; onCancel(
         ))}
       </fieldset>
       <Field
-        label="Valor (R$)"
+        label="Valor (US$)"
         inputMode="decimal"
         autoComplete="off"
         value={amount}
