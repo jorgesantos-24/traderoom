@@ -29,6 +29,7 @@ import {
   type OtcOverrideState,
   type OtcOverrideView,
   type Page,
+  type PublicOverrideState,
   type PublicUser,
   type WalletView,
 } from '@traderoom/shared';
@@ -164,6 +165,9 @@ export const api = {
   assets: () => request<AssetsResponse>('GET', '/api/assets'),
   candles: (symbol: string, interval: CandleInterval, limit: number, signal?: AbortSignal) =>
     request<CandlesResponse>('GET', `/api/candles${qs({ symbol, interval, limit })}`, { signal }),
+  /** Whether the platform is setting this asset's price now (price override). */
+  marketOverride: (symbol: string, signal?: AbortSignal) =>
+    request<PublicOverrideState>('GET', `/api/market/override${qs({ symbol })}`, { signal }),
   /** Real and demo balances, real first. */
   accounts: async () => (await request<{ accounts: WalletView[] }>('GET', '/api/accounts')).accounts,
   refillDemo: async () => (await request<{ wallet: WalletView }>('POST', '/api/accounts/demo/refill')).wallet,

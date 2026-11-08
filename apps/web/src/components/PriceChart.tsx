@@ -21,6 +21,7 @@ import { resultBubbles } from '../lib/chart-orders';
 import { serverClock, parseServerTime } from '../lib/clock';
 import { formatCountdown, formatMoney, formatPrice, formatSignedMoney, pricePrecision } from '../lib/format';
 import { useQuote } from '../lib/session-data';
+import { platformPriceUntil, usePlatformPrice } from '../lib/use-platform-price';
 import type { ResultToast } from '../lib/use-trade-orders';
 import { useDrawings } from '../lib/use-drawings';
 import { IndicatorRenderer } from '../lib/indicator-series';
@@ -96,6 +97,7 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
   const [load, setLoad] = useState<LoadState>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
   const quote = useQuote(symbol);
+  const platform = usePlatformPrice(symbol, quote?.ov);
   stepRef.current = intervalMs(interval);
 
   // Chart instance lives as long as the component.
@@ -457,6 +459,15 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
             setEditingIndicator(null);
           }}
         />
+        {platform && (
+          <div
+            role="status"
+            className="pointer-events-none absolute bottom-8 left-2 z-10 rounded-control border border-warn/40 bg-bg/90 px-2 py-0.5 text-[11px] text-warn"
+            data-testid="chart-platform-price"
+          >
+            Preço da plataforma · {platformPriceUntil(platform.untilMs)}
+          </div>
+        )}
         {load.status === 'loading' && (
           <div className="absolute inset-0 z-20 bg-bg/80">
             <LoadingState label="Carregando gráfico…" className="h-full" />

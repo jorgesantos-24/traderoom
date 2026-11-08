@@ -104,6 +104,7 @@ export const unusedOtcOverride: OtcOverrideService = {
   get: notUsed('otcOverride.get'),
   apply: notUsed('otcOverride.apply'),
   release: notUsed('otcOverride.release'),
+  publicState: notUsed('otcOverride.publicState'),
 };
 
 export function fakeAssets(

@@ -38,11 +38,13 @@ export interface OrderRow {
   opens_at: string;
   expires_at: string;
   settled_at: string | null;
+  override_id: string | null;
 }
 
 export const ORDER_COLUMNS = `o.id, o.user_id, o.account, o.asset_id, a.symbol, o.direction, o.stake_cents, o.payout_pct, o.duration_sec,
   o.open_price::text as open_price, o.close_price::text as close_price, o.status,
-  ${isoUs('o.opens_at')} as opens_at, ${isoUs('o.expires_at')} as expires_at, ${isoUs('o.settled_at')} as settled_at`;
+  ${isoUs('o.opens_at')} as opens_at, ${isoUs('o.expires_at')} as expires_at, ${isoUs('o.settled_at')} as settled_at,
+  o.override_id::text as override_id`;
 
 export function toOrderView(r: OrderRow): OrderView {
   const stake = Number(r.stake_cents);
@@ -60,6 +62,7 @@ export function toOrderView(r: OrderRow): OrderView {
     status: r.status,
     payoutCents: r.status === 'open' ? 0 : creditCents(r.status, stake, r.payout_pct),
     potentialPayoutCents: creditCents('won', stake, r.payout_pct),
+    overrideId: r.override_id,
     opensAt: r.opens_at,
     expiresAt: r.expires_at,
     settledAt: r.settled_at,
@@ -212,8 +215,8 @@ export function createOrderService(deps: OrderServiceDeps): OrderService {
 
         const ins = await client.query<{ id: string }>(
           `insert into orders (user_id, asset_id, direction, stake_cents, payout_pct, duration_sec,
-                               open_price, opens_at, expires_at, idempotency_key, account)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                               open_price, opens_at, expires_at, idempotency_key, account, override_id)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, (select id from otc_overrides where id = $12::bigint))
            returning id`,
           [
             userId,
@@ -227,6 +230,8 @@ export function createOrderService(deps: OrderServiceDeps): OrderService {
             new Date(expiresAt),
             storedKey,
             input.account,
+            // Entry on a price the platform set: settled on the shown price, not the real one.
+            price.ov && /^\d+$/.test(price.ov) ? price.ov : null,
           ],
         );
         const orderId = ins.rows[0]?.id;

@@ -181,7 +181,14 @@ function Section({
               <CoinIcon symbol={o.symbol} className="size-5" />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium text-text">{name(o.symbol)}</span>
-                <span className="block text-xs text-muted">{o.payoutPct}%</span>
+                <span className="block text-xs text-muted">
+                  {o.payoutPct}%
+                  {o.overrideId && (
+                    <span className="ml-1.5 text-warn" title="Aberta com preço definido pela plataforma" data-testid="history-platform-price">
+                      · preço da plataforma
+                    </span>
+                  )}
+                </span>
               </span>
               <span className="shrink-0 text-right">
                 <span className="tabular flex items-center justify-end gap-1.5 text-sm font-semibold text-text">
@@ -265,7 +272,10 @@ function OperationDetail({ order: o, name, onTrade }: { order: OrderView; name: 
           </InfoRow>
           <InfoRow label="Abertura">{formatTime(o.opensAt)}</InfoRow>
           <InfoRow label="Fechamento">{formatTime(o.expiresAt)}</InfoRow>
-          <InfoRow label="Preço de abertura">{formatPrice(o.openPrice)}</InfoRow>
+          <InfoRow label="Preço de abertura">
+            {formatPrice(o.openPrice)}
+            {o.overrideId && <span className="ml-1.5 text-xs text-warn">(preço da plataforma)</span>}
+          </InfoRow>
           <InfoRow label="Preço de fechamento">{o.closePrice ? formatPrice(o.closePrice) : '—'}</InfoRow>
         </dl>
       </div>

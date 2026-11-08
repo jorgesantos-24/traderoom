@@ -16,6 +16,7 @@ import {
   RedisKeys,
   Registry,
   type OtcOverrideState,
+  type PriceRecord,
 } from '@traderoom/shared';
 // The real generator, driven by the wire this API writes: the same code the ws runs.
 import { OtcWalk } from '../../ws/src/feed/otc.js';
@@ -23,7 +24,10 @@ import { loadConfig } from '../src/config.js';
 import { AppError } from '../src/lib/errors.js';
 import { createPool } from '../src/lib/db.js';
 import { createRedis } from '../src/lib/redis.js';
+import { createAssetRepo } from '../src/services/assets.js';
 import { createAuthService } from '../src/services/auth.js';
+import { createOrderLimitsRepo } from '../src/services/order-limits.js';
+import { createOrderService, redisDueScheduler, redisPriceReader } from '../src/services/orders.js';
 import { createOtcOverrideService, type OtcOverrideService } from '../src/services/otc-override.js';
 import { settleOrder } from '../src/services/settlement.js';
 import { CookieJar, testApp } from './helpers.js';
@@ -37,6 +41,9 @@ const RUN = randomUUID().slice(0, 6).toUpperCase().replace(/[^A-Z0-9]/g, 'X');
 const OTC_A = `ZZOVA${RUN}`;
 const OTC_B = `ZZOVB${RUN}`;
 const MARKET = `ZZOVM${RUN}USDT`;
+/** A market asset set up for overrides (price_decimals, default max_override_pct 0.2%). */
+const MKT = `ZZOVP${RUN}USDT`;
+const QUEUE = `orders:due:test-otc-override-${RUN}`;
 /** Own key: a ws running on this machine keeps reading the real one. */
 const KEY = `otc:override:test:${RUN}`;
 const RL_NS = `rl-otc-override-int-${RUN}:`;
@@ -46,7 +53,7 @@ const MIN = 60_000;
 let pool: pg.Pool;
 let redis: Redis;
 let adminId: string;
-const ids: Record<'a' | 'b' | 'market', number> = { a: 0, b: 0, market: 0 };
+const ids: Record<'a' | 'b' | 'market' | 'mkt', number> = { a: 0, b: 0, market: 0, mkt: 0 };
 /** A minute boundary an hour ago: settlement only cares about relative times. */
 const T0 = Math.floor(Date.now() / MIN) * MIN - 3_600_000;
 let clock = T0;
@@ -93,6 +100,12 @@ beforeAll(async () => {
       [MARKET, `${MARKET.toLowerCase()}@trade`],
     )
   ).rows[0]?.id ?? 0;
+  ids.mkt = (
+    await pool.query<{ id: number }>(
+      `insert into assets (symbol, display, binance_stream, payout_pct, enabled, sort, price_decimals) values ($1, 'Teste P', $2, 80, true, 9992, 2) returning id`,
+      [MKT, `${MKT.toLowerCase()}@trade`],
+    )
+  ).rows[0]?.id ?? 0;
   adminId = await newUser('Admin OTC');
   // A leftover active override (from a crashed run or the dev UI) would make every test 409.
   const active = await pool.query<{ symbol: string }>(`select a.symbol from otc_overrides o join assets a on a.id = o.asset_id where o.active`);
@@ -105,16 +118,17 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  const assetIds = [ids.a, ids.b, ids.market];
+  const assetIds = [ids.a, ids.b, ids.market, ids.mkt];
   const users = `select id from users where email like '%@${DOMAIN}'`;
-  await pool.query('delete from otc_overrides where asset_id = any($1)', [assetIds]);
   await pool.query(`delete from admin_audit where admin_id in (${users})`);
   await pool.query(`delete from ledger where user_id in (${users})`);
   await pool.query(`delete from orders where user_id in (${users})`);
+  await pool.query('delete from orders where asset_id = any($1)', [assetIds]);
+  await pool.query('delete from otc_overrides where asset_id = any($1)', [assetIds]);
   await pool.query(`delete from users where email like $1`, [`%@${DOMAIN}`]);
   await pool.query('delete from price_snapshots where asset_id = any($1)', [assetIds]);
   await pool.query('delete from assets where id = any($1)', [assetIds]);
-  await redis.del(KEY, RedisKeys.price(OTC_A), RedisKeys.price(OTC_B));
+  await redis.del(KEY, QUEUE, RedisKeys.price(OTC_A), RedisKeys.price(OTC_B), RedisKeys.price(MKT));
   await pool.end();
   redis.disconnect();
 });
@@ -160,8 +174,8 @@ describe('apply', () => {
     expect(parseOtcOverride(await redis.get(KEY))?.symbol).toBe(OTC_A);
   });
 
-  it('400 for a market (non-OTC) asset, 404 for an unknown one', async () => {
-    await expectAppError(svc.apply(adminId, input({ assetId: ids.market, targetPrice: 50 })), 400, /OTC/);
+  it('400 for a market asset with no price_decimals, 404 for an unknown one', async () => {
+    await expectAppError(svc.apply(adminId, input({ assetId: ids.market, targetPrice: 50 })), 400, /casas decimais/);
     await expectAppError(svc.apply(adminId, input({ assetId: 2_000_000_000, targetPrice: 50 })), 404);
   });
 
@@ -335,5 +349,165 @@ describe('HTTP: /api/admin/otc-override', () => {
     expect(d.json()).toEqual({ released: true });
     expect(await redis.get(KEY)).toBeNull();
     expect((await admin('POST', '/api/admin/otc-override', { assetId: ids.market, interval: '1m', targetPrice: 1 })).statusCode).toBe(400);
+  });
+});
+
+describe('market assets (1m close only)', () => {
+  async function setMarketPrice(p: string, ov?: string): Promise<void> {
+    const rec: PriceRecord = { p, ts: clock, rt: clock, src: 'binance', ...(ov ? { ov } : {}) };
+    await redis.set(RedisKeys.price(MKT), JSON.stringify(rec), 'PX', 600_000);
+  }
+
+  async function client(name: string): Promise<string> {
+    const user = await newUser(name);
+    await pool.query(`insert into accounts (user_id, kind, balance_cents) values ($1, 'real', 100000)`, [user]);
+    return user;
+  }
+
+  /** An order expiring at `expiresMs`, opened on a natural price (overrideId null) or on the override's. */
+  async function order(user: string, expiresMs: number, overrideId: string | null): Promise<string> {
+    const { rows } = await pool.query<{ id: string }>(
+      `insert into orders (user_id, asset_id, direction, stake_cents, payout_pct, duration_sec, open_price, opens_at, expires_at, idempotency_key, account, override_id)
+       values ($1, $2, 'call', 10000, 80, 60, '50000.00', $3, $4, $5, 'real', $6) returning id`,
+      [user, ids.mkt, new Date(expiresMs - MIN), new Date(expiresMs), randomUUID(), overrideId],
+    );
+    return rows[0]?.id ?? '';
+  }
+
+  async function snapshot(atMs: number, price: string, realPrice: string | null): Promise<void> {
+    await pool.query('insert into price_snapshots (asset_id, price, real_price, captured_at) values ($1, $2, $3, $4)', [
+      ids.mkt,
+      price,
+      realPrice,
+      new Date(atMs),
+    ]);
+  }
+
+  async function settled(orderId: string, nowMs: number) {
+    const r = await settleOrder(pool, orderId, nowMs);
+    const { rows } = await pool.query<{ status: string; close_price: string }>('select status, close_price::text as close_price from orders where id = $1', [
+      orderId,
+    ]);
+    return { r, row: rows[0] };
+  }
+
+  it('accepted at 1m: ramp over the rest of the candle, wire carries id, kind and jitter', async () => {
+    clock = T0 + 20_000;
+    await setMarketPrice('50000.00');
+    const v = await svc.apply(adminId, input({ assetId: ids.mkt, targetPrice: 50_080.004, rampMs: 500 }));
+    expect(v).toMatchObject({ kind: 'market', symbol: MKT, decimals: 2, targetPrice: 50_080, basePrice: 50_000, candleCloseMs: T0 + MIN });
+    // The client's rampMs is ignored: 40 s left - hold - landing.
+    expect(v.rampStartMs).toBe(T0 + 20_000);
+    expect(parseOtcOverride(await redis.get(KEY))).toEqual({
+      id: v.id,
+      kind: 'market',
+      jitter: true,
+      symbol: MKT,
+      targetPrice: '50080.00',
+      basePrice: '50000.00',
+      closeMs: T0 + MIN,
+      rampStartMs: T0 + 20_000,
+      holdMs: OTC_OVERRIDE_HOLD_MS,
+      releaseMs: OTC_OVERRIDE_RELEASE_MS,
+    });
+    const { rows } = await pool.query<{ kind: string; ramp_ms: number }>('select kind, ramp_ms from otc_overrides where id = $1', [v.id]);
+    expect(rows[0]).toEqual({ kind: 'market', ramp_ms: 40_000 - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS });
+    const audit = await pool.query<{ payload: Record<string, unknown> }>(
+      `select payload from admin_audit where admin_id = $1 and action = 'otc.override' order by id desc limit 1`,
+      [adminId],
+    );
+    expect(audit.rows[0]?.payload).toMatchObject({ kind: 'market', symbol: MKT });
+
+    const state = await svc.get();
+    expect(state.assets.find((a) => a.symbol === MKT)).toMatchObject({ kind: 'market', decimals: 2, maxOverridePct: 0.2 });
+    expect(state.assets.find((a) => a.symbol === OTC_A)).toMatchObject({ kind: 'otc', maxOverridePct: null });
+
+    expect(await svc.publicState(MKT)).toEqual({ active: true, untilMs: T0 + MIN + OTC_OVERRIDE_RELEASE_MS, targetPrice: 50_080 });
+    expect(await svc.publicState(OTC_B)).toEqual({ active: false, untilMs: null, targetPrice: null });
+  });
+
+  it('400 for any interval but 1m', async () => {
+    clock = T0 + 20_000;
+    await setMarketPrice('50000.00');
+    await expectAppError(svc.apply(adminId, input({ assetId: ids.mkt, interval: '5m', targetPrice: 50_010 })), 400, /1m/);
+    expect(await redis.get(KEY)).toBeNull();
+  });
+
+  it('400 above max_override_pct, with the gap and the limit', async () => {
+    clock = T0 + 20_000;
+    await setMarketPrice('50000.00');
+    await expectAppError(
+      svc.apply(adminId, input({ assetId: ids.mkt, targetPrice: 50_150 })),
+      400,
+      new RegExp(`desvio de 0,300% do preço atual \\(50000\\.00\\); o limite de ${MKT} é 0,200%`),
+    );
+    // Inside the limit is allowed.
+    await expect(svc.apply(adminId, input({ assetId: ids.mkt, targetPrice: 49_910 }))).resolves.toMatchObject({ targetPrice: 49_910 });
+  });
+
+  it('an order opened on an overridden price records override_id; one on a natural price does not', async () => {
+    clock = T0 + 20_000;
+    await setMarketPrice('50000.00');
+    const v = await svc.apply(adminId, input({ assetId: ids.mkt, targetPrice: 50_050 }));
+    const orders = createOrderService({
+      pool,
+      prices: redisPriceReader(redis),
+      scheduler: redisDueScheduler(redis, QUEUE),
+      assets: createAssetRepo(pool, { ttlMs: 0 }),
+      limits: createOrderLimitsRepo(pool, { ttlMs: 0 }),
+      now: () => clock,
+    });
+    const user = await client('Cliente entrada');
+    const body = { assetId: ids.mkt, direction: 'call', stakeCents: 1000, durationSec: 60, account: 'real' } as const;
+
+    const natural = await orders.create(user, body, randomUUID());
+    expect(natural.order.overrideId).toBeNull();
+
+    await setMarketPrice('50021.37', v.id);
+    const during = await orders.create(user, body, randomUUID());
+    expect(during.order).toMatchObject({ overrideId: v.id, openPrice: '50021.37000000' });
+    const { rows } = await pool.query<{ override_id: string | null }>('select override_id::text as override_id from orders where id = $1', [
+      during.order.id,
+    ]);
+    expect(rows[0]?.override_id).toBe(v.id);
+
+    // A malformed or unknown id never breaks the order: it is opened as natural.
+    await setMarketPrice('50021.37', '999999999');
+    expect((await orders.create(user, body, randomUUID())).order.overrideId).toBeNull();
+  });
+
+  it('opened before the override: settles on real_price; opened during it: on the shown price', async () => {
+    clock = T0 + 20_000;
+    await setMarketPrice('50000.00');
+    const v = await svc.apply(adminId, input({ assetId: ids.mkt, targetPrice: 50_080 }));
+    await pool.query('delete from price_snapshots where asset_id = $1', [ids.mkt]);
+    // At expiry the platform shows the target; the market really traded lower.
+    await snapshot(v.candleCloseMs - 2000, '50080.00', '49992.10');
+    await snapshot(v.candleCloseMs - 400, '50080.00', '49990.55');
+
+    const before = await order(await client('Antes'), v.candleCloseMs, null);
+    const during = await order(await client('Durante'), v.candleCloseMs, v.id);
+
+    const a = await settled(before, v.candleCloseMs + 1500);
+    expect(a.r).toMatchObject({ kind: 'settled', status: 'lost' });
+    expect(a.row).toEqual({ status: 'lost', close_price: '49990.55000000' });
+
+    const b = await settled(during, v.candleCloseMs + 1500);
+    expect(b.r).toMatchObject({ kind: 'settled', status: 'won' });
+    expect(b.row).toEqual({ status: 'won', close_price: '50080.00000000' });
+  });
+
+  it('without an override real_price is null and settlement is unchanged', async () => {
+    const close = T0 + 10 * MIN;
+    await pool.query('delete from price_snapshots where asset_id = $1', [ids.mkt]);
+    await snapshot(close - 700, '50010.00', null);
+    const id = await order(await client('Sem override'), close, null);
+    const { r, row } = await settled(id, close + 1500);
+    expect(r).toMatchObject({ kind: 'settled', status: 'won' });
+    expect(row).toEqual({ status: 'won', close_price: '50010.00000000' });
+    const { rows } = await pool.query<{ n: string }>('select count(*)::text as n from price_snapshots where asset_id = $1 and real_price is not null', [
+      ids.mkt,
+    ]);
+    expect(rows[0]?.n).toBe('0');
   });
 });

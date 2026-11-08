@@ -51,8 +51,17 @@ export function otcOverridePhase(nowMs: number, closeMs: number, holdMs = OTC_OV
   return 'release';
 }
 
+export const PRICE_OVERRIDE_KINDS = ['otc', 'market'] as const;
+export type PriceOverrideKind = (typeof PRICE_OVERRIDE_KINDS)[number];
+
 /** O que o ws lê do Redis a cada tick. */
 export const OtcOverrideWire = z.object({
+  /** otc_overrides.id; the relay stamps it on every price it changes. */
+  id: z.string().optional(),
+  /** Absent means 'otc' (payloads written before market overrides existed). */
+  kind: z.enum(PRICE_OVERRIDE_KINDS).optional(),
+  /** Market only: small noise on the ramp. Absent means true. */
+  jitter: z.boolean().optional(),
   symbol: z.string(),
   targetPrice: z.string(),
   basePrice: z.string(),
@@ -85,10 +94,11 @@ export type OtcOverrideInput = z.infer<typeof OtcOverrideInput>;
 
 export interface OtcOverrideView {
   id: string;
+  kind: PriceOverrideKind;
   assetId: number;
   symbol: string;
   display: string;
-  /** Casas decimais do ativo (otc_decimals). */
+  /** Casas decimais do ativo (otc_decimals, ou price_decimals no mercado). */
   decimals: number;
   intervalSec: number;
   targetPrice: number;
@@ -109,12 +119,23 @@ export interface OtcOverrideView {
   createdAt: string;
 }
 
-/** Ativo que pode receber override: OTC e habilitado. */
+/** Ativo habilitado que pode receber override (OTC ou mercado). */
 export interface OtcOverrideAsset {
   id: number;
+  kind: PriceOverrideKind;
   symbol: string;
   display: string;
   decimals: number;
+  /** Market only: largest gap from the current price, in percent. */
+  maxOverridePct: number | null;
+}
+
+/** GET /api/market/override?symbol= — whether the platform is setting this asset's price now. */
+export interface PublicOverrideState {
+  active: boolean;
+  /** When the price is back to normal (release end), epoch ms. */
+  untilMs: number | null;
+  targetPrice: number | null;
 }
 
 /** GET /api/admin/otc-override */

@@ -5,6 +5,7 @@ import type { FeedStatus, Quote } from '../lib/feed';
 import { formatDuration, formatMoney, formatPrice, parseMoneyToCents } from '../lib/format';
 import { expectedProfitCents } from '../lib/orders';
 import { playOrderSound, unlockSound } from '../lib/sound';
+import { platformPriceUntil, usePlatformPrice } from '../lib/use-platform-price';
 import { Button, Card, cx, FormMessage } from './ui';
 
 /** Next/previous allowed expiry; stays put at either end of the list. */
@@ -59,6 +60,7 @@ export function OrderPanel({ account, asset, limits, quote, feedStatus, balanceC
   const [durationSec, setDurationSec] = useState(limits.durationsSec[0] ?? 60);
   const [sending, setSending] = useState<Direction | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const platform = usePlatformPrice(asset.symbol, quote?.ov);
 
   useEffect(() => {
     if (!limits.durationsSec.includes(durationSec)) setDurationSec(limits.durationsSec[0] ?? 60);
@@ -108,6 +110,11 @@ export function OrderPanel({ account, asset, limits, quote, feedStatus, balanceC
           {quote?.price != null ? formatPrice(quote.price) : '—'}
         </span>
       </div>
+      {platform && (
+        <p role="status" className="rounded-control border border-warn/40 bg-warn/10 px-2 py-1 text-xs text-warn" data-testid="panel-platform-price">
+          Preço da plataforma nesta vela · {platformPriceUntil(platform.untilMs)}
+        </p>
+      )}
 
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
       <fieldset className="contents">

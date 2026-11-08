@@ -6,6 +6,8 @@ import type { FeedAsset, Tick } from './types.js';
 export interface SnapshotRow {
   assetId: number;
   price: string;
+  /** Real provider price, only while an override changes `price`. */
+  realPrice?: string | null;
   capturedAt: Date;
 }
 
@@ -23,7 +25,9 @@ export interface RelaySinks {
 }
 
 export function toPriceRecord(t: Tick): PriceRecord {
-  return { p: t.price, ts: t.ts, rt: t.recvMs, src: t.provider };
+  const rec: PriceRecord = { p: t.price, ts: t.ts, rt: t.recvMs, src: t.provider };
+  if (t.ov) rec.ov = t.ov;
+  return rec;
 }
 
 export async function writePricesToRedis(redis: Redis, ticks: readonly Tick[]): Promise<void> {
@@ -43,9 +47,9 @@ export async function writePricesToRedis(redis: Redis, ticks: readonly Tick[]): 
 export async function insertSnapshots(pool: pg.Pool, rows: readonly SnapshotRow[]): Promise<void> {
   if (rows.length === 0) return;
   await pool.query(
-    `insert into price_snapshots (asset_id, price, captured_at)
-     select * from unnest($1::int[], $2::numeric[], $3::timestamptz[])`,
-    [rows.map((r) => r.assetId), rows.map((r) => r.price), rows.map((r) => r.capturedAt)],
+    `insert into price_snapshots (asset_id, price, real_price, captured_at)
+     select * from unnest($1::int[], $2::numeric[], $3::numeric[], $4::timestamptz[])`,
+    [rows.map((r) => r.assetId), rows.map((r) => r.price), rows.map((r) => r.realPrice ?? null), rows.map((r) => r.capturedAt)],
   );
 }
 

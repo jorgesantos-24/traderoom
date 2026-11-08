@@ -4,6 +4,7 @@ import {
   candleBucket,
   ErrorCode,
   OTC_OVERRIDE_HOLD_MS,
+  OTC_OVERRIDE_LANDING_MS,
   OTC_OVERRIDE_MIN_LEAD_MS,
   OTC_OVERRIDE_RELEASE_MS,
   otcOverridePhase,
@@ -15,6 +16,8 @@ import {
   type OtcOverrideState,
   type OtcOverrideView,
   type OtcOverrideWire,
+  type PriceOverrideKind,
+  type PublicOverrideState,
 } from '@traderoom/shared';
 import { inTransaction } from '../lib/db.js';
 import { AppError } from '../lib/errors.js';
@@ -39,14 +42,17 @@ export interface OtcOverrideService {
   apply(adminId: string, input: OtcOverrideInput): Promise<OtcOverrideView>;
   /** False when nothing was active. */
   release(adminId: string): Promise<boolean>;
+  /** What clients see: whether the platform is setting this symbol's price now. */
+  publicState(symbol: string): Promise<PublicOverrideState>;
 }
 
 interface Row {
   id: string;
+  kind: PriceOverrideKind;
   asset_id: number;
   symbol: string;
   display: string;
-  otc_decimals: number;
+  decimals: number;
   interval_sec: number;
   target_price: string;
   base_price: string;
@@ -58,7 +64,7 @@ interface Row {
 }
 
 const ROW_SELECT = `
-  select o.id::text as id, o.asset_id, a.symbol, a.display, a.otc_decimals, o.interval_sec,
+  select o.id::text as id, o.kind, o.asset_id, a.symbol, a.display, coalesce(a.otc_decimals, a.price_decimals) as decimals, o.interval_sec,
          o.target_price::text as target_price, o.base_price::text as base_price,
          o.candle_open_ms::text as candle_open_ms, o.candle_close_ms::text as candle_close_ms,
          o.ramp_ms, o.created_by::text as created_by, o.created_at
@@ -105,10 +111,11 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
     const rampStartMs = rampStartOf(r.created_at.getTime(), closeMs, r.ramp_ms);
     return {
       id: r.id,
+      kind: r.kind,
       assetId: r.asset_id,
       symbol: r.symbol,
       display: r.display,
-      decimals: r.otc_decimals,
+      decimals: r.decimals,
       intervalSec: r.interval_sec,
       targetPrice: Number(r.target_price),
       basePrice: Number(r.base_price),
@@ -139,21 +146,30 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
       await expireFinished(pool, nowMs);
       const [{ rows }, assets] = await Promise.all([
         pool.query<Row>(`${ROW_SELECT} where o.active`),
-        pool.query<{ id: number; symbol: string; display: string; otc_decimals: number }>(
-          `select id, symbol, display, otc_decimals from assets where kind = 'otc' and enabled order by sort, id`,
+        pool.query<{ id: number; kind: PriceOverrideKind; symbol: string; display: string; decimals: number; max_override_pct: string }>(
+          `select id, kind, symbol, display, coalesce(otc_decimals, price_decimals) as decimals, max_override_pct::text as max_override_pct
+             from assets where enabled and coalesce(otc_decimals, price_decimals) is not null order by kind desc, sort, id`,
         ),
       ]);
       const r = rows[0];
       const override = r ? toView(r, await readPrice(redis, r.symbol), nowMs) : null;
       return {
         override,
-        assets: assets.rows.map((a): OtcOverrideAsset => ({ id: a.id, symbol: a.symbol, display: a.display, decimals: a.otc_decimals })),
+        assets: assets.rows.map(
+          (a): OtcOverrideAsset => ({
+            id: a.id,
+            kind: a.kind,
+            symbol: a.symbol,
+            display: a.display,
+            decimals: a.decimals,
+            maxOverridePct: a.kind === 'market' ? Number(a.max_override_pct) : null,
+          }),
+        ),
         serverNowMs: nowMs,
       };
     },
 
     async apply(adminId, input) {
-      const stepMs = CANDLE_INTERVAL_MS[input.interval];
       let wire: OtcOverrideWire;
       let view: OtcOverrideView;
       let ttlMs: number;
@@ -161,23 +177,51 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
         ({ wire, view, ttlMs } = await inTransaction(pool, async (c) => {
           const nowMs = now();
           await expireFinished(c, nowMs);
-          const { rows: arows } = await c.query<{ id: number; symbol: string; kind: string; enabled: boolean; otc_decimals: number | null }>(
-            'select id, symbol, kind, enabled, otc_decimals from assets where id = $1',
+          const { rows: arows } = await c.query<{
+            id: number;
+            symbol: string;
+            kind: PriceOverrideKind;
+            enabled: boolean;
+            decimals: number | null;
+            max_override_pct: string;
+            market_jitter: boolean;
+          }>(
+            `select id, symbol, kind, enabled, coalesce(otc_decimals, price_decimals) as decimals,
+                    max_override_pct::text as max_override_pct, market_jitter
+               from assets where id = $1`,
             [input.assetId],
           );
           const asset = arows[0];
           if (!asset) throw new AppError(404, ErrorCode.NotFound, 'Ativo não encontrado.');
-          if (asset.kind !== 'otc' || asset.otc_decimals === null) {
-            throw new AppError(400, ErrorCode.BadRequest, 'Só ativos OTC aceitam intervenção no preço.');
+          const market = asset.kind === 'market';
+          if (market && input.interval !== '1m') {
+            throw new AppError(400, ErrorCode.BadRequest, 'Ativos de mercado só aceitam intervenção no candle de 1m.');
           }
+          if (asset.decimals === null) {
+            throw new AppError(400, ErrorCode.BadRequest, `${asset.symbol} não tem casas decimais configuradas.`);
+          }
+          const decimals = asset.decimals;
           if (!asset.enabled) throw new AppError(400, ErrorCode.BadRequest, `${asset.symbol} está desativado.`);
+          const stepMs = CANDLE_INTERVAL_MS[input.interval];
 
           const base = await readPrice(redis, asset.symbol);
           if (base === null) {
             throw new AppError(409, ErrorCode.Conflict, `Sem cotação atual para ${asset.symbol}. O feed de preços está rodando?`);
           }
-          const target = Number(input.targetPrice.toFixed(asset.otc_decimals));
+          const target = Number(input.targetPrice.toFixed(decimals));
           if (!(target > 0)) throw new AppError(400, ErrorCode.ValidationFailed, 'targetPrice: preço alvo inválido para as casas decimais do ativo.');
+          if (market) {
+            const maxPct = Number(asset.max_override_pct);
+            const devPct = (Math.abs(target - Number(base)) / Number(base)) * 100;
+            if (devPct > maxPct) {
+              const pct = (n: number) => n.toFixed(3).replace('.', ',');
+              throw new AppError(
+                400,
+                ErrorCode.ValidationFailed,
+                `targetPrice: desvio de ${pct(devPct)}% do preço atual (${base}); o limite de ${asset.symbol} é ${pct(maxPct)}%.`,
+              );
+            }
+          }
 
           const current = candleBucket(nowMs, stepMs);
           const { openMs, closeMs } = input.nextCandle ? { openMs: current.closeMs, closeMs: current.closeMs + stepMs } : current;
@@ -189,18 +233,23 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
               `Faltam ${(leadMs / 1000).toFixed(1).replace('.', ',')} s para o fechamento; o mínimo é ${OTC_OVERRIDE_MIN_LEAD_MS / 1000} s. Aplique no próximo candle.`,
             );
           }
-          const rampStartMs = otcOverrideRampStartMs(nowMs, closeMs, input.rampMs);
-          const targetText = target.toFixed(asset.otc_decimals);
+          // Market: the ramp spans the rest of the candle (the client's rampMs is ignored), so the move is gradual.
+          const rampMs = market
+            ? Math.min(60_000, Math.max(500, leadMs - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS))
+            : input.rampMs;
+          const rampStartMs = otcOverrideRampStartMs(nowMs, closeMs, rampMs);
+          const targetText = target.toFixed(decimals);
 
           const { rows } = await c.query<{ id: string; created_at: Date }>(
-            `insert into otc_overrides (asset_id, interval_sec, target_price, base_price, candle_open_ms, candle_close_ms, ramp_ms, created_by, created_at)
-             values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id::text as id, created_at`,
-            [asset.id, stepMs / 1000, targetText, base, openMs, closeMs, input.rampMs, adminId, new Date(nowMs)],
+            `insert into otc_overrides (asset_id, kind, interval_sec, target_price, base_price, candle_open_ms, candle_close_ms, ramp_ms, created_by, created_at)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id::text as id, created_at`,
+            [asset.id, asset.kind, stepMs / 1000, targetText, base, openMs, closeMs, rampMs, adminId, new Date(nowMs)],
           );
           const inserted = rows[0];
           if (!inserted) throw new Error('otc override insert returned no row');
           await audit(c, adminId, 'otc.override', {
             overrideId: inserted.id,
+            kind: asset.kind,
             assetId: asset.id,
             symbol: asset.symbol,
             interval: input.interval,
@@ -213,6 +262,8 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
           });
 
           const w: OtcOverrideWire = {
+            // The OTC wire stays as it was: the generator needs no id (it never stamps prices).
+            ...(market ? { id: inserted.id, kind: 'market' as const, jitter: asset.market_jitter } : {}),
             symbol: asset.symbol,
             targetPrice: targetText,
             basePrice: base,
@@ -261,6 +312,19 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
       // Always cleared: a stale key with no active row must not keep steering the price.
       await redis.del(key);
       return released;
+    },
+
+    async publicState(symbol) {
+      const { rows } = await pool.query<{ target_price: string; candle_close_ms: string }>(
+        `select o.target_price::text as target_price, o.candle_close_ms::text as candle_close_ms
+           from otc_overrides o join assets a on a.id = o.asset_id
+          where o.active and a.symbol = $1 and o.candle_close_ms + $2 > $3`,
+        [symbol, OTC_OVERRIDE_RELEASE_MS, now()],
+      );
+      const r = rows[0];
+      if (!r) return { active: false, untilMs: null, targetPrice: null };
+      // Announced from creation, before the ramp moves anything.
+      return { active: true, untilMs: Number(r.candle_close_ms) + OTC_OVERRIDE_RELEASE_MS, targetPrice: Number(r.target_price) };
     },
   };
 }

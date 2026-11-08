@@ -45,6 +45,8 @@ export interface PriceItem {
   p: number;
   /** Price time, epoch ms. */
   ts: number;
+  /** Set while the platform sets this price (price override): the override id. */
+  ov?: string;
 }
 
 /**

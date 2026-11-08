@@ -125,6 +125,11 @@ function OverrideScreen() {
   const asset = assets.find((a) => a.id === assetId) ?? null;
   const symbol = asset?.symbol ?? null;
   const decimals = asset?.decimals ?? 2;
+  const market = asset?.kind === 'market';
+  // Market assets: only the 1m close can be set.
+  useEffect(() => {
+    if (market) setInterval_('1m');
+  }, [market]);
   const quote = useQuote(symbol);
   const price = quote?.price ?? null;
 
@@ -168,12 +173,15 @@ function OverrideScreen() {
   }, [tooLate]);
   const useNext = tooLate && nextCandle;
   const closeMs = useNext ? bucket.closeMs + stepMs : bucket.closeMs;
-  const plan = rampPlan(now, closeMs);
+  // Market: the server ramps over the rest of the candle.
+  const plan = rampPlan(now, closeMs, market ? 60_000 : undefined);
 
   const activeHere = override !== null && override.assetId === assetId;
   const canEdit = !active && price !== null;
   const live = useMemo(() => withLiveCandle(candles, price, bucket.openMs, CANDLES), [candles, price, bucket.openMs]);
   const distancePct = target !== null && price ? ((target - price) / price) * 100 : null;
+  const maxPct = market ? (asset?.maxOverridePct ?? null) : null;
+  const overLimit = maxPct !== null && distancePct !== null && Math.abs(distancePct) > maxPct;
   const speed = target !== null && price ? requiredSpeed(price, target, plan.rampMs) : null;
 
   const setTargetPrice = (p: number) => {
@@ -272,7 +280,7 @@ function OverrideScreen() {
           >
             {assets.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.display} ({a.symbol})
+                {a.display} ({a.symbol}){a.kind === 'market' ? ' · mercado' : ''}
               </option>
             ))}
           </select>
@@ -285,9 +293,11 @@ function OverrideScreen() {
             id={`${ids}-interval`}
             value={interval}
             onChange={(e) => setInterval_(e.target.value as CandleInterval)}
-            className="rounded-control border border-border bg-field px-3 py-2 text-sm text-text focus:border-brand"
+            disabled={market}
+            title={market ? 'Ativos de mercado: só o candle de 1m.' : undefined}
+            className="rounded-control border border-border bg-field px-3 py-2 text-sm text-text focus:border-brand disabled:opacity-60"
           >
-            {CANDLE_INTERVALS.map((i) => (
+            {(market ? (['1m'] as const) : CANDLE_INTERVALS).map((i) => (
               <option key={i} value={i}>
                 {i}
               </option>
@@ -343,6 +353,14 @@ function OverrideScreen() {
               <dd className={cx('font-mono tabular-nums', distancePct !== null && (distancePct >= 0 ? 'text-up' : 'text-down'))} data-testid="otc-distance">
                 {distancePct === null ? '—' : `${distancePct >= 0 ? '+' : ''}${distancePct.toFixed(3).replace('.', ',')}%`}
               </dd>
+              {maxPct !== null && (
+                <>
+                  <dt className="text-muted">Limite do ativo</dt>
+                  <dd className={cx('font-mono tabular-nums', overLimit && 'text-down')} data-testid="otc-max-pct">
+                    ±{maxPct.toFixed(3).replace('.', ',')}%{overLimit ? ' (acima do limite)' : ''}
+                  </dd>
+                </>
+              )}
               <dt className="text-muted">Velocidade necessária</dt>
               <dd className="font-mono tabular-nums" data-testid="otc-speed">
                 {speed === null

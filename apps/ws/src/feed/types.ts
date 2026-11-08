@@ -18,6 +18,10 @@ export interface Tick {
   /** Local receive time, epoch ms. */
   recvMs: number;
   provider: FeedProvider;
+  /** Set when a price override changed `price`: the otc_overrides id. */
+  ov?: string;
+  /** With `ov`: the price the provider really sent. */
+  realPrice?: string;
 }
 
 export interface FeedAsset {

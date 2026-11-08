@@ -5,6 +5,7 @@ import type { Counter, Registry } from '../lib/metrics.js';
 import { Conflator, SeqCounter, staleFrame, type PublishedPrice } from './conflator.js';
 import { FeedConnection } from './connection.js';
 import { OtcFeed } from './otc.js';
+import { PriceOverride } from './price-override.js';
 import { binanceSpec } from './providers.js';
 import type { RelaySinks, SnapshotRow } from './sinks.js';
 import { SourceSelector } from './source-selector.js';
@@ -116,6 +117,8 @@ export class Relay {
   private assetsKey = '';
   private readonly assetsBySymbol = new Map<string, FeedAsset>();
   private readonly lastAccepted = new Map<string, Tick>();
+  /** Active market-asset override, by symbol (one at most: single slot). */
+  private readonly priceOverrides = new Map<string, PriceOverride>();
   private readonly listeners = new Set<RelayListener>();
   private readonly timers: NodeJS.Timeout[] = [];
   private readonly seq = new SeqCounter();
@@ -235,6 +238,7 @@ export class Relay {
     this.started = false;
     for (const t of this.timers) clearInterval(t);
     this.timers.length = 0;
+    this.priceOverrides.clear();
     await Promise.all([this.connections.binance.stop(), this.connections.binance_backup.stop()]);
   }
 
@@ -299,6 +303,8 @@ export class Relay {
     this.assetsBySymbol.clear();
     for (const a of assets) this.assetsBySymbol.set(a.symbol, a);
     for (const sym of this.lastAccepted.keys()) if (!this.assetsBySymbol.has(sym)) this.lastAccepted.delete(sym);
+    // A disabled asset is never overridden.
+    for (const sym of this.priceOverrides.keys()) if (!this.assetsBySymbol.has(sym)) this.priceOverrides.delete(sym);
     const now = this.now();
     this.selector.setSymbols(
       // The backup is the same Binance market, so every asset can fail over to it.
@@ -344,7 +350,16 @@ export class Relay {
       if (raw === this.lastOverrideRaw) return;
       this.lastOverrideRaw = raw;
       const wire = parseOtcOverride(raw);
-      this.otc.setOverride(wire, this.now());
+      const now = this.now();
+      this.priceOverrides.clear();
+      if (wire?.kind === 'market') {
+        const asset = this.assetsBySymbol.get(wire.symbol);
+        // Only an enabled market asset this relay prices.
+        if (asset && !asset.otc) this.priceOverrides.set(wire.symbol, new PriceOverride(wire, now));
+        this.otc.setOverride(null, now);
+      } else {
+        this.otc.setOverride(wire, now);
+      }
       if (wire) this.deps.log.info({ symbol: wire.symbol, targetPrice: wire.targetPrice, closeMs: wire.closeMs }, 'otc override applied');
       else this.deps.log.info({ invalid: raw !== null }, 'otc override cleared');
     } catch (err) {
@@ -374,6 +389,11 @@ export class Relay {
     // Never move backwards in time within one provider (late/duplicate trades).
     if (prev && prev.provider === t.provider && t.ts < prev.ts) return;
     this.m.accepted.inc({ provider: t.provider });
+    const ov = this.priceOverrides.get(t.symbol);
+    if (ov) {
+      t = ov.apply(t, this.now());
+      if (ov.done) this.priceOverrides.delete(t.symbol);
+    }
     this.lastAccepted.set(t.symbol, t);
     this.conflator.push(t);
     const change = this.stale.seen(t.symbol, t.recvMs);
@@ -435,7 +455,7 @@ export class Relay {
     for (const a of this.assetList) {
       if (this.stale.isStale(a.symbol)) continue;
       const t = this.lastAccepted.get(a.symbol);
-      if (t) rows.push({ assetId: a.id, price: t.price, capturedAt });
+      if (t) rows.push({ assetId: a.id, price: t.price, realPrice: t.realPrice ?? null, capturedAt });
     }
     if (rows.length === 0) return;
     this.snapshotInFlight = true;

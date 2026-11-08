@@ -361,7 +361,7 @@ export class Gateway {
       }
       set.add(client);
       const t = this.source.latest(s);
-      if (t) data.push({ s, p: t.value, ts: t.ts });
+      if (t) data.push(t.ov ? { s, p: t.value, ts: t.ts, ov: t.ov } : { s, p: t.value, ts: t.ts });
     }
     // The snapshot takes its seq now, so every later tick on this connection has a higher one.
     const snapshot: SnapshotFrame = { t: 'snapshot', seq: this.source.seqCounter().next(), data };
