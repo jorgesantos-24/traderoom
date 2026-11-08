@@ -21,6 +21,12 @@ export const CANDLES_WARM_AFTER_MS = 15_000;
 /** Pause between warmer passes. */
 export const CANDLES_WARM_PAUSE_MS = 5_000;
 
+/**
+ * Market intervals served from price_snapshots (the platform's price, overrides included) instead of
+ * Binance. Longer ones stay on Binance: snapshots are kept 7 days, too short for 30m+ series.
+ */
+export const SNAPSHOT_INTERVALS: ReadonlySet<CandleInterval> = new Set<CandleInterval>(['1m', '5m', '15m']);
+
 export interface CandleService {
   get(symbol: string, interval: CandleInterval, limit: number): Promise<Candle[]>;
   /** One pass of the warmer: refreshes every enabled symbol × interval whose copy is getting old. */
@@ -36,7 +42,7 @@ export interface CandleServiceDeps {
   cache: KvCache;
   fetchKlines: KlinesFetcher;
   assets: Pick<AssetRepo, 'enabledSymbols'>;
-  /** OTC assets have no Binance history; their candles come from here. */
+  /** Snapshot candles: every interval of OTC assets, and SNAPSHOT_INTERVALS of market ones. */
   otc?: OtcCandleSource;
   log: FastifyBaseLogger;
   now?: () => number;
@@ -115,6 +121,8 @@ export function createCandleService(deps: CandleServiceDeps): CandleService {
     for (const symbol of symbols) {
       if (await deps.otc?.has(symbol)) continue;
       for (const interval of intervals) {
+        // These come from snapshots, not Binance.
+        if (deps.otc && SNAPSHOT_INTERVALS.has(interval)) continue;
         const key = RedisKeys.candles(symbol, interval);
         const cached = parseCached(await safeGet(key));
         if (cached && now() - cached.fetchedAt < CANDLES_WARM_AFTER_MS) continue;
@@ -151,6 +159,8 @@ export function createCandleService(deps: CandleServiceDeps): CandleService {
       const enabled = await deps.assets.enabledSymbols();
       if (!enabled.has(symbol)) throw new AppError(404, ErrorCode.UnknownAsset, 'Ativo não encontrado.');
       if (deps.otc && (await deps.otc.has(symbol))) return (await deps.otc.candles(symbol, interval, limit)).slice(-limit);
+      // The chart shows the platform's price: the same one orders settle at and override marks point to.
+      if (deps.otc && SNAPSHOT_INTERVALS.has(interval)) return (await deps.otc.fromSnapshots(symbol, interval, limit)).slice(-limit);
 
       const key = RedisKeys.candles(symbol, interval);
       const cached = parseCached(await safeGet(key));
