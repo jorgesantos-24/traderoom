@@ -59,6 +59,7 @@ const cents = (what: string) =>
   z.number(`Informe o valor ${what}.`).int('O valor deve ser em centavos inteiros.').positive('O valor deve ser positivo.');
 
 export const CreateDepositInput = z.object({
+  /** Reais (BRL cents) the Pix charge is for; the balance is credited in dollars. */
   amountCents: cents('do depósito'),
   /** Needed only while the user has no CPF on file. */
   cpf: z.string().trim().max(20).optional(),
@@ -66,6 +67,7 @@ export const CreateDepositInput = z.object({
 export type CreateDepositInput = z.infer<typeof CreateDepositInput>;
 
 export const CreateWithdrawalInput = z.object({
+  /** Dollars (USD cents) taken from the balance; the Pix is sent in reais. */
   amountCents: cents('do saque'),
   pixKeyType: z.enum(PIX_KEY_TYPES, 'Tipo de chave Pix inválido.'),
   pixKey: z.string('Informe a chave Pix.').trim().min(1, 'Informe a chave Pix.').max(100, 'Chave Pix muito longa.'),
@@ -92,14 +94,26 @@ export interface PaymentsInfo {
   kycStatus: KycStatus;
   /** Masked (***.456.789-**), or null when the user still has to give one. */
   cpf: string | null;
+  /** BRL cents. */
   depositMinCents: number;
+  /** BRL cents. */
   depositMaxCents: number;
+  /** USD cents. */
   withdrawMinCents: number;
+  /** BRL per US$ 1 for deposits right now; null when no quote is available (deposits are then paused). */
+  depositRate: number | null;
+  /** BRL per US$ 1 for withdrawals right now; null when no quote is available. */
+  withdrawRate: number | null;
 }
 
 export interface DepositView {
   id: string;
+  /** BRL cents charged by Pix. */
   amountCents: number;
+  /** USD cents: what was credited, or what will be credited once paid. */
+  usdCents: number;
+  /** BRL per US$ 1 used for this deposit. */
+  fxRate: number;
   status: DepositStatus;
   /** Pix "copia e cola"; turn it into the QR image on the client. */
   pixCode: string | null;
@@ -110,7 +124,12 @@ export interface DepositView {
 
 export interface WithdrawalView {
   id: string;
+  /** USD cents taken from the balance. */
   amountCents: number;
+  /** BRL cents sent by Pix. */
+  pixAmountCents: number;
+  /** BRL per US$ 1 used for this withdrawal. */
+  fxRate: number;
   pixKeyType: PixKeyType;
   pixKey: string;
   status: WithdrawalStatus;

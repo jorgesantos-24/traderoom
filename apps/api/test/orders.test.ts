@@ -58,7 +58,7 @@ async function build(overrides: Partial<OrderService> = {}, metrics = new Regist
     refillDemo: async () => {
       throw new Error('not used');
     },
-    get: async () => ({ account: 'real', balanceCents: 5000, currency: 'BRL', openStakeCents: 1000, openOrders: 1 }),
+    get: async () => ({ account: 'real', balanceCents: 5000, currency: 'USD', openStakeCents: 1000, openOrders: 1 }),
     ledger: async () => ({ items: [], nextCursor: null }),
   };
   // FAKE_ADMIN_SID resolves to a second, distinct user so per-user limits can be told apart.
@@ -182,7 +182,7 @@ describe('GET endpoints', () => {
     const { app } = await build();
     const h = { cookie: `sid=${FAKE_SID}` };
     expect((await app.inject({ method: 'GET', url: '/api/wallet', headers: h })).json()).toEqual({
-      wallet: { account: 'real', balanceCents: 5000, currency: 'BRL', openStakeCents: 1000, openOrders: 1 },
+      wallet: { account: 'real', balanceCents: 5000, currency: 'USD', openStakeCents: 1000, openOrders: 1 },
     });
     expect((await app.inject({ method: 'GET', url: '/api/ledger', headers: h })).json()).toEqual({ items: [], nextCursor: null });
     expect((await app.inject({ method: 'GET', url: '/api/assets', headers: h })).json()).toEqual({

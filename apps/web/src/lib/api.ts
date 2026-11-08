@@ -25,6 +25,9 @@ import {
   type LedgerEntryView,
   type OrderStatus,
   type OrderView,
+  type OtcOverrideInput,
+  type OtcOverrideState,
+  type OtcOverrideView,
   type Page,
   type PublicUser,
   type WalletView,
@@ -216,6 +219,16 @@ export const api = {
       (await request<{ asset: AdminAssetView }>('PATCH', `/api/admin/assets/${id}`, { body: patch })).asset,
     audit: (q: { action?: AuditAction; cursor?: string; limit?: number }) =>
       request<Page<AuditEntryView>>('GET', `/api/admin/audit${qs(q)}`),
+    /** Active OTC price override (or null) and the assets that accept one. */
+    otcOverride: async () => {
+      const sentAt = Date.now();
+      const r = await request<OtcOverrideState>('GET', '/api/admin/otc-override');
+      serverClock.observe(r.serverNowMs, sentAt, Date.now());
+      return r;
+    },
+    applyOtcOverride: async (input: OtcOverrideInput) =>
+      (await request<{ override: OtcOverrideView }>('POST', '/api/admin/otc-override', { body: input })).override,
+    releaseOtcOverride: async () => (await request<{ released: boolean }>('DELETE', '/api/admin/otc-override')).released,
   },
 
   /**

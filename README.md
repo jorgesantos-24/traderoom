@@ -77,6 +77,9 @@ Relatório em `tests/load/results/<data>/report.json`. Variáveis: `VUS`, `HOLD_
 
 ## Deploy (GCP)
 
+> Projeto Firebase `traderoom-48951`: passo a passo, custos e checklist em [`infra/LANCAMENTO.md`](infra/LANCAMENTO.md)
+> (`source infra/firebase.env` antes dos comandos abaixo).
+
 Pré-requisitos na máquina local: `gcloud` autenticado, Node 22+, npm, tar.
 
 ```sh

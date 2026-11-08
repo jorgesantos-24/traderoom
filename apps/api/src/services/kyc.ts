@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import {
   ageOn,
@@ -18,6 +19,7 @@ import {
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 import { inTransaction } from '../lib/db.js';
 import { AppError } from '../lib/errors.js';
+import type { KycBlobStore } from '../lib/kyc-storage.js';
 import { isoUs } from './orders.js';
 
 export interface KycService {
@@ -105,8 +107,14 @@ function isUniqueViolation(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23505';
 }
 
-export function createKycService(deps: { pool: pg.Pool; now?: () => Date }): KycService {
+export function createKycService(deps: { pool: pg.Pool; now?: () => Date; blobs?: KycBlobStore | null }): KycService {
   const { pool } = deps;
+  const blobs = deps.blobs ?? null;
+  /** Old objects are removed only after the row stops pointing at them. */
+  const dropBlobs = (paths: ReadonlyArray<string | null | undefined>) => {
+    if (!blobs) return;
+    for (const p of paths) if (p) void blobs.delete(p).catch(() => undefined);
+  };
   const now = deps.now ?? (() => new Date());
 
   async function latest(db: pg.Pool | pg.PoolClient, userId: string): Promise<SubRow | null> {
@@ -158,16 +166,36 @@ export function createKycService(deps: { pool: pg.Pool; now?: () => Date }): Kyc
       if (data.length > KYC_MAX_FILE_BYTES) throw new AppError(413, ErrorCode.PayloadTooLarge, 'Imagem muito grande (máximo 5 MB).');
       const mime = sniffImage(data);
       if (!mime) throw new AppError(400, ErrorCode.ValidationFailed, 'Envie uma foto em JPG, PNG ou WEBP.');
-      return inTransaction(pool, async (c) => {
-        const id = await draftFor(c, userId);
-        await c.query(
-          `insert into kyc_files (submission_id, kind, mime, data, size_bytes) values ($1, $2, $3, $4, $5)
-           on conflict (submission_id, kind) do update set mime = excluded.mime, data = excluded.data,
-             size_bytes = excluded.size_bytes, created_at = now()`,
-          [id, kind, mime, data, data.length],
-        );
-        return state(c, userId);
-      });
+      let uploaded: string | null = null;
+      let replaced: string | null = null;
+      try {
+        const view = await inTransaction(pool, async (c) => {
+          const id = await draftFor(c, userId);
+          let path: string | null = null;
+          if (blobs) {
+            const prev = await c.query<{ storage_path: string | null }>(
+              'select storage_path from kyc_files where submission_id = $1 and kind = $2',
+              [id, kind],
+            );
+            replaced = prev.rows[0]?.storage_path ?? null;
+            path = `kyc/${userId}/${id}/${kind}-${randomUUID()}`;
+            await blobs.put(path, data, mime);
+            uploaded = path;
+          }
+          await c.query(
+            `insert into kyc_files (submission_id, kind, mime, data, storage_path, size_bytes) values ($1, $2, $3, $4, $5, $6)
+             on conflict (submission_id, kind) do update set mime = excluded.mime, data = excluded.data,
+               storage_path = excluded.storage_path, size_bytes = excluded.size_bytes, created_at = now()`,
+            [id, kind, mime, path ? null : data, path, data.length],
+          );
+          return state(c, userId);
+        });
+        dropBlobs([replaced]);
+        return view;
+      } catch (err) {
+        dropBlobs([uploaded]);
+        throw err;
+      }
     },
 
     async submit(userId, input) {
@@ -176,7 +204,8 @@ export function createKycService(deps: { pool: pg.Pool; now?: () => Date }): Kyc
       }
       if (ageOn(input.birthDate, now()) > 120)
         throw new AppError(400, ErrorCode.ValidationFailed, 'birthDate: data de nascimento inválida.');
-      return inTransaction(pool, async (c) => {
+      const dropped: string[] = [];
+      const view = await inTransaction(pool, async (c) => {
         const id = await draftFor(c, userId);
         const files = await c.query<{ kind: KycFileKind }>('select kind from kyc_files where submission_id = $1', [id]);
         const have = new Set(files.rows.map((r) => r.kind));
@@ -193,7 +222,13 @@ export function createKycService(deps: { pool: pg.Pool; now?: () => Date }): Kyc
           throw new AppError(400, ErrorCode.ValidationFailed, 'cpf: o CPF difere do já usado nos seus depósitos.');
         }
         // A passport has no back: drop a stray one so the reviewer sees only what applies.
-        if (input.docType === 'PASSAPORTE') await c.query(`delete from kyc_files where submission_id = $1 and kind = 'doc_back'`, [id]);
+        if (input.docType === 'PASSAPORTE') {
+          const del = await c.query<{ storage_path: string | null }>(
+            `delete from kyc_files where submission_id = $1 and kind = 'doc_back' returning storage_path`,
+            [id],
+          );
+          for (const r of del.rows) if (r.storage_path) dropped.push(r.storage_path);
+        }
         await c.query(
           `update kyc_submissions set status = 'pending', full_name = $2, cpf = $3, birth_date = $4, phone = $5,
              address_zip = $6, address_street = $7, address_number = $8, address_complement = $9, address_district = $10,
@@ -218,6 +253,8 @@ export function createKycService(deps: { pool: pg.Pool; now?: () => Date }): Kyc
         await c.query(`update users set kyc_status = 'pending' where id = $1`, [userId]);
         return state(c, userId);
       });
+      dropBlobs(dropped);
+      return view;
     },
 
     async requireApproved(userId) {
@@ -255,12 +292,15 @@ export function createKycService(deps: { pool: pg.Pool; now?: () => Date }): Kyc
     },
 
     async adminFile(id, kind) {
-      const { rows } = await pool.query<{ mime: string; data: Buffer }>(
-        'select mime, data from kyc_files where submission_id = $1 and kind = $2',
+      const { rows } = await pool.query<{ mime: string; data: Buffer | null; storage_path: string | null }>(
+        'select mime, data, storage_path from kyc_files where submission_id = $1 and kind = $2',
         [id, kind],
       );
-      if (!rows[0]) throw new AppError(404, ErrorCode.NotFound, 'Imagem não encontrada.');
-      return rows[0];
+      const f = rows[0];
+      if (!f) throw new AppError(404, ErrorCode.NotFound, 'Imagem não encontrada.');
+      if (f.data) return { mime: f.mime, data: f.data };
+      if (!blobs || !f.storage_path) throw new AppError(503, ErrorCode.Unavailable, 'Armazenamento de imagens indisponível.');
+      return { mime: f.mime, data: await blobs.get(f.storage_path) };
     },
 
     async approve(adminId, id) {

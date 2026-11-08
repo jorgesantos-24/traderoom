@@ -82,7 +82,7 @@ const EYE_OFF = (
 
 /**
  * Balance in the header with a dropdown to switch between the real and the demo account,
- * hide the balances, and refill the demo account to R$ 10.000.
+ * hide the balances, and refill the demo account to US$ 10.000.
  */
 export function AccountSwitcher() {
   const { account, setAccount, accounts, wallet, refreshWallet, refillDemo } = useSessionData();
@@ -145,7 +145,7 @@ export function AccountSwitcher() {
           <span className="block text-[10px] font-semibold tracking-wide text-muted uppercase" data-testid="account-kind">
             {KIND_LABEL[account]}
           </span>
-          <span className={cx('tabular block text-lg font-bold', KIND_TONE[account])} data-testid="balance">
+          <span className={cx('tabular block text-base font-bold sm:text-lg', KIND_TONE[account])} data-testid="balance">
             {money(wallet.data.balanceCents)}
           </span>
         </span>
@@ -158,7 +158,7 @@ export function AccountSwitcher() {
         <div
           role="menu"
           aria-label="Contas"
-          className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-card border border-border bg-field shadow-2xl"
+          className="absolute right-0 top-full z-50 mt-2 w-[min(18rem,calc(100vw-1rem))] overflow-hidden rounded-card border border-border bg-field shadow-2xl"
         >
           <div className="flex items-center justify-between px-4 pt-3 pb-1 text-xs text-muted">
             <span>Contas</span>
@@ -496,7 +496,7 @@ export function DepositButton() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex h-11 items-center gap-2.5 rounded-control border border-[#3fbf5a] bg-[#3fbf5a]/[0.06] px-3 text-lg text-[#4cd964] hover:bg-[#3fbf5a]/15 sm:px-6"
+        className="flex h-10 items-center gap-2.5 rounded-control border border-[#3fbf5a] bg-[#3fbf5a]/[0.06] px-2.5 text-lg sm:h-11 text-[#4cd964] hover:bg-[#3fbf5a]/15 sm:px-6"
         data-testid="deposit-button"
       >
         <svg aria-hidden="true" viewBox="0 0 24 24" className="size-6" fill="currentColor">

@@ -4,7 +4,10 @@
  */
 export const TIME_ZONE = 'America/Sao_Paulo';
 
-const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+/** Balances, stakes and payouts are in US dollars ("US$ 10,00"); Pix amounts are in reais. */
+const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'USD' });
+const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const rate = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
 const dateTime = new Intl.DateTimeFormat('pt-BR', {
   day: '2-digit',
   month: '2-digit',
@@ -21,7 +24,22 @@ export function formatMoney(cents: number): string {
   return money.format(cents / 100);
 }
 
-/** Signed amount, e.g. "+R$ 8,70" / "−R$ 10,00". */
+/** Reais, for Pix amounts: "R$ 50,00". */
+export function formatBrl(cents: number): string {
+  return brl.format(cents / 100);
+}
+
+/** BRL per dollar: "US$ 1 = R$ 5,5035". */
+export function formatFxRate(brlPerUsd: number): string {
+  return `US$ 1 = R$ ${rate.format(brlPerUsd)}`;
+}
+
+/** BRL cents → USD cents at `rate`, rounded down (same as the server). */
+export const brlToUsdCents = (brlCents: number, brlPerUsd: number): number => Math.floor(brlCents / brlPerUsd + 1e-9);
+/** USD cents → BRL cents at `rate`, rounded down (same as the server). */
+export const usdToBrlCents = (usdCents: number, brlPerUsd: number): number => Math.floor(usdCents * brlPerUsd + 1e-9);
+
+/** Signed amount, e.g. "+US$ 8,70" / "−US$ 10,00". */
 export function formatSignedMoney(cents: number): string {
   if (cents === 0) return money.format(0);
   return `${cents > 0 ? '+' : '−'}${money.format(Math.abs(cents) / 100)}`;
@@ -76,7 +94,7 @@ export function formatShortDate(iso: string | number): string {
  * Returns null when it is not a positive amount with at most 2 decimals.
  */
 export function parseMoneyToCents(input: string): number | null {
-  let s = input.trim().replace(/^R\$\s*/, '');
+  let s = input.trim().replace(/^(R|US)?\$\s*/i, '');
   if (s === '') return null;
   if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
   if (!/^\d+(\.\d{1,2})?$/.test(s)) return null;

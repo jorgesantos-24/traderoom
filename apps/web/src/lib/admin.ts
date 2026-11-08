@@ -11,6 +11,8 @@ export const AUDIT_LABEL: Record<AuditAction, string> = {
   'withdrawal.reject': 'Saque recusado',
   'kyc.approve': 'Verificação aprovada',
   'kyc.reject': 'Verificação recusada',
+  'otc.override': 'Intervenção no preço OTC',
+  'otc.override.release': 'Intervenção OTC solta',
 };
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
@@ -40,6 +42,12 @@ export function describeAudit(e: Pick<AuditEntryView, 'action' | 'payload'>): st
     case 'kyc.reject':
       if (!str(p.email)) break;
       return `${str(p.email)}${str(p.reason) ? ` — “${str(p.reason)}”` : ''}`;
+    case 'otc.override':
+      if (!str(p.symbol)) break;
+      return `${str(p.symbol)}: fechar em ${str(p.targetPrice)} (base ${str(p.basePrice)}) às ${num(p.candleCloseMs) === null ? '?' : new Date(num(p.candleCloseMs) as number).toLocaleTimeString('pt-BR')}`;
+    case 'otc.override.release':
+      if (!str(p.symbol)) break;
+      return `${str(p.symbol)}: alvo ${str(p.targetPrice)} solto`;
     case 'asset.update': {
       const b = obj(p.before);
       const a = obj(p.after);

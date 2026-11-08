@@ -14,13 +14,19 @@ source "$ENV_FILE"
 
 token=$(curl -fsS -H 'Metadata-Flavor: Google' "$META/instance/service-accounts/default/token" | jq -r .access_token)
 
-# Prints the latest version of a secret, or nothing (exit 0) if the secret does not exist.
+# Prints the latest version of a secret. `secret NAME optional` prints nothing (exit 0) when the
+# secret is not set up: Secret Manager answers 403, not 404, for a secret that does not exist when
+# the caller has no project-wide access (provision grants access per secret, only to existing ones).
 secret() {
-  local name=$1 body code
+  local name=$1 optional=${2:-} body code
   body=$(mktemp)
   code=$(curl -sS -o "$body" -w '%{http_code}' -H "Authorization: Bearer $token" \
     "https://secretmanager.googleapis.com/v1/projects/$GCP_PROJECT/secrets/$name/versions/latest:access")
-  if [[ $code == 404 ]]; then rm -f "$body"; return 0; fi
+  if [[ $optional == optional && ( $code == 404 || $code == 403 ) ]]; then
+    echo "secret $name: not set up (HTTP $code), skipped" >&2
+    rm -f "$body"
+    return 0
+  fi
   if [[ $code != 200 ]]; then echo "secret $name: HTTP $code" >&2; rm -f "$body"; return 1; fi
   jq -r .payload.data "$body" | base64 -d
   rm -f "$body"
@@ -28,9 +34,9 @@ secret() {
 
 db_password=$(secret traderoom-db-password)
 [[ -n $db_password ]] || { echo 'traderoom-db-password is empty or missing' >&2; exit 1; }
-resend_key=$(secret traderoom-resend-api-key)
-novus_key=$(secret traderoom-novus-api-key)
-novus_whsec=$(secret traderoom-novus-webhook-secret)
+resend_key=$(secret traderoom-resend-api-key optional)
+novus_key=$(secret traderoom-novus-api-key optional)
+novus_whsec=$(secret traderoom-novus-webhook-secret optional)
 
 install -d -m 0750 -o root -g traderoom "$OUT_DIR"
 tmp=$(mktemp "$OUT_DIR/.secrets.XXXXXX")

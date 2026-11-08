@@ -151,7 +151,7 @@ describe('creating orders', () => {
     expect(await createWalletService(pool).get(user, 'real')).toEqual({
       account: 'real',
       balanceCents: 9000,
-      currency: 'BRL',
+      currency: 'USD',
       openStakeCents: 1000,
       openOrders: 1,
     });
@@ -358,7 +358,7 @@ describe('demo account', () => {
     expect(await balances(user)).toEqual({ real: 5000, demo: 500 });
   });
 
-  it('refills the demo balance up to R$ 10.000, never above', async () => {
+  it('refills the demo balance up to US$ 10.000, never above', async () => {
     const wallet = createWalletService(pool);
     const user = await demoUser(1234);
     expect(await wallet.refillDemo(user)).toMatchObject({ account: 'demo', balanceCents: 1_000_000 });

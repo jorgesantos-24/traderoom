@@ -31,17 +31,34 @@ export function createOtcCandleSource(
   async function load(assetId: number, interval: CandleInterval, limit: number): Promise<Candle[]> {
     const step = INTERVAL_SEC[interval];
     const from = new Date(Math.floor(now() / 1000 / step - limit + 1) * step * 1000);
-    // Buckets aligned to UTC like Binance's (date_bin from the epoch). Open/close are the first/last price in the bucket.
+    // Buckets aligned to UTC like Binance's (date_bin from the epoch). Each candle opens where the previous
+    // one closed (a snapshot is 1 s apart, so "first price in the bucket" left a step between every bar);
+    // after a missing bucket (feed down) it opens at its own first price, so downtime still shows as a gap.
+    // One extra bucket before `from` is read only to know the first candle's open.
     const { rows } = await pool.query<{ t: string; o: string; h: string; l: string; c: string }>(
-      `select (extract(epoch from b) * 1000)::bigint::text as t,
-              (array_agg(price order by captured_at asc))[1]::text as o,
-              max(price)::text as h,
-              min(price)::text as l,
-              (array_agg(price order by captured_at desc))[1]::text as c
-         from (select date_bin(make_interval(secs => $2), captured_at, timestamptz 'epoch') as b, price, captured_at
-                 from price_snapshots
-                where asset_id = $1 and captured_at >= $3) s
-        group by b
+      `with k as (
+         select b,
+                (array_agg(price order by captured_at asc))[1] as first,
+                max(price) as hi,
+                min(price) as lo,
+                (array_agg(price order by captured_at desc))[1] as c
+           from (select date_bin(make_interval(secs => $2), captured_at, timestamptz 'epoch') as b, price, captured_at
+                   from price_snapshots
+                  where asset_id = $1 and captured_at >= $3::timestamptz - make_interval(secs => $2)) s
+          group by b
+       ), o as (
+         select b, hi, lo, c,
+                case when lag(b) over w = b - make_interval(secs => $2) then lag(c) over w else first end as o
+           from k
+         window w as (order by b)
+       )
+       select (extract(epoch from b) * 1000)::bigint::text as t,
+              o::text as o,
+              greatest(hi, o)::text as h,
+              least(lo, o)::text as l,
+              c::text as c
+         from o
+        where b >= $3::timestamptz
         order by b`,
       [assetId, step, from],
     );

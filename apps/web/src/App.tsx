@@ -11,9 +11,16 @@ const TraderoomPage = lazy(() => import('./pages/TraderoomPage').then((m) => ({ 
 const WalletPage = lazy(() => import('./pages/WalletPage').then((m) => ({ default: m.WalletPage })));
 const VerificationPage = lazy(() => import('./pages/VerificationPage').then((m) => ({ default: m.VerificationPage })));
 const AdminPage = lazy(() => import('./pages/AdminPage').then((m) => ({ default: m.AdminPage })));
+const AdminOtcOverridePage = lazy(() => import('./pages/AdminOtcOverride').then((m) => ({ default: m.AdminOtcOverridePage })));
 
 const PUBLIC = { '/login': LoginPage, '/register': RegisterPage, '/forgot': ForgotPage, '/reset': ResetPage } as const;
-const PRIVATE = { '/traderoom': TraderoomPage, '/wallet': WalletPage, '/admin': AdminPage, '/verification': VerificationPage } as const;
+const PRIVATE = {
+  '/traderoom': TraderoomPage,
+  '/wallet': WalletPage,
+  '/admin': AdminPage,
+  '/admin/otc-override': AdminOtcOverridePage,
+  '/verification': VerificationPage,
+} as const;
 
 const TITLES: Record<string, string> = {
   '/login': 'Entrar',
@@ -23,6 +30,7 @@ const TITLES: Record<string, string> = {
   '/traderoom': 'Negociar',
   '/wallet': 'Carteira',
   '/admin': 'Admin',
+  '/admin/otc-override': 'Intervenção OTC',
   '/verification': 'Verificação de conta',
 };
 

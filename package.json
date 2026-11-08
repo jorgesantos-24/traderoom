@@ -10,6 +10,7 @@
     "apps/*"
   ],
   "scripts": {
+    "db:tunnel": "npm run db:tunnel -w @traderoom/api",
     "dev:deps": "docker compose up -d --wait",
     "dev:api": "npm run dev -w @traderoom/api",
     "dev:ws": "npm run dev -w @traderoom/ws",

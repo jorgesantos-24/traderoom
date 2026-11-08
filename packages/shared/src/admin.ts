@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { UserRole } from './auth.js';
 import { MAX_STAKE_CENTS_HARD, PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT } from './orders.js';
 
-/** Largest single manual credit or debit, in cents (R$ 1.000.000,00). */
+/** Largest single manual credit or debit, in cents (US$ 1.000.000,00). */
 export const ADMIN_MAX_ADJUST_CENTS = MAX_STAKE_CENTS_HARD;
 export const PAYOUT_PCT_MIN = 50;
 export const PAYOUT_PCT_MAX = 95;
@@ -75,6 +75,8 @@ export const AUDIT_ACTIONS = [
   'withdrawal.reject',
   'kyc.approve',
   'kyc.reject',
+  'otc.override',
+  'otc.override.release',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 

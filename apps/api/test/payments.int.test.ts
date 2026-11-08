@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { loadConfig } from '../src/config.js';
 import { createPool } from '../src/lib/db.js';
+import { fixedFx, FxUnavailableError, type FxService } from '../src/lib/fx.js';
 import { GatewayError, type ChargeRequest, type PaymentGateway, type PayoutRequest, type PayoutState } from '../src/lib/novus.js';
 import { WEBHOOK_PATH } from '../src/routes/payments.js';
 import { createPaymentService, type PaymentService } from '../src/services/payments.js';
@@ -18,6 +19,9 @@ if (existsSync(envFile)) process.loadEnvFile(envFile);
 const DOMAIN = 'payments-int.traderoom.test';
 const KEY = 'test-private-key';
 const VALID_CPF = '52998224725';
+/** Deposits: R$ 5 buys US$ 1. Withdrawals: US$ 1 pays R$ 4,90. */
+const fx = fixedFx(5, 4.9);
+const noFx: FxService = { quote: () => Promise.reject(new FxUnavailableError('down')) };
 
 /** A CPF with valid check digits that no other test user has (CPFs are unique per account). */
 function freshCpf(): string {
@@ -91,7 +95,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   gw = new FakeGateway();
-  svc = createPaymentService({ pool, gateway: gw, webhookSecrets: [KEY], postbackUrl: null });
+  svc = createPaymentService({ pool, gateway: gw, webhookSecrets: [KEY], postbackUrl: null, fx });
 });
 
 afterAll(async () => {
@@ -105,13 +109,13 @@ afterAll(async () => {
 });
 
 describe('deposits', () => {
-  it('asks for a valid CPF once, creates the Pix charge and credits the real account once when paid', async () => {
+  it('asks for a valid CPF once, creates the Pix charge in reais and credits dollars once when paid', async () => {
     const user = await newUser();
     await expect(svc.createDeposit(user, { amountCents: 5000, cpf: '111.111.111-11' })).rejects.toMatchObject({ statusCode: 400 });
 
     const cpf = freshCpf();
     const dep = await svc.createDeposit(user, { amountCents: 5000, cpf });
-    expect(dep).toMatchObject({ status: 'pending', amountCents: 5000, pixCode: '00020126PIXCODE' });
+    expect(dep).toMatchObject({ status: 'pending', amountCents: 5000, usdCents: 1000, fxRate: 5, pixCode: '00020126PIXCODE' });
     expect(gw.charges[0]).toMatchObject({ externalId: dep.id, amountCents: 5000, payer: { cpf } });
     expect((await svc.info(user)).cpf).toBe(`***.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-**`);
 
@@ -124,8 +128,9 @@ describe('deposits', () => {
     gw.chargeStatus.set(`inv-${dep.id}`, 'paid');
     expect((await svc.getDeposit(user, dep.id)).status).toBe('paid');
     await svc.applyChargeState({ providerId: `inv-${dep.id}`, externalId: dep.id, status: 'paid', amountCents: 5000 });
-    expect(await real(user)).toBe(5000);
+    expect(await real(user)).toBe(1000);
     expect(await kinds(user)).toEqual(['deposit']);
+    expect((await svc.getDeposit(user, dep.id)).usdCents).toBe(1000);
   });
 
   it('takes a reversed deposit back from the balance', async () => {
@@ -140,8 +145,21 @@ describe('deposits', () => {
   it('refuses amounts outside the limits and is off without a gateway', async () => {
     const user = await newUser();
     await expect(svc.createDeposit(user, { amountCents: 500, cpf: freshCpf() })).rejects.toMatchObject({ statusCode: 400 });
-    const off = createPaymentService({ pool, gateway: null, webhookSecrets: [], postbackUrl: null });
+    const off = createPaymentService({ pool, gateway: null, webhookSecrets: [], postbackUrl: null, fx });
     await expect(off.createDeposit(user, { amountCents: 5000, cpf: freshCpf() })).rejects.toMatchObject({ statusCode: 503 });
+  });
+
+  it('shows the quote and pauses deposits and withdrawals without one', async () => {
+    const user = await newUser(10_000);
+    expect(await svc.info(user)).toMatchObject({ depositRate: 5, withdrawRate: 4.9 });
+    const blind = createPaymentService({ pool, gateway: gw, webhookSecrets: [KEY], postbackUrl: null, fx: noFx });
+    expect(await blind.info(user)).toMatchObject({ depositRate: null, withdrawRate: null });
+    await expect(blind.createDeposit(user, { amountCents: 5000, cpf: freshCpf() })).rejects.toMatchObject({ statusCode: 503 });
+    await expect(blind.requestWithdrawal(user, { amountCents: 1000, pixKeyType: 'CPF', pixKey: VALID_CPF })).rejects.toMatchObject({
+      statusCode: 503,
+    });
+    expect(await real(user)).toBe(10_000);
+    expect(gw.charges).toEqual([]);
   });
 });
 
@@ -156,7 +174,7 @@ describe('withdrawals', () => {
       statusCode: 400,
     });
     const w = await svc.requestWithdrawal(user, { amountCents: 6000, pixKeyType: 'EMAIL', pixKey: ' Ana@Example.com ' });
-    expect(w).toMatchObject({ status: 'requested', pixKey: 'ana@example.com' });
+    expect(w).toMatchObject({ status: 'requested', pixKey: 'ana@example.com', amountCents: 6000, pixAmountCents: 29_400, fxRate: 4.9 });
     expect(await real(user)).toBe(4000);
 
     expect(await svc.reject(admin, w.id, 'Chave de terceiro')).toMatchObject({ status: 'rejected', note: 'Chave de terceiro' });
@@ -179,7 +197,7 @@ describe('withdrawals', () => {
     });
 
     expect(await svc.approve(admin, w.id)).toMatchObject({ status: 'processing' });
-    expect(gw.payouts).toEqual([expect.objectContaining({ externalId: w.id, amountCents: 5000, pixKeyType: 'PHONE' })]);
+    expect(gw.payouts).toEqual([expect.objectContaining({ externalId: w.id, amountCents: 24_500, pixKeyType: 'PHONE' })]);
     await expect(svc.approve(admin, w.id)).rejects.toMatchObject({ statusCode: 409 });
 
     expect(await svc.refreshWithdrawal(w.id)).toMatchObject({ status: 'completed' });
@@ -197,10 +215,11 @@ describe('withdrawals', () => {
     const b = await svc.requestWithdrawal(user, { amountCents: 4000, pixKeyType: 'CPF', pixKey: VALID_CPF });
     await svc.approve(admin, b.id);
     await svc.applyPayoutState({ providerId: `po-${b.id}`, externalId: null, status: 'completed', amountCents: 4000, refundedAmountCents: null });
-    await svc.applyPayoutState({ providerId: `po-${b.id}`, externalId: null, status: 'refunded', amountCents: 4000, refundedAmountCents: 3900 });
+    // The bank returns reais (R$ 191,10 = US$ 39,00 at the withdrawal's rate).
+    await svc.applyPayoutState({ providerId: `po-${b.id}`, externalId: null, status: 'refunded', amountCents: 19_600, refundedAmountCents: 19_110 });
     expect(await real(user)).toBe(10_000 - 4000 + 3900);
     // Repeated notifications do nothing more.
-    await svc.applyPayoutState({ providerId: `po-${b.id}`, externalId: null, status: 'refunded', amountCents: 4000, refundedAmountCents: 3900 });
+    await svc.applyPayoutState({ providerId: `po-${b.id}`, externalId: null, status: 'refunded', amountCents: 19_600, refundedAmountCents: 19_110 });
     expect(await real(user)).toBe(9900);
   });
 });
@@ -208,7 +227,7 @@ describe('withdrawals', () => {
 describe('webhook route', () => {
   let app: FastifyInstance;
   beforeAll(async () => {
-    app = await testApp({ deps: { payments: createPaymentService({ pool, gateway: new FakeGateway(), webhookSecrets: [KEY], postbackUrl: null }) } });
+    app = await testApp({ deps: { payments: createPaymentService({ pool, gateway: new FakeGateway(), webhookSecrets: [KEY], postbackUrl: null, fx }) } });
   });
   afterAll(async () => {
     await app.close();
@@ -225,7 +244,7 @@ describe('webhook route', () => {
 
   it('credits a signed invoice.paid postback without a session or CSRF token, and rejects a bad signature', async () => {
     const user = await newUser();
-    const s = createPaymentService({ pool, gateway: gw, webhookSecrets: [KEY], postbackUrl: null });
+    const s = createPaymentService({ pool, gateway: gw, webhookSecrets: [KEY], postbackUrl: null, fx });
     const dep = await s.createDeposit(user, { amountCents: 2500, cpf: freshCpf() });
     const body = JSON.stringify({ id: `inv-${dep.id}`, status: 'paid', amount: 2500, method: 'pix', event: 'invoice.paid', external_id: dep.id });
 
@@ -235,15 +254,15 @@ describe('webhook route', () => {
 
     const ok = await post(body, sign(body));
     expect(ok.statusCode).toBe(200);
-    expect(await real(user)).toBe(2500);
+    expect(await real(user)).toBe(500);
     expect((await post(body, sign(body))).statusCode).toBe(200);
-    expect(await real(user)).toBe(2500);
+    expect(await real(user)).toBe(500);
   });
 
   it('applies a signed global withdrawal envelope', async () => {
     const user = await newUser(10_000);
     const admin = await newUser(0, 'admin');
-    const s = createPaymentService({ pool, gateway: gw, webhookSecrets: [KEY], postbackUrl: null });
+    const s = createPaymentService({ pool, gateway: gw, webhookSecrets: [KEY], postbackUrl: null, fx });
     const w = await s.requestWithdrawal(user, { amountCents: 2000, pixKeyType: 'CPF', pixKey: VALID_CPF });
     await s.approve(admin, w.id);
     const body = JSON.stringify({

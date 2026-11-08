@@ -49,7 +49,7 @@ async function cleanup(userEmail: string): Promise<void> {
 }
 
 const brl = (cents: number) =>
-  (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }).replace(/ /g, ' ');
+  (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'USD' }).replace(/ /g, ' ');
 
 async function balanceText(page: Page): Promise<string> {
   return ((await page.getByTestId('balance').textContent()) ?? '').replace(/ /g, ' ');
@@ -80,7 +80,7 @@ test('register → login → order → settlement → updated balance', async ({
   await page.getByRole('button', { name: 'Entrar' }).click();
   await expect(page).toHaveURL(/\/traderoom$/);
 
-  // A new user starts on the demo account with R$ 10.000; switch to the real one, which is empty.
+  // A new user starts on the demo account with US$ 10.000; switch to the real one, which is empty.
   await expect(page.getByTestId('account-kind')).toHaveText('Demo');
   await expect.poll(() => balanceText(page)).toBe(brl(1_000_000));
   await page.getByTestId('account-switcher').click();
@@ -100,8 +100,8 @@ test('register → login → order → settlement → updated balance', async ({
   await page.reload();
   await expect.poll(() => balanceText(page)).toBe(brl(CREDIT_CENTS));
 
-  // Place a 1-minute R$ 10 call once the live price is in.
-  await page.getByRole('button', { name: 'R$ 10', exact: true }).click();
+  // Place a 1-minute US$ 10 call once the live price is in.
+  await page.getByRole('button', { name: '$ 10', exact: true }).click();
   // The expiry list starts at 30 s; one "+" moves it to 1 min.
   await page.getByRole('button', { name: 'Aumentar tempo' }).click();
   await expect(page.locator('output').first()).toHaveText('1min');

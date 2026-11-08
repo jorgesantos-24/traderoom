@@ -11,3 +11,10 @@ test-results/
 tests/k6/.sessions.json
 # Acceptance run output (logs, session cookies of throwaway users)
 tests/load/results/
+
+# Firebase service account and other local credentials
+secrets/
+*-firebase-adminsdk-*.json
+
+# deploy.sh scratch (release tarballs, VM setup staging)
+.deploy/

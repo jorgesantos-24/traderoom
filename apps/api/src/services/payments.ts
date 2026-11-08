@@ -21,12 +21,16 @@ import {
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 import { inTransaction } from '../lib/db.js';
 import { AppError } from '../lib/errors.js';
+import { brlToUsdCents, FxUnavailableError, usdToBrlCents, type FxService } from '../lib/fx.js';
 import { GatewayError, isPayoutPayload, parseChargeState, parsePayoutState, verifySignature, type ChargeState, type PaymentGateway, type PayoutState } from '../lib/novus.js';
 import { isoUs } from './orders.js';
 
 export interface PaymentLimits {
+  /** BRL cents (the Pix charge). */
   depositMinCents: number;
+  /** BRL cents (the Pix charge). */
   depositMaxCents: number;
+  /** USD cents (taken from the balance). */
   withdrawMinCents: number;
   /** Pending (unpaid) Pix charges a user may have at once. */
   maxPendingDeposits: number;
@@ -37,7 +41,7 @@ export interface PaymentLimits {
 export const DEFAULT_PAYMENT_LIMITS: PaymentLimits = {
   depositMinCents: 1_000,
   depositMaxCents: 5_000_000,
-  withdrawMinCents: 2_000,
+  withdrawMinCents: 500,
   maxPendingDeposits: 3,
   maxOpenWithdrawals: 3,
 };
@@ -51,6 +55,8 @@ export interface PaymentServiceDeps {
   /** Absolute URL the gateway posts status changes to; null in development (status is then pulled on demand). */
   postbackUrl: string | null;
   limits?: PaymentLimits;
+  /** Dollar quote: balances are in USD, Pix moves BRL. */
+  fx: FxService;
   /** Throws unless the user passed identity verification (KYC). Omitted = no check. */
   requireKyc?: (userId: string) => Promise<void>;
 }
@@ -76,6 +82,9 @@ export interface PaymentService {
 const disabled = () => new AppError(503, ErrorCode.Unavailable, 'Depósitos e saques ainda não estão disponíveis.');
 const gatewayFailed = (what: string) => new AppError(502, ErrorCode.Unavailable, `Não foi possível ${what} agora. Tente novamente em instantes.`);
 const fmt = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const fmtUsd = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'USD' });
+const fmtRate = (r: number) => r.toLocaleString('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+const noQuote = () => new AppError(503, ErrorCode.Unavailable, 'Cotação do dólar indisponível no momento. Tente novamente em instantes.');
 export const maskCpf = (cpf: string): string => `***.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-**`;
 
 interface DepositRow {
@@ -87,14 +96,17 @@ interface DepositRow {
   pix_code: string | null;
   expires_at: string | null;
   credited_cents: string | null;
+  fx_rate: string;
   created_at: string;
   paid_at: string | null;
 }
-const DEPOSIT_COLS = `id, user_id, amount_cents, status, provider_id, pix_code, ${isoUs('expires_at')} as expires_at, credited_cents,
+const DEPOSIT_COLS = `id, user_id, amount_cents, status, provider_id, pix_code, ${isoUs('expires_at')} as expires_at, credited_cents, fx_rate,
   ${isoUs('created_at')} as created_at, ${isoUs('paid_at')} as paid_at`;
 const toDeposit = (r: DepositRow): DepositView => ({
   id: r.id,
   amountCents: Number(r.amount_cents),
+  usdCents: r.credited_cents !== null ? Number(r.credited_cents) : brlToUsdCents(Number(r.amount_cents), Number(r.fx_rate)),
+  fxRate: Number(r.fx_rate),
   status: r.status,
   pixCode: r.status === 'pending' ? r.pix_code : null,
   expiresAt: r.expires_at,
@@ -106,6 +118,8 @@ interface WithdrawalRow {
   id: string;
   user_id: string;
   amount_cents: string;
+  pix_amount_cents: string;
+  fx_rate: string;
   pix_key: string;
   pix_key_type: PixKeyType;
   status: WithdrawalStatus;
@@ -119,11 +133,13 @@ interface WithdrawalRow {
   name?: string;
   cpf?: string | null;
 }
-const W_COLS = `w.id, w.user_id, w.amount_cents, w.pix_key, w.pix_key_type, w.status, w.provider_id, w.provider_status, w.note,
+const W_COLS = `w.id, w.user_id, w.amount_cents, w.pix_amount_cents, w.fx_rate, w.pix_key, w.pix_key_type, w.status, w.provider_id, w.provider_status, w.note,
   w.last_error, ${isoUs('w.created_at')} as created_at, ${isoUs('w.completed_at')} as completed_at`;
 const toWithdrawal = (r: WithdrawalRow): WithdrawalView => ({
   id: r.id,
   amountCents: Number(r.amount_cents),
+  pixAmountCents: Number(r.pix_amount_cents),
+  fxRate: Number(r.fx_rate),
   pixKeyType: r.pix_key_type,
   pixKey: r.pix_key,
   status: r.status,
@@ -188,10 +204,25 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
     await c.query('insert into admin_audit (admin_id, action, payload) values ($1, $2, $3)', [adminId, action, JSON.stringify(payload)]);
   }
 
+  /** BRL per dollar for this side, or 503 when no quote can be had. */
+  async function currentQuote(side: 'deposit' | 'withdraw'): Promise<number> {
+    try {
+      const q = await deps.fx.quote();
+      return side === 'deposit' ? q.depositRate : q.withdrawRate;
+    } catch (err) {
+      if (err instanceof FxUnavailableError) throw noQuote();
+      throw err;
+    }
+  }
+
   const service: PaymentService = {
     async info(userId) {
       const { rows } = await pool.query<{ cpf: string | null; kyc_status: KycStatus }>('select cpf, kyc_status from users where id = $1', [userId]);
       const cpf = rows[0]?.cpf ?? null;
+      const quote = await deps.fx.quote().catch((err: unknown) => {
+        if (err instanceof FxUnavailableError) return null;
+        throw err;
+      });
       return {
         enabled: gateway !== null,
         kycStatus: rows[0]?.kyc_status ?? 'none',
@@ -199,6 +230,8 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
         depositMinCents: limits.depositMinCents,
         depositMaxCents: limits.depositMaxCents,
         withdrawMinCents: limits.withdrawMinCents,
+        depositRate: quote?.depositRate ?? null,
+        withdrawRate: quote?.withdrawRate ?? null,
       };
     },
 
@@ -212,6 +245,7 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
           `amountCents: o depósito deve ser entre ${fmt(limits.depositMinCents)} e ${fmt(limits.depositMaxCents)}.`,
         );
       }
+      const rate = await currentQuote('deposit');
 
       const deposit = await inTransaction(pool, async (c) => {
         const u = await c.query<{ name: string; email: string; cpf: string | null }>(
@@ -235,9 +269,10 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
         if (Number(pending.rows[0]?.n) >= limits.maxPendingDeposits) {
           throw new AppError(429, ErrorCode.RateLimited, 'Você já tem depósitos aguardando pagamento. Pague um deles ou aguarde expirar.');
         }
-        const ins = await c.query<{ id: string }>('insert into deposits (user_id, amount_cents) values ($1, $2) returning id', [
+        const ins = await c.query<{ id: string }>('insert into deposits (user_id, amount_cents, fx_rate) values ($1, $2, $3) returning id', [
           userId,
           input.amountCents,
+          rate,
         ]);
         return { id: ins.rows[0]!.id, payer: { name: user.name, email: user.email, cpf } };
       });
@@ -291,8 +326,10 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
       if (!gateway) throw disabled();
       await deps.requireKyc?.(userId);
       if (input.amountCents < limits.withdrawMinCents) {
-        throw new AppError(400, ErrorCode.ValidationFailed, `amountCents: o saque mínimo é ${fmt(limits.withdrawMinCents)}.`);
+        throw new AppError(400, ErrorCode.ValidationFailed, `amountCents: o saque mínimo é ${fmtUsd(limits.withdrawMinCents)}.`);
       }
+      const rate = await currentQuote('withdraw');
+      const pixCents = usdToBrlCents(input.amountCents, rate);
       const key = normalizePixKey(input.pixKeyType, input.pixKey);
       if (!key) throw new AppError(400, ErrorCode.ValidationFailed, 'pixKey: chave Pix inválida para o tipo escolhido.');
 
@@ -307,11 +344,14 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
           throw new AppError(429, ErrorCode.RateLimited, 'Você já tem saques em andamento. Aguarde a conclusão para pedir outro.');
         }
         const ins = await c.query<{ id: string }>(
-          `insert into withdrawals (user_id, amount_cents, pix_key, pix_key_type) values ($1, $2, $3, $4) returning id`,
-          [userId, input.amountCents, key, input.pixKeyType],
+          `insert into withdrawals (user_id, amount_cents, pix_amount_cents, fx_rate, pix_key, pix_key_type)
+           values ($1, $2, $3, $4, $5, $6) returning id`,
+          [userId, input.amountCents, pixCents, rate, key, input.pixKeyType],
         );
         const wid = ins.rows[0]!.id;
-        await moveReal(c, userId, -input.amountCents, 'withdrawal', `Saque Pix (${input.pixKeyType})`, { withdrawalId: wid });
+        await moveReal(c, userId, -input.amountCents, 'withdrawal', `Saque Pix (${input.pixKeyType}): ${fmt(pixCents)} (US$ 1 = ${fmtRate(rate)})`, {
+          withdrawalId: wid,
+        });
         return wid;
       });
       return toWithdrawal((await pool.query<WithdrawalRow>(`select ${W_COLS} from withdrawals w where w.id = $1`, [id])).rows[0]!);
@@ -364,7 +404,7 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
       try {
         const payout = await gateway.createPayout({
           externalId: w.id,
-          amountCents: Number(w.amount_cents),
+          amountCents: Number(w.pix_amount_cents),
           pixKey: w.pix_key,
           pixKeyType: w.pix_key_type,
           description: 'Saque',
@@ -434,9 +474,13 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
         const s = state.status;
         if (d.status === 'pending' && s === 'paid') {
           // Credit what was actually paid (the gateway keeps underpayments pending until accepted).
-          const credit = state.amountCents && state.amountCents > 0 ? state.amountCents : Number(d.amount_cents);
+          const paid = state.amountCents && state.amountCents > 0 ? state.amountCents : Number(d.amount_cents);
+          const rate = Number(d.fx_rate);
+          const credit = brlToUsdCents(paid, rate);
           await c.query(`update deposits set status = 'paid', credited_cents = $2, paid_at = now() where id = $1`, [d.id, credit]);
-          await moveReal(c, d.user_id, credit, 'deposit', 'Depósito Pix', { depositId: d.id });
+          if (credit > 0) {
+            await moveReal(c, d.user_id, credit, 'deposit', `Depósito Pix: ${fmt(paid)} (US$ 1 = ${fmtRate(rate)})`, { depositId: d.id });
+          }
         } else if (d.status === 'pending' && (s === 'canceled' || s === 'cancelled' || s === 'expired')) {
           await c.query(`update deposits set status = 'expired' where id = $1`, [d.id]);
         } else if (d.status === 'pending' && (s === 'failed' || s === 'refused')) {
@@ -446,12 +490,12 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
           const bal = await c.query<{ b: string }>(`select balance_cents as b from accounts where user_id = $1 and kind = 'real' for update`, [
             d.user_id,
           ]);
-          const credited = Number(d.credited_cents ?? d.amount_cents);
+          const credited = d.credited_cents !== null ? Number(d.credited_cents) : brlToUsdCents(Number(d.amount_cents), Number(d.fx_rate));
           const take = Math.min(credited, Number(bal.rows[0]?.b ?? 0));
           await c.query(`update deposits set status = 'reversed' where id = $1`, [d.id]);
           const short = credited - take;
           if (take > 0) {
-            await moveReal(c, d.user_id, -take, 'deposit_reversal', short > 0 ? `Depósito estornado (faltaram ${fmt(short)})` : 'Depósito estornado', {
+            await moveReal(c, d.user_id, -take, 'deposit_reversal', short > 0 ? `Depósito estornado (faltaram ${fmtUsd(short)})` : 'Depósito estornado', {
               depositId: d.id,
             });
           }
@@ -483,7 +527,9 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
             withdrawalId: w.id,
           });
         } else if ((w.status === 'completed' || inFlight) && s === 'refunded') {
-          const back = Math.min(state.refundedAmountCents ?? Number(w.amount_cents), Number(w.amount_cents));
+          // The bank returns reais; give back the dollars they correspond to at the withdrawal's rate.
+          const usd = Number(w.amount_cents);
+          const back = state.refundedAmountCents != null ? Math.min(brlToUsdCents(state.refundedAmountCents, Number(w.fx_rate)), usd) : usd;
           await c.query(`update withdrawals set status = 'returned' where id = $1`, [w.id]);
           await moveReal(c, w.user_id, back, 'withdrawal_return', 'Saque devolvido pelo banco de destino.', { withdrawalId: w.id });
         }

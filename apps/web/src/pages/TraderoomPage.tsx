@@ -156,7 +156,7 @@ function Traderoom({ assets, limits }: { assets: AssetView[]; limits: OrderLimit
       <div className="grid gap-2 lg:h-full lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="flex min-h-0 min-w-0 flex-col">
           <Card className="flex flex-1 flex-col overflow-hidden">
-            <div className="h-[60vh] min-h-[320px] lg:h-auto lg:flex-1">
+            <div className="h-[calc(100svh-400px)] min-h-[220px] lg:h-auto lg:min-h-[320px] lg:flex-1">
               <PriceChart
                 symbol={asset.symbol}
                 display={asset.display}

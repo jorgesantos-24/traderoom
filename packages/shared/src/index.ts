@@ -6,6 +6,7 @@ export * from './kyc.js';
 export * from './market.js';
 export * from './metrics.js';
 export * from './orders.js';
+export * from './otc-override.js';
 export * from './payments.js';
 export * from './redis-keys.js';
 export * from './session.js';

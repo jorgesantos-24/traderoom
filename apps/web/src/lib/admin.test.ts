@@ -12,10 +12,10 @@ describe('describeAudit', () => {
           payload: { email: 'bia@x.com', deltaCents: 5000, balanceBefore: 0, balanceAfter: 5000, note: 'Bônus' },
         }),
       ),
-    ).toBe('bia@x.com: +R$ 50,00 (saldo R$ 0,00 → R$ 50,00) — “Bônus”');
+    ).toBe('bia@x.com: +US$ 50,00 (saldo US$ 0,00 → US$ 50,00) — “Bônus”');
     expect(
       nbsp(describeAudit({ action: 'user.debit', payload: { email: 'b@x', deltaCents: -100, balanceBefore: 300, balanceAfter: 200 } })),
-    ).toBe('b@x: −R$ 1,00 (saldo R$ 3,00 → R$ 2,00)');
+    ).toBe('b@x: −US$ 1,00 (saldo US$ 3,00 → US$ 2,00)');
   });
 
   it('describes blocks and asset edits', () => {

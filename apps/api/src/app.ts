@@ -23,6 +23,8 @@ import type { WalletService } from './services/wallet.js';
 import type { PaymentService } from './services/payments.js';
 import { paymentRoutes } from './routes/payments.js';
 import { kycRoutes } from './routes/kyc.js';
+import { otcOverrideRoutes } from './routes/otc-override.js';
+import type { OtcOverrideService } from './services/otc-override.js';
 import type { KycService } from './services/kyc.js';
 
 export const BODY_LIMIT_BYTES = 16 * 1024;
@@ -40,6 +42,7 @@ export interface AppDeps {
   admin: AdminService;
   payments: PaymentService;
   kyc: KycService;
+  otcOverride: OtcOverrideService;
   metrics: Registry;
 }
 
@@ -101,7 +104,7 @@ export async function buildApp(deps: AppDeps, opts: AppOptions): Promise<Fastify
   await app.register(cors, {
     origin: opts.publicOrigin,
     credentials: true,
-    methods: ['GET', 'POST', 'PATCH'],
+    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
     allowedHeaders: ['content-type', 'x-csrf-token', 'idempotency-key'],
     maxAge: 600,
   });
@@ -118,6 +121,7 @@ export async function buildApp(deps: AppDeps, opts: AppOptions): Promise<Fastify
   marketRoutes(app, { candles });
   orderRoutes(app, { orders: deps.orders, wallet: deps.wallet, assets: deps.assets, limits: deps.limits, metrics: deps.metrics });
   adminRoutes(app, { admin: deps.admin, metrics: deps.metrics });
+  otcOverrideRoutes(app, { otcOverride: deps.otcOverride, metrics: deps.metrics });
   paymentRoutes(app, { payments: deps.payments, metrics: deps.metrics });
   kycRoutes(app, { kyc: deps.kyc });
   metricsRoute(app, deps.metrics);

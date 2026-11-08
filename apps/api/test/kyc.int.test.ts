@@ -7,7 +7,9 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import type { KycSubmitRequest } from '@traderoom/shared';
 import { loadConfig } from '../src/config.js';
+import { fixedFx } from '../src/lib/fx.js';
 import { createPool } from '../src/lib/db.js';
+import { createMemoryKycStore } from '../src/lib/kyc-storage.js';
 import type { PaymentGateway } from '../src/lib/novus.js';
 import { createKycService, sniffImage, type KycService } from '../src/services/kyc.js';
 import { createPaymentService } from '../src/services/payments.js';
@@ -118,7 +120,7 @@ describe('KYC service', () => {
 
     // Payments check KYC first.
     const gateway = {} as PaymentGateway;
-    const pay = createPaymentService({ pool, gateway, webhookSecrets: [], postbackUrl: null, requireKyc: (u) => kyc.requireApproved(u) });
+    const pay = createPaymentService({ pool, gateway, webhookSecrets: [], postbackUrl: null, fx: fixedFx(5), requireKyc: (u) => kyc.requireApproved(u) });
     await expect(pay.requestWithdrawal(b, { amountCents: 5000, pixKeyType: 'CPF', pixKey: CPFS[1]! })).rejects.toMatchObject({
       statusCode: 403,
     });
@@ -200,5 +202,47 @@ describe('KYC routes', () => {
     const ok = await send('POST', `/api/admin/kyc/${id}/approve`, 'admin-sid', {});
     expect(ok.json()).toMatchObject({ submission: { status: 'approved' } });
     expect((await send('GET', '/api/kyc', 'user-sid')).json()).toMatchObject({ status: 'approved' });
+  });
+});
+
+describe('KYC photos in object storage (Firebase)', () => {
+  it('keeps only the path in Postgres, serves the bytes back and cleans up replaced photos', async () => {
+    const blobs = createMemoryKycStore();
+    const svc = createKycService({ pool, blobs, now: () => new Date('2026-11-07T12:00:00Z') });
+    const admin = await newUser('admin');
+    const user = await newUser();
+
+    await svc.uploadFile(user, 'doc_front', JPEG);
+    await svc.uploadFile(user, 'doc_back', PNG);
+    await svc.uploadFile(user, 'selfie', PNG);
+    await svc.uploadFile(user, 'selfie', JPEG); // replaces the first selfie
+    await new Promise((r) => setTimeout(r, 10)); // deletes are fire-and-forget
+    expect(blobs.objects.size).toBe(3);
+    for (const [path] of blobs.objects) expect(path).toMatch(new RegExp(`^kyc/${user}/[0-9a-f-]{36}/(doc_front|doc_back|selfie)-[0-9a-f-]{36}$`));
+
+    const { KycSubmitInput } = await import('@traderoom/shared');
+    const s = await svc.submit(user, KycSubmitInput.parse(form({ cpf: '287.654.319-28', docType: 'PASSAPORTE' })));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(blobs.objects.size).toBe(2); // passport: the stray back was dropped
+
+    const { rows } = await pool.query<{ kind: string; data: Buffer | null; storage_path: string | null }>(
+      'select kind, data, storage_path from kyc_files where submission_id = $1 order by kind',
+      [s.submission!.id],
+    );
+    expect(rows.map((r) => [r.kind, r.data, typeof r.storage_path])).toEqual([
+      ['doc_front', null, 'string'],
+      ['selfie', null, 'string'],
+    ]);
+    await expect(svc.adminFile(s.submission!.id, 'selfie')).resolves.toEqual({ mime: 'image/jpeg', data: JPEG });
+    await svc.reject(admin, s.submission!.id, 'Foto ilegível');
+  });
+
+  it('removes the uploaded object when the database write fails', async () => {
+    const blobs = createMemoryKycStore();
+    const svc = createKycService({ pool, blobs });
+    const user = await newUser();
+    await pool.query(`update users set kyc_status = 'approved' where id = $1`, [user]);
+    await expect(svc.uploadFile(user, 'selfie', JPEG)).rejects.toMatchObject({ statusCode: 409 });
+    expect(blobs.objects.size).toBe(0);
   });
 });

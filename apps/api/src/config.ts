@@ -26,6 +26,14 @@ const EnvSchema = z.object({
   NOVUS_WEBHOOK_SECRET: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().min(1).optional()),
   /** Send the gateway a postback URL (PUBLIC_ORIGIN + /api/webhooks/novus). Off in dev, where the gateway cannot reach us. */
   NOVUS_POSTBACKS: z.stringbool().default(false),
+  /** Platform margin on the dollar quote, in percent per side (deposit pays more, withdrawal gets less). */
+  FX_SPREAD_PCT: z.coerce.number().min(0).max(20).default(0),
+  /** Fixed BRL per USD instead of the live quote (development/tests without internet). */
+  FX_FIXED_RATE: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().gt(1).lt(20).optional()),
+  /** Firebase Storage bucket for KYC photos (e.g. traderoom-48951.firebasestorage.app). Unset: photos stay in Postgres. */
+  FIREBASE_STORAGE_BUCKET: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().min(3).optional()),
+  /** Path to the Firebase service account JSON. Unset: Google Application Default Credentials. */
+  FIREBASE_CREDENTIALS_FILE: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().min(1).optional()),
 });
 
 export type Config = z.infer<typeof EnvSchema>;

@@ -7,6 +7,8 @@
 #   export NOVUS_API_KEY=...               # Pix deposits/withdrawals (Novus private key); Secret Manager, never on disk
 #   export NOVUS_WEBHOOK_SECRET=whsec_...  # optional: secret of a global webhook made in the Novus dashboard
 #   export MAIL_FROM='Traderoom <nao-responda@example.com>'
+#   export FIREBASE_STORAGE_BUCKET=my-project.firebasestorage.app   # optional: KYC photos in Firebase Storage
+#   # Firebase project: `source infra/firebase.env` sets all of the above for traderoom-48951.
 #   infra/deploy.sh provision   # network, static IP, firewall, Cloud SQL, secrets, VM, uptime check
 #   infra/deploy.sh setup       # packages, users, units, Caddy, Redis on the VM (re-runnable)
 #   infra/deploy.sh release     # build, upload, migrate, switch, health-check (rolls back on failure)
@@ -27,8 +29,13 @@ PSA_RANGE=${PSA_RANGE:-traderoom-psa}
 VM=${VM:-traderoom-vm}
 MACHINE=${MACHINE:-e2-small}
 IP_NAME=${IP_NAME:-traderoom-ip}
+# An existing instance (e.g. the one Firebase SQL Connect created) is adopted and hardened, not recreated.
 SQL=${SQL:-traderoom-db}
+SQL_VERSION=${SQL_VERSION:-POSTGRES_18}
 SQL_TIER=${SQL_TIER:-db-g1-small}
+# 1: also move an existing instance to $SQL_TIER (restarts it; on a SQL Connect trial it ends the free trial).
+SQL_RESIZE=${SQL_RESIZE:-0}
+FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET:-}
 DB_NAME=${DB_NAME:-traderoom}
 DB_USER=${DB_USER:-traderoom}
 SA_NAME=${SA_NAME:-traderoom-vm}
@@ -71,13 +78,15 @@ provision() {
     g services vpc-peerings connect --service servicenetworking.googleapis.com --ranges "$PSA_RANGE" --network "$NETWORK"
   fi
 
-  log "Cloud SQL $SQL (Postgres 16, private IP only, TLS only, daily backups kept 7 days)"
+  log "Cloud SQL $SQL (private IP, TLS only, daily backups kept 7 days, point-in-time recovery)"
   if ! exists g sql instances describe "$SQL"; then
-    g sql instances create "$SQL" --database-version POSTGRES_16 --edition ENTERPRISE --tier "$SQL_TIER" \
+    g sql instances create "$SQL" --database-version "$SQL_VERSION" --edition ENTERPRISE --tier "$SQL_TIER" \
       --region "$REGION" --network "projects/$GCP_PROJECT/global/networks/$NETWORK" --no-assign-ip \
       --ssl-mode ENCRYPTED_ONLY --storage-type SSD --storage-size 10 --storage-auto-increase \
       --backup-start-time 06:00 --retained-backups-count 7 --enable-point-in-time-recovery \
       --retained-transaction-log-days 7 --maintenance-window-day SUN --maintenance-window-hour 7
+  else
+    harden_sql
   fi
   exists g sql databases describe "$DB_NAME" --instance "$SQL" || g sql databases create "$DB_NAME" --instance "$SQL"
 
@@ -118,6 +127,11 @@ provision() {
     fi
   done
 
+  if [[ -n $FIREBASE_STORAGE_BUCKET ]]; then
+    log "KYC photos: gs://$FIREBASE_STORAGE_BUCKET, object read/write/delete for $SA on this bucket only"
+    g storage buckets add-iam-policy-binding "gs://$FIREBASE_STORAGE_BUCKET"       --member "serviceAccount:$SA" --role roles/storage.objectUser >/dev/null
+  fi
+
   log "VM $VM ($MACHINE, Debian 12)"
   if ! exists g compute instances describe "$VM" --zone "$ZONE"; then
     g compute instances create "$VM" --zone "$ZONE" --machine-type "$MACHINE" \
@@ -133,27 +147,72 @@ provision() {
     g monitoring uptime create traderoom-health --resource-type uptime-url \
       --resource-labels "host=$TRADEROOM_DOMAIN,project_id=$GCP_PROJECT" \
       --protocol https --path /api/health --port 443 --period 1 --timeout 10 \
-      --validate-ssl --status-classes 2xx
+      --validate-ssl=true --status-classes=2xx
   fi
 
   ip=$(g compute addresses describe "$IP_NAME" --region "$REGION" --format='value(address)')
   log "done. Create DNS: $TRADEROOM_DOMAIN  A  $ip   (then run: infra/deploy.sh setup)"
 }
 
-ssh_vm() { g compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --command "$1"; }
-scp_vm() { g compute scp --zone "$ZONE" --tunnel-through-iap "$@"; }
+# The instance already exists (Firebase SQL Connect creates one with public IP only, no backups and
+# unencrypted connections allowed). Bring it to the same standard as one we create. Each change runs
+# only if needed. The public IP stays (SQL Connect and `npm run db:tunnel` use it) but has no
+# authorized networks, so only IAM-authorized connectors can reach it.
+harden_sql() {
+  local v
+  v() { g sql instances describe "$SQL" --format="value($1)"; }
+  if [[ -z $(v settings.ipConfiguration.privateNetwork) ]]; then
+    log "Cloud SQL $SQL: attach private IP on $NETWORK (restarts the instance)"
+    g sql instances patch "$SQL" --network "projects/$GCP_PROJECT/global/networks/$NETWORK"
+  fi
+  if [[ $(v settings.ipConfiguration.sslMode) != ENCRYPTED_ONLY ]]; then
+    log "Cloud SQL $SQL: TLS only"
+    g sql instances patch "$SQL" --ssl-mode ENCRYPTED_ONLY
+  fi
+  if [[ $(v settings.backupConfiguration.enabled) != True || $(v settings.backupConfiguration.pointInTimeRecoveryEnabled) != True ]]; then
+    log "Cloud SQL $SQL: daily backups (7 kept) + point-in-time recovery (7 days)"
+    g sql instances patch "$SQL" --backup-start-time 06:00 --retained-backups-count 7       --enable-point-in-time-recovery --retained-transaction-log-days 7       --maintenance-window-day SUN --maintenance-window-hour 7
+  fi
+  local tier
+  tier=$(v settings.tier)
+  if [[ $tier != "$SQL_TIER" ]]; then
+    if [[ $SQL_RESIZE == 1 ]]; then
+      log "Cloud SQL $SQL: $tier -> $SQL_TIER (restarts the instance)"
+      g sql instances patch "$SQL" --tier "$SQL_TIER"
+    else
+      log "Cloud SQL $SQL stays on $tier (SQL_RESIZE=1 SQL_TIER=... to change it)"
+    fi
+  fi
+}
+
+ssh_vm() { g compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --strict-host-key-checking=no --command "$1"; }
+scp_vm() { g compute scp --zone "$ZONE" --tunnel-through-iap --strict-host-key-checking=no "$@"; }
+# Local scratch inside the repo (gitignored): gcloud on Windows cannot read Git Bash's /tmp.
+WORK=.deploy
+fresh_dir() { rm -rf "${WORK:?}/$1" && mkdir -p "$WORK/$1" && printf '%s' "$WORK/$1"; }
 
 setup() {
-  : "${ACME_EMAIL:?set ACME_EMAIL (contact for the TLS certificate)}"
   local stage db_host
-  stage=$(mktemp -d)
+  stage=$(fresh_dir setup)
   trap 'rm -rf "$stage"' RETURN
-  db_host=$(g sql instances describe "$SQL" --format='value(ipAddresses[0].ipAddress)')
+  db_host=$(g sql instances describe "$SQL" --format='value(ipAddresses.filter("type:PRIVATE").extract(ipAddress).flatten())')
+  [[ -n $db_host ]] || { echo "Cloud SQL $SQL has no private IP (run provision first)" >&2; exit 1; }
+  # Pools sized to the tier's connection limit, with room left for migrations and psql.
+  local tier pools
+  tier=$(g sql instances describe "$SQL" --format='value(settings.tier)')
+  case $tier in
+    db-f1-micro) pools='10 5 4' ;;  # ~25 connections
+    db-g1-small) pools='16 8 6' ;;  # ~50
+    *) pools='40 15 10' ;;          # dedicated-core tiers: 100+
+  esac
+  read -r api_pool ws_pool worker_pool <<<"$pools"
   g sql instances describe "$SQL" --format='value(serverCaCert.cert)' >"$stage/cloudsql-server-ca.pem"
   [[ -s $stage/cloudsql-server-ca.pem ]] || { echo 'could not read the Cloud SQL server CA' >&2; exit 1; }
 
   log 'staging VM files'
   cp -r infra/systemd infra/sysctl infra/redis infra/Caddyfile infra/vm/*.sh "$stage/"
+  # No contact e-mail: the certificate is issued without one (ACME allows it).
+  [[ -n $ACME_EMAIL ]] || sed -i '/^\temail {\$TRADEROOM_ACME_EMAIL}$/d' "$stage/Caddyfile"
   # Non-secret settings. Secrets (DATABASE_URL, RESEND_API_KEY, NOVUS_*) are built at boot by fetch-secrets.sh.
   cat >"$stage/traderoom.env" <<EOF
 GCP_PROJECT=$GCP_PROJECT
@@ -174,10 +233,12 @@ WORKER_PORT=3002
 DB_HOST=$db_host
 DB_NAME=$DB_NAME
 DB_USER=$DB_USER
-# Cloud SQL $SQL_TIER allows ~50 connections: 16 + 8 + 6 leaves room for migrations and psql.
-DATABASE_POOL_MAX=16
-WS_DATABASE_POOL_MAX=8
-WORKER_DATABASE_POOL_MAX=6
+# Cloud SQL tier $tier: pools leave room for migrations and psql.
+DATABASE_POOL_MAX=$api_pool
+WS_DATABASE_POOL_MAX=$ws_pool
+WORKER_DATABASE_POOL_MAX=$worker_pool
+# KYC photos (empty: kept in Postgres). Credentials: the VM's service account, no key file.
+FIREBASE_STORAGE_BUCKET=$FIREBASE_STORAGE_BUCKET
 REDIS_URL=redis://127.0.0.1:6379
 BINANCE_WS_URL=wss://data-stream.binance.vision:443/stream
 BINANCE_REST_URL=https://data-api.binance.vision
@@ -202,13 +263,16 @@ release() {
   tarball="traderoom-$id.tar.gz"
 
   log 'build'
-  npm ci --no-audit --no-fund
+  # SKIP_NPM_CI=1 keeps the current node_modules (e.g. dev servers on Windows lock them).
+  [[ ${SKIP_NPM_CI:-0} == 1 ]] || npm ci --no-audit --no-fund
   npm run typecheck
   npm test
   npm run build
 
   log "pack $tarball"
-  tar -czf "/tmp/$tarball" \
+  local out
+  out=$(fresh_dir release)/$tarball
+  tar -czf "$out" \
     package.json package-lock.json README.md db/migrations \
     packages/shared/package.json packages/shared/dist \
     apps/api/package.json apps/api/dist \
@@ -216,9 +280,9 @@ release() {
     apps/web/package.json apps/web/dist
 
   log 'upload and install'
-  scp_vm "/tmp/$tarball" "$VM:/tmp/$tarball"
+  scp_vm "$out" "$VM:/tmp/$tarball"
   ssh_vm "sudo /opt/traderoom/bin/release.sh /tmp/$tarball"
-  rm -f "/tmp/$tarball"
+  rm -rf "$WORK/release"
   log "live: https://$TRADEROOM_DOMAIN"
 }
 

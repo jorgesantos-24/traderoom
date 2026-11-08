@@ -96,7 +96,7 @@ export function OrderPanel({ account, asset, limits, quote, feedStatus, balanceC
   };
 
   return (
-    <Card className="flex flex-col gap-3 p-3" aria-labelledby={`${ids}-title`}>
+    <Card className="flex flex-col gap-2 p-2.5 lg:gap-3 lg:p-3" aria-labelledby={`${ids}-title`}>
       <div className="flex items-center justify-between gap-2">
         <h2 id={`${ids}-title`} className="text-sm font-semibold">
           Nova ordem
@@ -109,11 +109,12 @@ export function OrderPanel({ account, asset, limits, quote, feedStatus, balanceC
         </span>
       </div>
 
-      <fieldset className="flex flex-col gap-2">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
+      <fieldset className="contents">
         <legend className="sr-only">Valor</legend>
-        <div className="flex items-stretch rounded-control border border-border bg-field focus-within:border-brand">
-          <label htmlFor={`${ids}-stake`} className="flex flex-1 flex-col px-3 py-1.5">
-            <span className="text-[11px] text-muted">Valor (R$)</span>
+        <div className="order-1 flex min-w-0 items-stretch rounded-control border border-border bg-field focus-within:border-brand">
+          <label htmlFor={`${ids}-stake`} className="flex min-w-0 flex-1 flex-col px-2.5 py-1 lg:px-3 lg:py-1.5">
+            <span className="text-[11px] text-muted">Valor (US$)</span>
             <input
               id={`${ids}-stake`}
               inputMode="decimal"
@@ -143,7 +144,7 @@ export function OrderPanel({ account, asset, limits, quote, feedStatus, balanceC
             </button>
           </div>
         </div>
-        <div className="grid grid-cols-4 gap-1">
+        <div className="order-3 col-span-2 grid grid-cols-4 gap-1 lg:order-2 lg:col-span-1">
           {presets.map((c) => {
             const active = stakeCents === c;
             return (
@@ -157,15 +158,15 @@ export function OrderPanel({ account, asset, limits, quote, feedStatus, balanceC
                   active ? 'bg-brand/15 text-brand' : 'bg-field text-muted hover:text-text',
                 )}
               >
-                R$ {c / 100}
+                $ {c / 100}
               </button>
             );
           })}
         </div>
       </fieldset>
 
-      <div className="flex items-stretch rounded-control border border-border bg-field">
-        <div className="flex flex-1 flex-col px-3 py-1.5">
+      <div className="order-2 flex min-w-0 items-stretch rounded-control border border-border bg-field lg:order-3">
+        <div className="flex min-w-0 flex-1 flex-col px-2.5 py-1 lg:px-3 lg:py-1.5">
           <span id={`${ids}-time`} className="text-[11px] text-muted">
             Tempo
           </span>
@@ -194,19 +195,20 @@ export function OrderPanel({ account, asset, limits, quote, feedStatus, balanceC
           </button>
         </div>
       </div>
+      </div>
 
-      <div className="flex flex-col items-center py-1">
+      <div className="flex items-baseline justify-center gap-2 lg:flex-col lg:items-center lg:gap-0 lg:py-1">
         <span className="text-xs text-muted">Retorno</span>
-        <span className="tabular text-4xl leading-none font-bold text-up">{asset.payoutPct}%</span>
-        <span className="tabular mt-1 text-sm font-semibold text-up" aria-label="Lucro se acertar">
+        <span className="tabular text-2xl leading-none font-bold text-up lg:text-4xl">{asset.payoutPct}%</span>
+        <span className="tabular text-sm font-semibold text-up lg:mt-1" aria-label="Lucro se acertar">
           {stakeCents ? `+${formatMoney(profit)}` : '—'}
         </span>
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className="grid grid-cols-2 gap-2 lg:flex lg:flex-col">
         <Button
           variant="up"
-          className="gap-1.5 py-3.5 text-base shadow-[0_8px_24px_-12px] shadow-up/60"
+          className="gap-1.5 py-3 text-base lg:py-3.5 shadow-[0_8px_24px_-12px] shadow-up/60"
           disabled={reason !== null || sending !== null}
           busy={sending === 'call'}
           onClick={() => void place('call')}
@@ -219,7 +221,7 @@ export function OrderPanel({ account, asset, limits, quote, feedStatus, balanceC
         </Button>
         <Button
           variant="down"
-          className="gap-1.5 py-3.5 text-base shadow-[0_8px_24px_-12px] shadow-down/60"
+          className="gap-1.5 py-3 text-base lg:py-3.5 shadow-[0_8px_24px_-12px] shadow-down/60"
           disabled={reason !== null || sending !== null}
           busy={sending === 'put'}
           onClick={() => void place('put')}

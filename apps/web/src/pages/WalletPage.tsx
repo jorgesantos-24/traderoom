@@ -47,7 +47,7 @@ export function WalletPage() {
       {account === 'real' && <PaymentsHistory />}
 
       <Card aria-labelledby="ledger-title">
-        <div className="flex items-baseline justify-between border-b border-border px-4 py-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 border-b border-border px-4 py-3">
           <h2 id="ledger-title" className="text-base font-semibold">
             Movimentações
           </h2>

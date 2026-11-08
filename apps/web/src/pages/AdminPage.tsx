@@ -19,7 +19,7 @@ import { auditLabel, AUDIT_LABEL, describeAudit } from '../lib/admin';
 import { api, ApiError, NETWORK_ERROR, newIdempotencyKey } from '../lib/api';
 import { useUser } from '../lib/auth';
 import { formatDateTime, formatMoney, parseMoneyToCents } from '../lib/format';
-import { navigate, useLocation } from '../lib/router';
+import { Link, navigate, useLocation } from '../lib/router';
 import { useSessionData } from '../lib/session-data';
 import { usePaged } from '../lib/use-paged';
 
@@ -75,11 +75,16 @@ export function AdminPage() {
 
   return (
     <AppShell>
-      <h1 className="mb-4 text-xl font-semibold">Administração</h1>
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+        <h1 className="text-xl font-semibold">Administração</h1>
+        <Link href="/admin/otc-override" className="text-sm font-medium text-brand hover:underline">
+          Intervenção no preço OTC →
+        </Link>
+      </div>
       <div role="status" aria-live="polite" className="sr-only" data-testid="admin-notice">
         {notice}
       </div>
-      <div role="tablist" aria-label="Seções do admin" className="mb-4 flex gap-1 border-b border-border" onKeyDown={onKey}>
+      <div role="tablist" aria-label="Seções do admin" className="scrollbar-none mb-4 flex gap-1 overflow-x-auto shadow-[inset_0_-1px_0] shadow-border" onKeyDown={onKey}>
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -94,7 +99,7 @@ export function AdminPage() {
             tabIndex={tab === t.id ? 0 : -1}
             onClick={() => select(t.id)}
             className={cx(
-              '-mb-px border-b-2 px-3 py-2 text-sm font-medium',
+              'shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium',
               tab === t.id ? 'border-brand text-text' : 'border-transparent text-muted hover:text-text',
             )}
           >
@@ -327,7 +332,7 @@ function AdjustForm({ user, onCancel, onDone }: { user: AdminUserView; onCancel(
         ))}
       </fieldset>
       <Field
-        label="Valor (R$)"
+        label="Valor (US$)"
         inputMode="decimal"
         autoComplete="off"
         value={amount}

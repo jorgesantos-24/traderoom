@@ -113,7 +113,7 @@ export function Field({
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy}
         className={cx(
-          'rounded-control border bg-field px-3 py-2 text-sm text-text placeholder:text-muted',
+          'rounded-control border bg-field px-3 py-2 text-base text-text sm:text-sm placeholder:text-muted',
           error ? 'border-down' : 'border-border focus:border-brand',
         )}
       />
