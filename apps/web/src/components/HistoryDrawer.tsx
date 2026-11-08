@@ -169,11 +169,7 @@ function Section({
       <ul>
         {items.map((o) => (
           <li key={o.id} className="border-b border-border" data-testid="history-row">
-            <button
-              type="button"
-              onClick={() => onSelect(o)}
-              className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-field"
-            >
+            <button type="button" onClick={() => onSelect(o)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-field">
               <span className="w-[68px] shrink-0">
                 <span className="tabular block text-sm font-semibold text-text">{formatTime(o.opensAt)}</span>
                 <span className="tabular block text-xs text-muted">{formatShortDate(o.opensAt)}</span>
@@ -181,9 +177,7 @@ function Section({
               <CoinIcon symbol={o.symbol} className="size-5" />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium text-text">{name(o.symbol)}</span>
-                <span className="block text-xs text-muted">
-                  {o.payoutPct}%
-                </span>
+                <span className="block text-xs text-muted">{o.payoutPct}%</span>
               </span>
               <span className="shrink-0 text-right">
                 <span className="tabular flex items-center justify-end gap-1.5 text-sm font-semibold text-text">
@@ -267,9 +261,7 @@ function OperationDetail({ order: o, name, onTrade }: { order: OrderView; name: 
           </InfoRow>
           <InfoRow label="Abertura">{formatTime(o.opensAt)}</InfoRow>
           <InfoRow label="Fechamento">{formatTime(o.expiresAt)}</InfoRow>
-          <InfoRow label="Preço de abertura">
-            {formatPrice(o.openPrice)}
-          </InfoRow>
+          <InfoRow label="Preço de abertura">{formatPrice(o.openPrice)}</InfoRow>
           <InfoRow label="Preço de fechamento">{o.closePrice ? formatPrice(o.closePrice) : '—'}</InfoRow>
         </dl>
       </div>

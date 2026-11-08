@@ -38,7 +38,13 @@ describe('candle cache', () => {
 
   it('prefetch skips what is already cached', async () => {
     storeCandles('BTCUSDT', '1m', series(1));
-    prefetchCandles([['BTCUSDT', '1m'], ['BTCUSDT', '5m']], 500);
+    prefetchCandles(
+      [
+        ['BTCUSDT', '1m'],
+        ['BTCUSDT', '5m'],
+      ],
+      500,
+    );
     await vi.waitFor(() => expect(cachedCandles('BTCUSDT', '5m')).not.toBeNull());
     expect(candlesMock).toHaveBeenCalledTimes(1);
   });

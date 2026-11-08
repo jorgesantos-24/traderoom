@@ -202,9 +202,19 @@ describe('OtcFeed', () => {
     await feed.sync(assets, clock);
     expect(maxInFlight).toBe(1);
     expect(errors).toEqual(['A2OTC']);
-    expect(feed.tick(clock + 500).map((t) => t.symbol).sort()).toEqual(['A1OTC', 'A3OTC']);
+    expect(
+      feed
+        .tick(clock + 500)
+        .map((t) => t.symbol)
+        .sort(),
+    ).toEqual(['A1OTC', 'A3OTC']);
     await feed.sync(assets, clock + 1000);
-    expect(feed.tick(clock + 1500).map((t) => t.symbol).sort()).toEqual(['A1OTC', 'A2OTC', 'A3OTC']);
+    expect(
+      feed
+        .tick(clock + 1500)
+        .map((t) => t.symbol)
+        .sort(),
+    ).toEqual(['A1OTC', 'A2OTC', 'A3OTC']);
   });
 });
 
@@ -264,7 +274,9 @@ describe('OtcWalk override', () => {
         expect(inHold.length).toBeGreaterThanOrEqual(3);
         for (const x of inHold) expect(x.p).toBe(target);
         // The ramp only moves toward the target: no overshoot past it.
-        const ramp = ticks.filter((x) => x.t >= CLOSE - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_RAMP_DEFAULT_MS && x.t < CLOSE - OTC_OVERRIDE_HOLD_MS);
+        const ramp = ticks.filter(
+          (x) => x.t >= CLOSE - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_RAMP_DEFAULT_MS && x.t < CLOSE - OTC_OVERRIDE_HOLD_MS,
+        );
         const up = Number(target) > Number(ramp[0]!.p);
         for (let i = 1; i < ramp.length; i++) {
           const d = Number(ramp[i]!.p) - Number(ramp[i - 1]!.p);

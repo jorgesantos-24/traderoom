@@ -38,9 +38,7 @@ async function checkFeed(deps: HealthDeps): Promise<FeedHealthCheck> {
     const last = await withTimeout(deps.getLastTickMs(), deps.timeoutMs);
     if (last === null || !Number.isFinite(last)) return { ok: false, ageMs: null, error: 'no tick recorded' };
     const ageMs = Math.max(0, deps.now() - last);
-    return ageMs > deps.feedMaxAgeMs
-      ? { ok: false, ageMs, error: `last tick older than ${deps.feedMaxAgeMs} ms` }
-      : { ok: true, ageMs };
+    return ageMs > deps.feedMaxAgeMs ? { ok: false, ageMs, error: `last tick older than ${deps.feedMaxAgeMs} ms` } : { ok: true, ageMs };
   } catch (err) {
     return { ok: false, ageMs: null, error: errorMessage(err) };
   }

@@ -27,14 +27,7 @@ function priceValue(p: unknown): number | null {
  * Mid of best bid and best ask, or an error when either side is missing or the book is crossed.
  * Spot bookTicker has the same meaning on every Binance endpoint, so a failover keeps the price identical.
  */
-function quoteMid(
-  symbol: string,
-  bid: unknown,
-  ask: unknown,
-  ts: number,
-  recvMs: number,
-  provider: FeedProvider,
-): ParseResult {
+function quoteMid(symbol: string, bid: unknown, ask: unknown, ts: number, recvMs: number, provider: FeedProvider): ParseResult {
   const b = priceValue(bid);
   const a = priceValue(ask);
   if (b === null || a === null) return { kind: 'error', message: 'malformed quote' };

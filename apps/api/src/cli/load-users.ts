@@ -40,10 +40,10 @@ async function main(): Promise<void> {
       await client.query('begin');
       for (let i = 1; i <= count; i++) {
         const email = `load-${String(i).padStart(4, '0')}@${EMAIL_DOMAIN}`;
-        const u = await client.query<{ id: string }>(
-          `insert into users (email, password_hash, name) values ($1, '!', $2) returning id`,
-          [email, `Carga ${i}`],
-        );
+        const u = await client.query<{ id: string }>(`insert into users (email, password_hash, name) values ($1, '!', $2) returning id`, [
+          email,
+          `Carga ${i}`,
+        ]);
         const userId = u.rows[0]?.id;
         if (!userId) throw new Error('insert returned no id');
         await client.query(`insert into accounts (user_id, kind) values ($1, 'real'), ($1, 'demo')`, [userId]);

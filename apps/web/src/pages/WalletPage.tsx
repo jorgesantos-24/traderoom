@@ -64,11 +64,21 @@ export function WalletPage() {
               <caption className="sr-only">Movimentações da carteira, mais recentes primeiro</caption>
               <thead className="text-left text-muted">
                 <tr>
-                  <th scope="col" className="px-4 py-2 font-medium">Data</th>
-                  <th scope="col" className="px-4 py-2 font-medium">Tipo</th>
-                  <th scope="col" className="px-4 py-2 font-medium">Descrição</th>
-                  <th scope="col" className="px-4 py-2 text-right font-medium">Valor</th>
-                  <th scope="col" className="px-4 py-2 text-right font-medium">Saldo após</th>
+                  <th scope="col" className="px-4 py-2 font-medium">
+                    Data
+                  </th>
+                  <th scope="col" className="px-4 py-2 font-medium">
+                    Tipo
+                  </th>
+                  <th scope="col" className="px-4 py-2 font-medium">
+                    Descrição
+                  </th>
+                  <th scope="col" className="px-4 py-2 text-right font-medium">
+                    Valor
+                  </th>
+                  <th scope="col" className="px-4 py-2 text-right font-medium">
+                    Saldo após
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -77,7 +87,12 @@ export function WalletPage() {
                     <td className="tabular whitespace-nowrap px-4 py-2 text-muted">{formatDateTime(e.createdAt)}</td>
                     <td className="whitespace-nowrap px-4 py-2">{LEDGER_LABEL[e.kind]}</td>
                     <td className="px-4 py-2 text-muted">{e.note ?? (e.orderId ? `Ordem ${e.orderId.slice(0, 8)}` : '—')}</td>
-                    <td className={cx('tabular whitespace-nowrap px-4 py-2 text-right font-medium', e.deltaCents > 0 ? 'text-up' : e.deltaCents < 0 ? 'text-down' : '')}>
+                    <td
+                      className={cx(
+                        'tabular whitespace-nowrap px-4 py-2 text-right font-medium',
+                        e.deltaCents > 0 ? 'text-up' : e.deltaCents < 0 ? 'text-down' : '',
+                      )}
+                    >
                       {formatSignedMoney(e.deltaCents)}
                     </td>
                     <td className="tabular whitespace-nowrap px-4 py-2 text-right">{formatMoney(e.balanceAfterCents)}</td>

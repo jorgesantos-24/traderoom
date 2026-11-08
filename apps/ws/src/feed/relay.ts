@@ -191,8 +191,10 @@ export class Relay {
       }),
     );
     reg.gauge('feed_stale', 'Symbol is stale (1) or fresh (0).', () => this.perSymbol((s) => (this.stale.isStale(s) ? 1 : 0)));
-    reg.gauge('feed_realized_vol', 'Realized volatility of market symbols, sigma per sqrt(second) of log-price (EWMA, 120 s half-life).', () =>
-      this.perSymbol((s) => this.realizedVol.get(s)?.sigma() ?? null),
+    reg.gauge(
+      'feed_realized_vol',
+      'Realized volatility of market symbols, sigma per sqrt(second) of log-price (EWMA, 120 s half-life).',
+      () => this.perSymbol((s) => this.realizedVol.get(s)?.sigma() ?? null),
     );
     reg.gauge('feed_source', 'Provider currently used per symbol (value is always 1).', () =>
       this.assetList.map((a) => [{ symbol: a.symbol, provider: this.selector.sourceOf(a.symbol) ?? 'none' }, 1] as const),
@@ -304,7 +306,10 @@ export class Relay {
 
   private applyAssets(assets: FeedAsset[]): boolean {
     const key = assets
-      .map((a) => `${a.id}:${a.symbol}:${a.binanceStream}:${a.otc ? `${a.otc.startPrice}/${a.otc.volPctHour}/${a.otc.decimals}/${a.otc.driftPctHour ?? 0}` : ''}`)
+      .map(
+        (a) =>
+          `${a.id}:${a.symbol}:${a.binanceStream}:${a.otc ? `${a.otc.startPrice}/${a.otc.volPctHour}/${a.otc.decimals}/${a.otc.driftPctHour ?? 0}` : ''}`,
+      )
       .join(',');
     if (key === this.assetsKey) return false;
     this.assetsKey = key;
@@ -374,7 +379,10 @@ export class Relay {
           let decimals = asset.priceDecimals;
           if (decimals === null || decimals === undefined) {
             // The API refuses overrides without price_decimals; if one gets here anyway, do not crash.
-            this.deps.log.warn({ symbol: wire.symbol, fallback: PRICE_OVERRIDE_FALLBACK_DECIMALS }, 'market override on an asset without price_decimals');
+            this.deps.log.warn(
+              { symbol: wire.symbol, fallback: PRICE_OVERRIDE_FALLBACK_DECIMALS },
+              'market override on an asset without price_decimals',
+            );
             decimals = PRICE_OVERRIDE_FALLBACK_DECIMALS;
           }
           const volPerSqrtS = this.realizedVol.get(wire.symbol)?.sigma() ?? null;
@@ -392,11 +400,15 @@ export class Relay {
       }
       if (wire) {
         this.deps.log.info(
-          { symbol: wire.symbol, targetPrice: wire.targetPrice, closeMs: wire.closeMs, ...(wire.schedule ? { schedule: wire.schedule } : {}) },
+          {
+            symbol: wire.symbol,
+            targetPrice: wire.targetPrice,
+            closeMs: wire.closeMs,
+            ...(wire.schedule ? { schedule: wire.schedule } : {}),
+          },
           'otc override applied',
         );
-      }
-      else this.deps.log.info({ invalid: raw !== null }, 'otc override cleared');
+      } else this.deps.log.info({ invalid: raw !== null }, 'otc override cleared');
     } catch (err) {
       this.deps.log.error({ err }, 'failed to read otc override');
     } finally {

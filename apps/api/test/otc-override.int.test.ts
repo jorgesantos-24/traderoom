@@ -42,7 +42,10 @@ if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 const config = loadConfig();
 const DOMAIN = 'otc-override-int.traderoom.test';
-const RUN = randomUUID().slice(0, 6).toUpperCase().replace(/[^A-Z0-9]/g, 'X');
+const RUN = randomUUID()
+  .slice(0, 6)
+  .toUpperCase()
+  .replace(/[^A-Z0-9]/g, 'X');
 const OTC_A = `ZZOVA${RUN}`;
 const OTC_B = `ZZOVB${RUN}`;
 const MARKET = `ZZOVM${RUN}USDT`;
@@ -75,10 +78,10 @@ async function setPrice(symbol: string, p: string): Promise<void> {
 }
 
 async function newUser(name: string): Promise<string> {
-  const { rows } = await pool.query<{ id: string }>(
-    `insert into users (email, password_hash, name) values ($1, '!', $2) returning id`,
-    [`u-${randomUUID()}@${DOMAIN}`, name],
-  );
+  const { rows } = await pool.query<{ id: string }>(`insert into users (email, password_hash, name) values ($1, '!', $2) returning id`, [
+    `u-${randomUUID()}@${DOMAIN}`,
+    name,
+  ]);
   return rows[0]?.id ?? '';
 }
 
@@ -102,23 +105,27 @@ beforeAll(async () => {
                values ($1, $2, 'otc', 90, true, 9990, 100, 0.8, 2) returning id`;
   ids.a = (await pool.query<{ id: number }>(otc, [OTC_A, 'Teste A (OTC)'])).rows[0]?.id ?? 0;
   ids.b = (await pool.query<{ id: number }>(otc, [OTC_B, 'Teste B (OTC)'])).rows[0]?.id ?? 0;
-  ids.market = (
-    await pool.query<{ id: number }>(
-      // No decimals on purpose: the asset an override must refuse.
-      `insert into assets (symbol, display, binance_stream, payout_pct, enabled, sort, price_decimals) values ($1, 'Teste M', $2, 80, true, 9991, null) returning id`,
-      [MARKET, `${MARKET.toLowerCase()}@trade`],
-    )
-  ).rows[0]?.id ?? 0;
-  ids.mkt = (
-    await pool.query<{ id: number }>(
-      // Created like any new market asset: price_decimals and max_override_pct come from the defaults.
-      `insert into assets (symbol, display, binance_stream, payout_pct, enabled, sort) values ($1, 'Teste P', $2, 80, true, 9992) returning id`,
-      [MKT, `${MKT.toLowerCase()}@trade`],
-    )
-  ).rows[0]?.id ?? 0;
+  ids.market =
+    (
+      await pool.query<{ id: number }>(
+        // No decimals on purpose: the asset an override must refuse.
+        `insert into assets (symbol, display, binance_stream, payout_pct, enabled, sort, price_decimals) values ($1, 'Teste M', $2, 80, true, 9991, null) returning id`,
+        [MARKET, `${MARKET.toLowerCase()}@trade`],
+      )
+    ).rows[0]?.id ?? 0;
+  ids.mkt =
+    (
+      await pool.query<{ id: number }>(
+        // Created like any new market asset: price_decimals and max_override_pct come from the defaults.
+        `insert into assets (symbol, display, binance_stream, payout_pct, enabled, sort) values ($1, 'Teste P', $2, 80, true, 9992) returning id`,
+        [MKT, `${MKT.toLowerCase()}@trade`],
+      )
+    ).rows[0]?.id ?? 0;
   adminId = await newUser('Admin OTC');
   // A leftover active override (from a crashed run or the dev UI) would make every test 409.
-  const active = await pool.query<{ symbol: string }>(`select a.symbol from otc_overrides o join assets a on a.id = o.asset_id where o.active`);
+  const active = await pool.query<{ symbol: string }>(
+    `select a.symbol from otc_overrides o join assets a on a.id = o.asset_id where o.active`,
+  );
   if (active.rows[0]) throw new Error(`an OTC override is active (${active.rows[0].symbol}); release it before running this suite`);
 });
 
@@ -148,7 +155,14 @@ describe('apply', () => {
     clock = T0 + 20_000;
     await setPrice(OTC_A, '100.00');
     const v = await svc.apply(adminId, input({ assetId: ids.a, targetPrice: 101.234 }));
-    expect(v).toMatchObject({ symbol: OTC_A, targetPrice: 101.23, basePrice: 100, candleOpenMs: T0, candleCloseMs: T0 + MIN, phase: 'ramp' });
+    expect(v).toMatchObject({
+      symbol: OTC_A,
+      targetPrice: 101.23,
+      basePrice: 100,
+      candleOpenMs: T0,
+      candleCloseMs: T0 + MIN,
+      phase: 'ramp',
+    });
     expect(v.rampStartMs).toBe(T0 + MIN - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS - OTC_OVERRIDE_RAMP_DEFAULT_MS);
 
     const wire = parseOtcOverride(await redis.get(KEY));
@@ -180,7 +194,11 @@ describe('apply', () => {
     await setPrice(OTC_A, '100.00');
     await setPrice(OTC_B, '100.00');
     await svc.apply(adminId, input({ assetId: ids.a, targetPrice: 101 }));
-    await expectAppError(svc.apply(adminId, input({ assetId: ids.b, targetPrice: 99 })), 409, new RegExp(`Já existe um override ativo \\(ativo ${OTC_A}, faltam 50s\\)`));
+    await expectAppError(
+      svc.apply(adminId, input({ assetId: ids.b, targetPrice: 99 })),
+      409,
+      new RegExp(`Já existe um override ativo \\(ativo ${OTC_A}, faltam 50s\\)`),
+    );
     // The rejected attempt left nothing behind.
     expect(parseOtcOverride(await redis.get(KEY))?.symbol).toBe(OTC_A);
   });
@@ -219,7 +237,10 @@ describe('apply', () => {
     expect(await svc.release(adminId)).toBe(true);
     expect(await redis.get(KEY)).toBeNull();
     expect(await svc.release(adminId)).toBe(false);
-    const { rows } = await pool.query<{ active: boolean; ended_at: Date | null }>('select active, ended_at from otc_overrides where id = $1', [second.id]);
+    const { rows } = await pool.query<{ active: boolean; ended_at: Date | null }>(
+      'select active, ended_at from otc_overrides where id = $1',
+      [second.id],
+    );
     expect(rows[0]).toMatchObject({ active: false });
     expect(rows[0]?.ended_at).not.toBeNull();
   });
@@ -303,7 +324,10 @@ describe('settlement on the forced close', () => {
     );
     // Settled on the snapshot at expiry (within the band of the target; exactly on it without jitter).
     expect(o[0]).toEqual({ status: 'won', close_price: Number(atExpiry?.price).toFixed(8) });
-    const { rows: l } = await pool.query<{ kind: string; delta_cents: string }>('select kind, delta_cents from ledger where order_id = $1', [orderId]);
+    const { rows: l } = await pool.query<{ kind: string; delta_cents: string }>(
+      'select kind, delta_cents from ledger where order_id = $1',
+      [orderId],
+    );
     expect(l).toEqual([{ kind: 'payout', delta_cents: '19000' }]);
 
     await svc.release(adminId);
@@ -344,7 +368,8 @@ describe('OTC: same disclosure and protection as market assets', () => {
       if (t < v.rampStartMs || t >= v.releaseEndMs) expect(last.ov).toBeUndefined();
       else expect(last.ov).toBe(v.id);
       if (!during && last.ov && t >= v.holdStartMs - 2000) during = toPriceRecord(last);
-      if ((t - start) % 1000 === 500) rows.push({ assetId: ids.a, price: last.price, realPrice: last.realPrice ?? null, capturedAt: new Date(t - 183) });
+      if ((t - start) % 1000 === 500)
+        rows.push({ assetId: ids.a, price: last.price, realPrice: last.realPrice ?? null, capturedAt: new Date(t - 183) });
     }
     await pool.query('delete from price_snapshots where asset_id = $1', [ids.a]);
     await insertSnapshots(pool, rows);
@@ -392,7 +417,9 @@ describe('OTC: same disclosure and protection as market assets', () => {
     };
     const closeOf = async (id: string) => {
       await settleOrder(pool, id, v.candleCloseMs + 1500);
-      const { rows: r } = await pool.query<{ close_price: string }>('select close_price::text as close_price from orders where id = $1', [id]);
+      const { rows: r } = await pool.query<{ close_price: string }>('select close_price::text as close_price from orders where id = $1', [
+        id,
+      ]);
       return r[0]?.close_price;
     };
     expect(await closeOf(await open(null))).toBe(atExpiry?.real_price);
@@ -529,9 +556,10 @@ describe('market assets (1m close only)', () => {
 
   async function settled(orderId: string, nowMs: number) {
     const r = await settleOrder(pool, orderId, nowMs);
-    const { rows } = await pool.query<{ status: string; close_price: string }>('select status, close_price::text as close_price from orders where id = $1', [
-      orderId,
-    ]);
+    const { rows } = await pool.query<{ status: string; close_price: string }>(
+      'select status, close_price::text as close_price from orders where id = $1',
+      [orderId],
+    );
     return { r, row: rows[0] };
   }
 
@@ -655,9 +683,10 @@ describe('market assets (1m close only)', () => {
     const { r, row } = await settled(id, close + 1500);
     expect(r).toMatchObject({ kind: 'settled', status: 'won' });
     expect(row).toEqual({ status: 'won', close_price: '50010.00000000' });
-    const { rows } = await pool.query<{ n: string }>('select count(*)::text as n from price_snapshots where asset_id = $1 and real_price is not null', [
-      ids.mkt,
-    ]);
+    const { rows } = await pool.query<{ n: string }>(
+      'select count(*)::text as n from price_snapshots where asset_id = $1 and real_price is not null',
+      [ids.mkt],
+    );
     expect(rows[0]?.n).toBe('0');
   });
 });
@@ -700,7 +729,12 @@ describe('scheduled override (market, 1m)', () => {
       'select target_price::text as target_price, direction, body_ticks, ramp_ms from otc_overrides where id = $1',
       [v.id],
     );
-    expect(rows[0]).toEqual({ target_price: null, direction: 'up', body_ticks: 20, ramp_ms: MIN - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS });
+    expect(rows[0]).toEqual({
+      target_price: null,
+      direction: 'up',
+      body_ticks: 20,
+      ramp_ms: MIN - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS,
+    });
     expect(await svc.publicState(MKT)).toEqual({ active: true, untilMs: OPEN + MIN + OTC_OVERRIDE_RELEASE_MS, scheduledFor: OPEN });
   });
 
@@ -711,8 +745,16 @@ describe('scheduled override (market, 1m)', () => {
     await expectAppError(svc.apply(adminId, sched({ atMs: T0 + MIN })), 400, /mais de 6 s/);
     clock = T0 + 20_000;
     await expectAppError(svc.apply(adminId, sched({ atMs: T0 + OTC_OVERRIDE_SCHEDULE_HORIZON_MS + MIN })), 400, /60 min/);
-    await expectAppError(svc.apply(adminId, input({ assetId: ids.a, schedule: { atMs: OPEN, direction: 'up', ticks: 10 } })), 400, /mercado/);
-    await expectAppError(svc.apply(adminId, input({ assetId: ids.mkt, interval: '5m', schedule: { atMs: OPEN, direction: 'up', ticks: 10 } })), 400, /1m/);
+    await expectAppError(
+      svc.apply(adminId, input({ assetId: ids.a, schedule: { atMs: OPEN, direction: 'up', ticks: 10 } })),
+      400,
+      /mercado/,
+    );
+    await expectAppError(
+      svc.apply(adminId, input({ assetId: ids.mkt, interval: '5m', schedule: { atMs: OPEN, direction: 'up', ticks: 10 } })),
+      400,
+      /1m/,
+    );
     expect(await redis.get(KEY)).toBeNull();
 
     // Exactly at the horizon is still allowed; then the slot is taken.
@@ -739,7 +781,14 @@ describe('scheduled override (market, 1m)', () => {
     if (!wire) throw new Error('no wire');
     const saved: string[] = [];
     const ov = new PriceOverride(wire, clock, { decimals: 2, volPerSqrtS: null, onTarget: (p) => saved.push(p) });
-    const tick = (at: number, p: number) => ({ symbol: MKT, price: p.toFixed(2), value: p, ts: at, recvMs: at, provider: 'binance' as const });
+    const tick = (at: number, p: number) => ({
+      symbol: MKT,
+      price: p.toFixed(2),
+      value: p,
+      ts: at,
+      recvMs: at,
+      provider: 'binance' as const,
+    });
     // Previous minute: untouched.
     for (let at = OPEN - 10_000; at < OPEN; at += 500) {
       const t = tick(at, 50_001);
@@ -767,18 +816,34 @@ describe('scheduled override (market, 1m)', () => {
     const v = await svc.apply(adminId, sched({ atMs: BOOKED, ticks: 20 }));
     const wire = parseOtcOverride(await redis.get(KEY));
     if (!wire) throw new Error('no wire');
-    const tick = (at: number, p: number) => ({ symbol: MKT, price: p.toFixed(2), value: p, ts: at, recvMs: at, provider: 'binance' as const });
+    const tick = (at: number, p: number) => ({
+      symbol: MKT,
+      price: p.toFixed(2),
+      value: p,
+      ts: at,
+      recvMs: at,
+      provider: 'binance' as const,
+    });
     expect(await loadOverrideTarget(pool, v.id)).toBeNull();
 
     // First run: open 50 001, freezes 50 001.20 and saves it, then dies at +40 s.
-    const first = new PriceOverride(wire, BOOKED - 1000, { decimals: 2, volPerSqrtS: null, onTarget: (p) => void saveOverrideTarget(pool, v.id, p) });
+    const first = new PriceOverride(wire, BOOKED - 1000, {
+      decimals: 2,
+      volPerSqrtS: null,
+      onTarget: (p) => void saveOverrideTarget(pool, v.id, p),
+    });
     for (let at = BOOKED; at <= BOOKED + 40_000; at += 250) first.apply(tick(at, 50_002), at, first.needsOpen(at) ? 50_001 : undefined);
     await vi.waitFor(async () => expect(await loadOverrideTarget(pool, v.id)).toBe('50001.20000000'));
 
     // Second run: no bucketOpen, first tick 50 030 (it alone would give 50 030.20).
     const persisted = Number(await loadOverrideTarget(pool, v.id));
     const saved: string[] = [];
-    const second = new PriceOverride(wire, BOOKED + 41_000, { decimals: 2, volPerSqrtS: null, persistedTarget: persisted, onTarget: (p) => saved.push(p) });
+    const second = new PriceOverride(wire, BOOKED + 41_000, {
+      decimals: 2,
+      volPerSqrtS: null,
+      persistedTarget: persisted,
+      onTarget: (p) => saved.push(p),
+    });
     let close = 0;
     for (let at = BOOKED + 41_000; at <= BOOKED + MIN; at += 250) {
       const out = second.apply(tick(at, 50_030), at, undefined);

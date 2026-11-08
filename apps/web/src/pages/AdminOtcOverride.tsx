@@ -245,7 +245,9 @@ function OverrideScreen() {
         schedule: { atMs, direction, ticks },
       });
       setOverride(v);
-      setNotice(`Agendado: ${v.symbol} às ${epochToLocalMinute(v.candleOpenMs)}, vela ${direction === 'up' ? 'verde' : 'vermelha'} de ${ticks} ticks.`);
+      setNotice(
+        `Agendado: ${v.symbol} às ${epochToLocalMinute(v.candleOpenMs)}, vela ${direction === 'up' ? 'verde' : 'vermelha'} de ${ticks} ticks.`,
+      );
     } catch (err) {
       setActionError(errMsg(err, 'Não foi possível agendar.'));
     } finally {
@@ -411,7 +413,10 @@ function OverrideScreen() {
                   role="radio"
                   aria-checked={mode === m}
                   onClick={() => (m === 'schedule' ? startSchedule() : setMode('now'))}
-                  className={cx('rounded-control px-3 py-1', mode === m ? 'bg-brand/15 font-medium text-brand' : 'text-muted hover:text-text')}
+                  className={cx(
+                    'rounded-control px-3 py-1',
+                    mode === m ? 'bg-brand/15 font-medium text-brand' : 'text-muted hover:text-text',
+                  )}
                 >
                   {label}
                 </button>
@@ -450,7 +455,10 @@ function OverrideScreen() {
                 />
                 <dl className="grid grid-cols-[auto_auto] gap-x-4 gap-y-1 text-sm">
                   <dt className="text-muted">Distância</dt>
-                  <dd className={cx('font-mono tabular-nums', distancePct !== null && (distancePct >= 0 ? 'text-up' : 'text-down'))} data-testid="otc-distance">
+                  <dd
+                    className={cx('font-mono tabular-nums', distancePct !== null && (distancePct >= 0 ? 'text-up' : 'text-down'))}
+                    data-testid="otc-distance"
+                  >
                     {distancePct === null ? '—' : `${distancePct >= 0 ? '+' : ''}${distancePct.toFixed(3).replace('.', ',')}%`}
                   </dd>
                   {maxPct !== null && (
@@ -475,7 +483,12 @@ function OverrideScreen() {
                     Faltam menos de {OTC_OVERRIDE_MIN_LEAD_MS / 1000} s para o fechamento desta vela: não dá tempo de levar o preço ao alvo.
                   </FormMessage>
                   <label className="flex items-center gap-2 text-sm">
-                    <input type="checkbox" checked={nextCandle} onChange={(e) => setNextCandle(e.target.checked)} className="size-4 accent-brand" />
+                    <input
+                      type="checkbox"
+                      checked={nextCandle}
+                      onChange={(e) => setNextCandle(e.target.checked)}
+                      className="size-4 accent-brand"
+                    />
                     Aplicar no próximo candle
                   </label>
                 </div>
@@ -526,13 +539,17 @@ function ActivePanel({ override: o, now, onRelease, busy }: { override: OtcOverr
             <dt className="text-muted">Agendado</dt>
             <dd data-testid="otc-schedule">
               {epochToLocalMinute(o.candleOpenMs)}, vela{' '}
-              <span className={o.schedule.direction === 'up' ? 'text-up' : 'text-down'}>{o.schedule.direction === 'up' ? 'verde' : 'vermelha'}</span> de{' '}
-              {o.schedule.ticks} ticks
+              <span className={o.schedule.direction === 'up' ? 'text-up' : 'text-down'}>
+                {o.schedule.direction === 'up' ? 'verde' : 'vermelha'}
+              </span>{' '}
+              de {o.schedule.ticks} ticks
             </dd>
           </>
         )}
         <dt className="text-muted">Alvo</dt>
-        <dd className="font-mono tabular-nums">{o.targetPrice === null && o.schedule ? 'definido na abertura da vela' : fmt(o.targetPrice)}</dd>
+        <dd className="font-mono tabular-nums">
+          {o.targetPrice === null && o.schedule ? 'definido na abertura da vela' : fmt(o.targetPrice)}
+        </dd>
         <dt className="text-muted">Preço base / atual</dt>
         <dd className="font-mono tabular-nums">
           {fmt(o.basePrice)} / {fmt(o.currentPrice)}
@@ -603,7 +620,10 @@ function ScheduleForm(p: ScheduleFormProps) {
                 role="radio"
                 aria-checked={p.direction === d}
                 onClick={() => p.onDirection(d)}
-                className={cx('rounded-control border px-4 py-2 text-sm font-medium', p.direction === d ? on : 'border-border text-muted hover:text-text')}
+                className={cx(
+                  'rounded-control border px-4 py-2 text-sm font-medium',
+                  p.direction === d ? on : 'border-border text-muted hover:text-text',
+                )}
               >
                 {label}
               </button>
@@ -615,7 +635,12 @@ function ScheduleForm(p: ScheduleFormProps) {
             Corpo (ticks)
           </label>
           <div className="flex items-center gap-1">
-            <Button variant="secondary" aria-label="Menos 5 ticks" onClick={() => step(-OTC_OVERRIDE_TICKS_STEP)} disabled={p.ticks <= OTC_OVERRIDE_MIN_TICKS}>
+            <Button
+              variant="secondary"
+              aria-label="Menos 5 ticks"
+              onClick={() => step(-OTC_OVERRIDE_TICKS_STEP)}
+              disabled={p.ticks <= OTC_OVERRIDE_MIN_TICKS}
+            >
               −
             </Button>
             <input
@@ -633,7 +658,8 @@ function ScheduleForm(p: ScheduleFormProps) {
             </Button>
           </div>
           <span className={cx('text-xs', p.ticksOk ? 'text-muted' : 'text-down')}>
-            Mínimo {OTC_OVERRIDE_MIN_TICKS}, em múltiplos de {OTC_OVERRIDE_TICKS_STEP}. 1 tick = {formatPrice(10 ** -p.decimals, p.decimals)}.
+            Mínimo {OTC_OVERRIDE_MIN_TICKS}, em múltiplos de {OTC_OVERRIDE_TICKS_STEP}. 1 tick ={' '}
+            {formatPrice(10 ** -p.decimals, p.decimals)}.
           </span>
         </div>
       </div>
@@ -687,7 +713,9 @@ function ProjectedCandle({
           {up ? '+' : '−'}
           {fmt(Math.abs(k.c - k.o))} ({k.offsetPct.toFixed(3).replace('.', ',')}%)
         </span>
-        <span className="col-span-2 max-w-64 text-xs text-muted">Projeção com a abertura no preço de agora; o alvo sai da abertura da vela.</span>
+        <span className="col-span-2 max-w-64 text-xs text-muted">
+          Projeção com a abertura no preço de agora; o alvo sai da abertura da vela.
+        </span>
         {over && maxPct !== null && (
           <span className="col-span-2 max-w-64 text-xs text-warn" data-testid="otc-projected-over">
             Acima do limite do ativo (±{maxPct.toFixed(3).replace('.', ',')}%): o corpo será reduzido no início da vela.

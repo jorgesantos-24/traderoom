@@ -71,15 +71,7 @@ function OpenOrderRow({ order, display, now }: { order: OrderView; display: stri
   );
 }
 
-export function OpenOrders({
-  open,
-  assets,
-  onRetry,
-}: {
-  open: Loadable<OrderView[]>;
-  assets: readonly AssetView[];
-  onRetry(): void;
-}) {
+export function OpenOrders({ open, assets, onRetry }: { open: Loadable<OrderView[]>; assets: readonly AssetView[]; onRetry(): void }) {
   const now = useNow(250, serverNow);
   const display = new Map(assets.map((a) => [a.symbol, a.display]));
   const name = (s: string) => display.get(s) ?? s;

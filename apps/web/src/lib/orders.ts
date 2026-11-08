@@ -8,7 +8,7 @@ export function liveResult(direction: Direction, openPrice: string, price: numbe
   if (price === null || !Number.isFinite(price) || price <= 0) return 'unknown';
   const cmp = compareDecimal(price.toFixed(8), openPrice);
   if (cmp === 0) return 'tie';
-  return (cmp > 0) === (direction === 'call') ? 'winning' : 'losing';
+  return cmp > 0 === (direction === 'call') ? 'winning' : 'losing';
 }
 
 /** Server-side worker waits this long after expiry before settling (SETTLE_GRACE_MS in the API). */

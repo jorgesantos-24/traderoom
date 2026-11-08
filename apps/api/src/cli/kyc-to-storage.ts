@@ -37,7 +37,14 @@ try {
   const blobs = await createFirebaseKycStore({ bucket: env.FIREBASE_STORAGE_BUCKET, credentialsFile: env.FIREBASE_CREDENTIALS_FILE });
   let moved = 0;
   for (;;) {
-    const { rows } = await pool.query<{ submission_id: string; user_id: string; kind: string; mime: string; data: Buffer; created_at: Date }>(
+    const { rows } = await pool.query<{
+      submission_id: string;
+      user_id: string;
+      kind: string;
+      mime: string;
+      data: Buffer;
+      created_at: Date;
+    }>(
       `select f.submission_id, s.user_id, f.kind, f.mime, f.data, f.created_at
          from kyc_files f join kyc_submissions s on s.id = f.submission_id
         where f.data is not null limit 20`,

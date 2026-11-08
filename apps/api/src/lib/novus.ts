@@ -67,7 +67,8 @@ export class GatewayError extends Error {
 type Json = Record<string, unknown>;
 const obj = (v: unknown): Json => (typeof v === 'object' && v !== null ? (v as Json) : {});
 const str = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 ? v : null);
-const int = (v: unknown): number | null => (typeof v === 'number' && Number.isInteger(v) ? v : typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : null);
+const int = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isInteger(v) ? v : typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : null;
 /** Responses come as `{ data: {...} }`; webhooks may come wrapped in `{ event, timestamp, data }` or bare. */
 const unwrap = (body: unknown): Json => {
   const b = obj(body);

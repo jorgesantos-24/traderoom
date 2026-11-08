@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { createKlinesFetcher, parseKlines, retryAfterMs, UpstreamError } from '../src/lib/binance.js';
 
-const ROW = [1_793_217_420_000, '75500.10', '75600.00', '75450.00', '75552.63', '12.345', 1_793_217_479_999, '932000.1', 1234, '6.1', '460000.2', '0'];
+const ROW = [
+  1_793_217_420_000,
+  '75500.10',
+  '75600.00',
+  '75450.00',
+  '75552.63',
+  '12.345',
+  1_793_217_479_999,
+  '932000.1',
+  1234,
+  '6.1',
+  '460000.2',
+  '0',
+];
 
 function fakeFetch(status: number, body: unknown, headers: Record<string, string> = {}) {
   const calls: URL[] = [];

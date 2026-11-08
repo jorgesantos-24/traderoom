@@ -106,9 +106,7 @@ describe('auth against real Postgres and Redis', () => {
       { kind: 'demo', balance_cents: '1000000', currency: 'USD' },
       { kind: 'real', balance_cents: '0', currency: 'USD' },
     ]);
-    const { rows: u } = await pool.query<{ password_hash: string }>('select password_hash from users where id = $1', [
-      user.id,
-    ]);
+    const { rows: u } = await pool.query<{ password_hash: string }>('select password_hash from users where id = $1', [user.id]);
     expect(u[0]!.password_hash).toMatch(/^\$argon2id\$v=19\$m=19456,t=2,p=1\$/);
 
     expect((await c.req('GET', '/api/me')).statusCode).toBe(401);

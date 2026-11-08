@@ -70,10 +70,10 @@ export function createAuthService(pool: pg.Pool): AuthService {
             [email, passwordHash, name],
           );
           const user = rows[0]!;
-          await client.query(
-            `insert into accounts (user_id, kind, balance_cents) values ($1, 'real', 0), ($1, 'demo', $2)`,
-            [user.id, DEMO_START_CENTS],
-          );
+          await client.query(`insert into accounts (user_id, kind, balance_cents) values ($1, 'real', 0), ($1, 'demo', $2)`, [
+            user.id,
+            DEMO_START_CENTS,
+          ]);
           return toPublic(user);
         });
       } catch (err) {
@@ -132,9 +132,7 @@ export function createAuthService(pool: pg.Pool): AuthService {
     async logout(cookieValue) {
       const parsed = parseSessionCookie(cookieValue);
       if (!parsed) return;
-      const { rows } = await pool.query<{ token_hash: string }>('select token_hash from sessions where id = $1', [
-        parsed.sessionId,
-      ]);
+      const { rows } = await pool.query<{ token_hash: string }>('select token_hash from sessions where id = $1', [parsed.sessionId]);
       const row = rows[0];
       if (row && safeEqual(sha256Hex(parsed.token), row.token_hash)) {
         await pool.query('delete from sessions where id = $1', [parsed.sessionId]);
@@ -172,9 +170,7 @@ export function createAuthService(pool: pg.Pool): AuthService {
         }
         await client.query('update users set password_hash = $1 where id = $2', [passwordHash, reset.user_id]);
         // Single use, and any other outstanding links for this user die too.
-        await client.query('update password_resets set used = true where user_id = $1 and not used', [
-          reset.user_id,
-        ]);
+        await client.query('update password_resets set used = true where user_id = $1 and not used', [reset.user_id]);
         // A password reset logs out every device.
         await client.query('delete from sessions where user_id = $1', [reset.user_id]);
       });

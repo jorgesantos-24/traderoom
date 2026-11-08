@@ -51,11 +51,7 @@ export function authOf(req: FastifyRequest): SessionInfo {
   return req.auth;
 }
 
-export async function registerSecurity(
-  app: FastifyInstance,
-  auth: AuthService,
-  settings: SecuritySettings,
-): Promise<void> {
+export async function registerSecurity(app: FastifyInstance, auth: AuthService, settings: SecuritySettings): Promise<void> {
   await app.register(cookie);
 
   await app.register(rateLimit, {
@@ -104,12 +100,7 @@ export async function registerSecurity(
     if (route === undefined || CSRF_EXEMPT.has(route)) return;
     const fromCookie = req.cookies[csrfCookieName];
     const fromHeader = req.headers[CSRF_HEADER];
-    if (
-      typeof fromCookie !== 'string' ||
-      typeof fromHeader !== 'string' ||
-      fromCookie.length === 0 ||
-      !safeEqual(fromCookie, fromHeader)
-    ) {
+    if (typeof fromCookie !== 'string' || typeof fromHeader !== 'string' || fromCookie.length === 0 || !safeEqual(fromCookie, fromHeader)) {
       throw new AppError(403, ErrorCode.CsrfFailed, 'Token CSRF ausente ou inválido. Recarregue a página.');
     }
   });

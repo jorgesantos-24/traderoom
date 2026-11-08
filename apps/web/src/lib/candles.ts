@@ -11,10 +11,7 @@ export function bucketStart(ts: number, stepMs: number): number {
   return Math.floor(ts / stepMs) * stepMs;
 }
 
-export type MergeResult =
-  | { kind: 'update'; candle: Candle }
-  | { kind: 'append'; candle: Candle }
-  | { kind: 'ignore' };
+export type MergeResult = { kind: 'update'; candle: Candle } | { kind: 'append'; candle: Candle } | { kind: 'ignore' };
 
 /**
  * Folds one price into the series. Mutates `candles` (last item replaced or a new one pushed)

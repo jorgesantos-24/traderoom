@@ -165,7 +165,10 @@ export function AppShell({
         <main
           id="main"
           tabIndex={-1}
-          className={cx('min-w-0 flex-1 outline-none', fullBleed ? 'min-h-0 p-1 sm:p-2' : 'mx-auto w-full max-w-[1440px] px-3 py-3 sm:px-4 sm:py-4')}
+          className={cx(
+            'min-w-0 flex-1 outline-none',
+            fullBleed ? 'min-h-0 p-1 sm:p-2' : 'mx-auto w-full max-w-[1440px] px-3 py-3 sm:px-4 sm:py-4',
+          )}
         >
           {children}
         </main>

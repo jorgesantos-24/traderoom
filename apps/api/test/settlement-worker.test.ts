@@ -11,7 +11,11 @@ const NOW = 1_800_000_000_000;
 class FakeQueue implements DueQueue {
   readonly z = new Map<string, number>();
   async due(maxScore: number, limit: number): Promise<string[]> {
-    return [...this.z].filter(([, s]) => s <= maxScore).sort((a, b) => a[1] - b[1]).slice(0, limit).map(([id]) => id);
+    return [...this.z]
+      .filter(([, s]) => s <= maxScore)
+      .sort((a, b) => a[1] - b[1])
+      .slice(0, limit)
+      .map(([id]) => id);
   }
   async remove(ids: readonly string[]): Promise<void> {
     for (const id of ids) this.z.delete(id);

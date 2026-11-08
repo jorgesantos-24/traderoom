@@ -59,7 +59,13 @@ class FakeGateway implements PaymentGateway {
       throw new GatewayError('Novus respondeu 500: indisponível', 500);
     }
     this.payouts.push(req);
-    return { providerId: `po-${req.externalId}`, externalId: req.externalId, status: 'pending', amountCents: req.amountCents, refundedAmountCents: null };
+    return {
+      providerId: `po-${req.externalId}`,
+      externalId: req.externalId,
+      status: 'pending',
+      amountCents: req.amountCents,
+      refundedAmountCents: null,
+    };
   }
   async getPayout(providerId: string): Promise<PayoutState> {
     return { providerId, externalId: null, status: 'completed', amountCents: null, refundedAmountCents: null };
@@ -80,7 +86,9 @@ async function newUser(realCents = 0, role = 'user'): Promise<string> {
 }
 
 async function real(userId: string): Promise<number> {
-  const { rows } = await pool.query<{ b: string }>(`select balance_cents as b from accounts where user_id = $1 and kind = 'real'`, [userId]);
+  const { rows } = await pool.query<{ b: string }>(`select balance_cents as b from accounts where user_id = $1 and kind = 'real'`, [
+    userId,
+  ]);
   return Number(rows[0]?.b);
 }
 
@@ -209,17 +217,41 @@ describe('withdrawals', () => {
     const admin = await newUser(0, 'admin');
     const a = await svc.requestWithdrawal(user, { amountCents: 3000, pixKeyType: 'CPF', pixKey: VALID_CPF });
     await svc.approve(admin, a.id);
-    await svc.applyPayoutState({ providerId: `po-${a.id}`, externalId: a.id, status: 'failed', amountCents: 3000, refundedAmountCents: null });
+    await svc.applyPayoutState({
+      providerId: `po-${a.id}`,
+      externalId: a.id,
+      status: 'failed',
+      amountCents: 3000,
+      refundedAmountCents: null,
+    });
     expect(await real(user)).toBe(10_000);
 
     const b = await svc.requestWithdrawal(user, { amountCents: 4000, pixKeyType: 'CPF', pixKey: VALID_CPF });
     await svc.approve(admin, b.id);
-    await svc.applyPayoutState({ providerId: `po-${b.id}`, externalId: null, status: 'completed', amountCents: 4000, refundedAmountCents: null });
+    await svc.applyPayoutState({
+      providerId: `po-${b.id}`,
+      externalId: null,
+      status: 'completed',
+      amountCents: 4000,
+      refundedAmountCents: null,
+    });
     // The bank returns reais (R$ 191,10 = US$ 39,00 at the withdrawal's rate).
-    await svc.applyPayoutState({ providerId: `po-${b.id}`, externalId: null, status: 'refunded', amountCents: 19_600, refundedAmountCents: 19_110 });
+    await svc.applyPayoutState({
+      providerId: `po-${b.id}`,
+      externalId: null,
+      status: 'refunded',
+      amountCents: 19_600,
+      refundedAmountCents: 19_110,
+    });
     expect(await real(user)).toBe(10_000 - 4000 + 3900);
     // Repeated notifications do nothing more.
-    await svc.applyPayoutState({ providerId: `po-${b.id}`, externalId: null, status: 'refunded', amountCents: 19_600, refundedAmountCents: 19_110 });
+    await svc.applyPayoutState({
+      providerId: `po-${b.id}`,
+      externalId: null,
+      status: 'refunded',
+      amountCents: 19_600,
+      refundedAmountCents: 19_110,
+    });
     expect(await real(user)).toBe(9900);
   });
 });
@@ -227,7 +259,9 @@ describe('withdrawals', () => {
 describe('webhook route', () => {
   let app: FastifyInstance;
   beforeAll(async () => {
-    app = await testApp({ deps: { payments: createPaymentService({ pool, gateway: new FakeGateway(), webhookSecrets: [KEY], postbackUrl: null, fx }) } });
+    app = await testApp({
+      deps: { payments: createPaymentService({ pool, gateway: new FakeGateway(), webhookSecrets: [KEY], postbackUrl: null, fx }) },
+    });
   });
   afterAll(async () => {
     await app.close();
@@ -246,7 +280,14 @@ describe('webhook route', () => {
     const user = await newUser();
     const s = createPaymentService({ pool, gateway: gw, webhookSecrets: [KEY], postbackUrl: null, fx });
     const dep = await s.createDeposit(user, { amountCents: 2500, cpf: freshCpf() });
-    const body = JSON.stringify({ id: `inv-${dep.id}`, status: 'paid', amount: 2500, method: 'pix', event: 'invoice.paid', external_id: dep.id });
+    const body = JSON.stringify({
+      id: `inv-${dep.id}`,
+      status: 'paid',
+      amount: 2500,
+      method: 'pix',
+      event: 'invoice.paid',
+      external_id: dep.id,
+    });
 
     expect((await post(body, 'deadbeef')).statusCode).toBe(401);
     expect((await post(body)).statusCode).toBe(401);

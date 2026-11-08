@@ -30,7 +30,11 @@ describe('CORS', () => {
     const ok = await app.inject({
       method: 'OPTIONS',
       url: '/api/orders',
-      headers: { origin: 'https://app.test', 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type,x-csrf-token,idempotency-key' },
+      headers: {
+        origin: 'https://app.test',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type,x-csrf-token,idempotency-key',
+      },
     });
     expect(ok.statusCode).toBe(204);
     expect(ok.headers['access-control-allow-origin']).toBe('https://app.test');

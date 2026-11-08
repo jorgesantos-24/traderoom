@@ -89,7 +89,10 @@ describe('KYC service', () => {
     await expect(kyc.submit(user, parse({ birthDate: '2010-01-01' }))).rejects.toMatchObject({ statusCode: 400 });
 
     const s = await kyc.submit(user, parse());
-    expect(s).toMatchObject({ status: 'pending', submission: { status: 'pending', cpf: CPFS[0], files: ['doc_back', 'doc_front', 'selfie'] } });
+    expect(s).toMatchObject({
+      status: 'pending',
+      submission: { status: 'pending', cpf: CPFS[0], files: ['doc_back', 'doc_front', 'selfie'] },
+    });
     await expect(kyc.uploadFile(user, 'selfie', JPEG)).rejects.toMatchObject({ statusCode: 409 });
     await expect(kyc.requireApproved(user)).rejects.toMatchObject({ statusCode: 403, code: 'kyc_required' });
   });
@@ -120,7 +123,14 @@ describe('KYC service', () => {
 
     // Payments check KYC first.
     const gateway = {} as PaymentGateway;
-    const pay = createPaymentService({ pool, gateway, webhookSecrets: [], postbackUrl: null, fx: fixedFx(5), requireKyc: (u) => kyc.requireApproved(u) });
+    const pay = createPaymentService({
+      pool,
+      gateway,
+      webhookSecrets: [],
+      postbackUrl: null,
+      fx: fixedFx(5),
+      requireKyc: (u) => kyc.requireApproved(u),
+    });
     await expect(pay.requestWithdrawal(b, { amountCents: 5000, pixKeyType: 'CPF', pixKey: CPFS[1]! })).rejects.toMatchObject({
       statusCode: 403,
     });
@@ -136,7 +146,10 @@ describe('KYC service', () => {
     await kyc.uploadFile(u, 'selfie', JPEG);
     const s = await kyc.submit(u, KycSubmitInput.parse(form({ cpf: CPFS[2] })));
     await kyc.reject(admin, s.submission!.id, 'Foto do documento ilegível');
-    expect(await kyc.state(u)).toMatchObject({ status: 'rejected', submission: { status: 'rejected', rejectReason: 'Foto do documento ilegível' } });
+    expect(await kyc.state(u)).toMatchObject({
+      status: 'rejected',
+      submission: { status: 'rejected', rejectReason: 'Foto do documento ilegível' },
+    });
 
     const again = await kyc.uploadFile(u, 'doc_front', JPEG);
     expect(again).toMatchObject({ status: 'rejected', submission: { status: 'draft', files: ['doc_front'] } });
@@ -218,7 +231,8 @@ describe('KYC photos in object storage (Firebase)', () => {
     await svc.uploadFile(user, 'selfie', JPEG); // replaces the first selfie
     await new Promise((r) => setTimeout(r, 10)); // deletes are fire-and-forget
     expect(blobs.objects.size).toBe(3);
-    for (const [path] of blobs.objects) expect(path).toMatch(new RegExp(`^kyc/${user}/[0-9a-f-]{36}/(doc_front|doc_back|selfie)-[0-9a-f-]{36}$`));
+    for (const [path] of blobs.objects)
+      expect(path).toMatch(new RegExp(`^kyc/${user}/[0-9a-f-]{36}/(doc_front|doc_back|selfie)-[0-9a-f-]{36}$`));
 
     const { KycSubmitInput } = await import('@traderoom/shared');
     const s = await svc.submit(user, KycSubmitInput.parse(form({ cpf: '287.654.319-28', docType: 'PASSAPORTE' })));

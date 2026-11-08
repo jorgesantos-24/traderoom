@@ -16,7 +16,9 @@ const config = loadConfig();
 let pool: pg.Pool;
 const userIds: string[] = [];
 
-async function makeSession(opts: { expired?: boolean; blocked?: boolean } = {}): Promise<{ cookie: string; sessionId: string; userId: string }> {
+async function makeSession(
+  opts: { expired?: boolean; blocked?: boolean } = {},
+): Promise<{ cookie: string; sessionId: string; userId: string }> {
   const email = `ws-int-${randomUUID()}@example.test`;
   const { rows } = await pool.query<{ id: string }>(
     `insert into users (email, password_hash, name, status) values ($1, '!', 'WS Test', $2) returning id`,

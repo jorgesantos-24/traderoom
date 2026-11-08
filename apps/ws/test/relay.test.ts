@@ -87,7 +87,14 @@ describe('Relay', () => {
     r.listen({ onPrices: (p) => frames.push([...p]) });
     for (let i = 1; i <= 50; i++) binance.send(binanceQuote('BTCUSDT', `100.${String(i).padStart(2, '0')}`));
     binance.send(binanceQuote('BNBUSDT', '600.00'));
-    await vi.waitFor(() => expect(frames.flat().map((p) => p.tick.symbol).sort()).toEqual(['BNBUSDT', 'BTCUSDT']));
+    await vi.waitFor(() =>
+      expect(
+        frames
+          .flat()
+          .map((p) => p.tick.symbol)
+          .sort(),
+      ).toEqual(['BNBUSDT', 'BTCUSDT']),
+    );
     const btcFrames = frames.flat().filter((p) => p.tick.symbol === 'BTCUSDT');
     // 51 quotes arrive within a 50 ms window or two, never one frame each.
     expect(btcFrames.length).toBeLessThanOrEqual(2);

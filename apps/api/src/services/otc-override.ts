@@ -169,10 +169,18 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
     nowMs: number,
   ): Promise<{ wire: OtcOverrideWire; view: OtcOverrideView; ttlMs: number }> {
     if (s.atMs <= nowMs + OTC_OVERRIDE_MIN_LEAD_MS) {
-      throw new AppError(400, ErrorCode.ValidationFailed, `schedule.atMs: o minuto tem que começar daqui a mais de ${OTC_OVERRIDE_MIN_LEAD_MS / 1000} s.`);
+      throw new AppError(
+        400,
+        ErrorCode.ValidationFailed,
+        `schedule.atMs: o minuto tem que começar daqui a mais de ${OTC_OVERRIDE_MIN_LEAD_MS / 1000} s.`,
+      );
     }
     if (s.atMs > nowMs + OTC_OVERRIDE_SCHEDULE_HORIZON_MS) {
-      throw new AppError(400, ErrorCode.ValidationFailed, `schedule.atMs: só dá para agendar até ${OTC_OVERRIDE_SCHEDULE_HORIZON_MS / 60_000} min à frente.`);
+      throw new AppError(
+        400,
+        ErrorCode.ValidationFailed,
+        `schedule.atMs: só dá para agendar até ${OTC_OVERRIDE_SCHEDULE_HORIZON_MS / 60_000} min à frente.`,
+      );
     }
     const openMs = s.atMs;
     const closeMs = openMs + CANDLE_INTERVAL_MS['1m'];
@@ -230,16 +238,14 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
       const override = r ? toView(r, await readPrice(redis, r.symbol), nowMs) : null;
       return {
         override,
-        assets: assets.rows.map(
-          (a): OtcOverrideAsset => ({
-            id: a.id,
-            kind: a.kind,
-            symbol: a.symbol,
-            display: a.display,
-            decimals: a.decimals,
-            maxOverridePct: a.kind === 'market' ? Number(a.max_override_pct) : null,
-          }),
-        ),
+        assets: assets.rows.map((a): OtcOverrideAsset => ({
+          id: a.id,
+          kind: a.kind,
+          symbol: a.symbol,
+          display: a.display,
+          decimals: a.decimals,
+          maxOverridePct: a.kind === 'market' ? Number(a.max_override_pct) : null,
+        })),
         serverNowMs: nowMs,
       };
     },
@@ -282,7 +288,8 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
           if (schedule) return applyScheduled(c, adminId, asset, base, schedule, nowMs);
           if (input.targetPrice === undefined) throw new AppError(400, ErrorCode.ValidationFailed, 'targetPrice: informe o preço alvo.');
           const target = Number(input.targetPrice.toFixed(decimals));
-          if (!(target > 0)) throw new AppError(400, ErrorCode.ValidationFailed, 'targetPrice: preço alvo inválido para as casas decimais do ativo.');
+          if (!(target > 0))
+            throw new AppError(400, ErrorCode.ValidationFailed, 'targetPrice: preço alvo inválido para as casas decimais do ativo.');
           if (market) {
             const maxPct = Number(asset.max_override_pct);
             const devPct = (Math.abs(target - Number(base)) / Number(base)) * 100;
@@ -307,9 +314,7 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
             );
           }
           // Market: the ramp spans the rest of the candle (the client's rampMs is ignored), so the move is gradual.
-          const rampMs = market
-            ? Math.min(60_000, Math.max(500, leadMs - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS))
-            : input.rampMs;
+          const rampMs = market ? Math.min(60_000, Math.max(500, leadMs - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS)) : input.rampMs;
           const rampStartMs = otcOverrideRampStartMs(nowMs, closeMs, rampMs);
           const targetText = target.toFixed(decimals);
 

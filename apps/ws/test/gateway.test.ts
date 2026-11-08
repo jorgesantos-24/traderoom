@@ -90,7 +90,13 @@ async function start(overrides: Partial<GatewayOptions> = {}): Promise<void> {
   source = new FakeSource();
   sessions = new FakeSessions();
   metrics = new Registry();
-  gateway = new Gateway(server, source, sessions, { ...GATEWAY_DEFAULTS, allowedOrigin: ORIGIN, ...overrides }, { log: silentLog, metrics });
+  gateway = new Gateway(
+    server,
+    source,
+    sessions,
+    { ...GATEWAY_DEFAULTS, allowedOrigin: ORIGIN, ...overrides },
+    { log: silentLog, metrics },
+  );
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
 }
 
@@ -201,7 +207,11 @@ describe('protocol', () => {
 
     source.publish(['BTCUSDT', 100], ['SOLUSDT', 50], ['ETHUSDT', 3000]);
     await vi.waitFor(() => expect(of(c, 'tick')).toHaveLength(2));
-    expect(of(c, 'tick').map((f) => f.data[0]?.s).sort()).toEqual(['BTCUSDT', 'ETHUSDT']);
+    expect(
+      of(c, 'tick')
+        .map((f) => f.data[0]?.s)
+        .sort(),
+    ).toEqual(['BTCUSDT', 'ETHUSDT']);
     expect(c.binary.every((b) => !b)).toBe(true);
   });
 
@@ -289,7 +299,10 @@ describe('protocol', () => {
     const c = await opened(connect());
     c.send({ t: 'sub', assets: Array.from({ length: WS_MAX_ASSETS_PER_CONNECTION + 1 }, (_, i) => `A${i}USDT`) });
     await vi.waitFor(() => expect(of(c, 'error')).toHaveLength(1));
-    expect(of(c, 'error')[0]).toMatchObject({ code: 'bad_message', message: `No máximo ${WS_MAX_ASSETS_PER_CONNECTION} ativos por conexão.` });
+    expect(of(c, 'error')[0]).toMatchObject({
+      code: 'bad_message',
+      message: `No máximo ${WS_MAX_ASSETS_PER_CONNECTION} ativos por conexão.`,
+    });
   });
 
   it.each([

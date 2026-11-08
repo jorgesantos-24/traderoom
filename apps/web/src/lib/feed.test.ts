@@ -160,7 +160,14 @@ describe('PriceFeed', () => {
     feed.subscribe('FOOUSDT', () => {});
     feed.start();
     last().open();
-    last().frame({ t: 'snapshot', seq: 1, data: [{ s: 'BTCUSDT', p: 100, ts: 1 }, { s: 'FOOUSDT', p: 5, ts: 1 }] });
+    last().frame({
+      t: 'snapshot',
+      seq: 1,
+      data: [
+        { s: 'BTCUSDT', p: 100, ts: 1 },
+        { s: 'FOOUSDT', p: 5, ts: 1 },
+      ],
+    });
     last().frame({ t: 'stale', s: 'BTCUSDT', on: true });
     expect(feed.quote('BTCUSDT')).toEqual({ price: 100, ts: 1, stale: true });
     last().frame({ t: 'stale', s: 'BTCUSDT', on: false });

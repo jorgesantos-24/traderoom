@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { awesomeApi, binanceUsdtBrl, openErApi, brlToUsdCents, createFxService, FxUnavailableError, usdToBrlCents, type RateSource } from '../src/lib/fx.js';
+import {
+  awesomeApi,
+  binanceUsdtBrl,
+  openErApi,
+  brlToUsdCents,
+  createFxService,
+  FxUnavailableError,
+  usdToBrlCents,
+  type RateSource,
+} from '../src/lib/fx.js';
 
-const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 const fixed =
   (bid: number, ask: number, source = 's'): RateSource =>
   async () => ({ bid, ask, source });

@@ -40,7 +40,10 @@ describe('Novus payloads', () => {
       status: 'paid',
       amountCents: 1990,
     });
-    expect(parseChargeState({ data: { invoice_id: 'b', status: 'pending', total_cents: 5000 } })).toMatchObject({ providerId: 'b', amountCents: 5000 });
+    expect(parseChargeState({ data: { invoice_id: 'b', status: 'pending', total_cents: 5000 } })).toMatchObject({
+      providerId: 'b',
+      amountCents: 5000,
+    });
     const env = { event: 'withdrawal.completed', data: { id: 'p', status: 'completed', amount: 15000, net_amount: 14850 } };
     expect(isPayoutPayload(env)).toBe(true);
     expect(isPayoutPayload({ id: 'a', status: 'paid', amount: 1, event: 'invoice.paid' })).toBe(false);

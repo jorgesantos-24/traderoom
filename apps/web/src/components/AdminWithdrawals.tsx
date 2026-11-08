@@ -64,19 +64,33 @@ export function WithdrawalsTab({ onNotice }: { onNotice(m: string): void }) {
       )}
       {list.status === 'loading' && <LoadingState label="Carregando saques…" />}
       {list.status === 'error' && <ErrorState message={list.error ?? ''} onRetry={list.reload} />}
-      {list.status === 'ready' && list.items.length === 0 && <EmptyState title={filter === 'open' ? 'Nenhum saque pendente' : 'Nenhum saque'} />}
+      {list.status === 'ready' && list.items.length === 0 && (
+        <EmptyState title={filter === 'open' ? 'Nenhum saque pendente' : 'Nenhum saque'} />
+      )}
       {list.items.length > 0 && (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <caption className="sr-only">Pedidos de saque</caption>
             <thead className="text-left text-muted">
               <tr>
-                <th scope="col" className="px-4 py-2 font-medium">Data</th>
-                <th scope="col" className="px-4 py-2 font-medium">Cliente</th>
-                <th scope="col" className="px-4 py-2 font-medium">Chave Pix</th>
-                <th scope="col" className="px-4 py-2 text-right font-medium">Valor</th>
-                <th scope="col" className="px-4 py-2 font-medium">Status</th>
-                <th scope="col" className="px-4 py-2 text-right font-medium">Ações</th>
+                <th scope="col" className="px-4 py-2 font-medium">
+                  Data
+                </th>
+                <th scope="col" className="px-4 py-2 font-medium">
+                  Cliente
+                </th>
+                <th scope="col" className="px-4 py-2 font-medium">
+                  Chave Pix
+                </th>
+                <th scope="col" className="px-4 py-2 text-right font-medium">
+                  Valor
+                </th>
+                <th scope="col" className="px-4 py-2 font-medium">
+                  Status
+                </th>
+                <th scope="col" className="px-4 py-2 text-right font-medium">
+                  Ações
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -139,8 +153,8 @@ export function WithdrawalsTab({ onNotice }: { onNotice(m: string): void }) {
             <p className="text-sm">
               Enviar <strong>{formatBrl(confirm.pixAmountCents)}</strong> ({formatMoney(confirm.amountCents)};{' '}
               {formatFxRate(confirm.fxRate)}) por Pix para a chave {PIX_KEY_LABEL[confirm.pixKeyType]}{' '}
-              <strong className="break-all">{confirm.pixKey}</strong> ({confirm.userName})? O dinheiro sai do saldo da empresa na Novus e não
-              dá para desfazer.
+              <strong className="break-all">{confirm.pixKey}</strong> ({confirm.userName})? O dinheiro sai do saldo da empresa na Novus e
+              não dá para desfazer.
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setConfirm(null)}>

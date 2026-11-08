@@ -56,14 +56,17 @@ export function usePaged<T>(fetchPage: (cursor?: string) => Promise<Page<T>>, ke
     const gen = generation.current;
     setLoadingMore(true);
     setMoreError(null);
-    fetchRef.current(cursor).then(
-      (page) => {
-        if (gen !== generation.current) return;
-        setItems((cur) => [...cur, ...page.items]);
-        setCursor(page.nextCursor);
-      },
-      (err: unknown) => gen === generation.current && setMoreError(message(err)),
-    ).finally(() => gen === generation.current && setLoadingMore(false));
+    fetchRef
+      .current(cursor)
+      .then(
+        (page) => {
+          if (gen !== generation.current) return;
+          setItems((cur) => [...cur, ...page.items]);
+          setCursor(page.nextCursor);
+        },
+        (err: unknown) => gen === generation.current && setMoreError(message(err)),
+      )
+      .finally(() => gen === generation.current && setLoadingMore(false));
   }, [cursor, loadingMore]);
 
   const reload = useCallback(() => setAttempt((n) => n + 1), []);

@@ -200,8 +200,7 @@ describe('forgot / reset', () => {
       mailer,
       deps: {
         auth: fakeAuth({
-          requestPasswordReset: async (email) =>
-            email === 'ana@example.com' ? { email, token: 'T'.repeat(43) } : null,
+          requestPasswordReset: async (email) => (email === 'ana@example.com' ? { email, token: 'T'.repeat(43) } : null),
         }),
       },
     });

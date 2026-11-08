@@ -37,9 +37,7 @@ export interface FeedAsset {
 
 export type ParseResult =
   /** `quote` marks a bid/ask mid (bookTicker), `kline` a candle close; neither is set for a trade. */
-  | { kind: 'tick'; tick: Tick; quote?: true; kline?: true }
-  | { kind: 'error'; message: string }
-  | { kind: 'ignore' };
+  { kind: 'tick'; tick: Tick; quote?: true; kline?: true } | { kind: 'error'; message: string } | { kind: 'ignore' };
 
 /** Everything a connection needs to talk to one provider. */
 export interface ProviderSpec {

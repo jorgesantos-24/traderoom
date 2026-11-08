@@ -84,7 +84,12 @@ export function AdminPage() {
       <div role="status" aria-live="polite" className="sr-only" data-testid="admin-notice">
         {notice}
       </div>
-      <div role="tablist" aria-label="Seções do admin" className="scrollbar-none mb-4 flex gap-1 overflow-x-auto shadow-[inset_0_-1px_0] shadow-border" onKeyDown={onKey}>
+      <div
+        role="tablist"
+        aria-label="Seções do admin"
+        className="scrollbar-none mb-4 flex gap-1 overflow-x-auto shadow-[inset_0_-1px_0] shadow-border"
+        onKeyDown={onKey}
+      >
         {TABS.map((t) => (
           <button
             key={t.id}

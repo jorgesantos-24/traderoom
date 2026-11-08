@@ -38,7 +38,10 @@ describe('SnapshotRetention', () => {
     await pool.query('delete from price_snapshots where asset_id = $1', [assetId]);
     // 25 rows 8+ days old, 5 inside the window.
     for (let i = 1; i <= 25; i++) {
-      await pool.query('insert into price_snapshots (asset_id, price, captured_at) values ($1, 1, $2)', [assetId, new Date(now - 8 * DAY - i * 1000)]);
+      await pool.query('insert into price_snapshots (asset_id, price, captured_at) values ($1, 1, $2)', [
+        assetId,
+        new Date(now - 8 * DAY - i * 1000),
+      ]);
     }
     for (const age of [60_000, DAY, 3 * DAY, 6 * DAY, 7 * DAY - 60_000]) {
       await pool.query('insert into price_snapshots (asset_id, price, captured_at) values ($1, 2, $2)', [assetId, new Date(now - age)]);

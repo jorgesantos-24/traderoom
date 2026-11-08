@@ -9,10 +9,7 @@
 import pg from 'pg';
 import { z } from 'zod';
 
-const Args = z.union([
-  z.tuple([z.enum(['promote', 'demote']), z.email('E-mail inválido.')]),
-  z.tuple([z.literal('list')]),
-]);
+const Args = z.union([z.tuple([z.enum(['promote', 'demote']), z.email('E-mail inválido.')]), z.tuple([z.literal('list')])]);
 
 async function main(): Promise<void> {
   const databaseUrl = z.url().parse(process.env['DATABASE_URL']);

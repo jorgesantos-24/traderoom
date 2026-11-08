@@ -12,9 +12,7 @@ describe('provider specs', () => {
   it('builds one Binance combined-stream URL for all assets', () => {
     const spec = binanceSpec('wss://data-stream.binance.vision:443/stream', assets);
     expect(spec?.name).toBe('binance');
-    expect(spec?.url).toBe(
-      'wss://data-stream.binance.vision/stream?streams=btcusdt@bookTicker/ethusdt@bookTicker/dogeusdt@bookTicker',
-    );
+    expect(spec?.url).toBe('wss://data-stream.binance.vision/stream?streams=btcusdt@bookTicker/ethusdt@bookTicker/dogeusdt@bookTicker');
     expect(spec?.onOpenMessages).toEqual([]);
   });
 

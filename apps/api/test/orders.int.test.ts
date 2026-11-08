@@ -268,7 +268,9 @@ describe('creating orders', () => {
       const arrived = clock;
       await setPrice('100.00000000'); // what the bot (and the screen) saw
       // Our feed catches up with the move 300 ms later, then ticks every 200 ms.
-      const s = delayed((t) => (t - arrived >= 300 ? { p: '101.00000000', rt: arrived + 300 + Math.floor((t - arrived - 300) / 200) * 200 } : null));
+      const s = delayed((t) =>
+        t - arrived >= 300 ? { p: '101.00000000', rt: arrived + 300 + Math.floor((t - arrived - 300) / 200) * 200 } : null,
+      );
       const user = await newUser(5000);
       const { order } = await s.create(user, input(), key());
       expect(order.openPrice).toBe('101.00000000');
@@ -320,7 +322,9 @@ describe('demo account', () => {
     return id;
   }
   const balances = async (userId: string) => {
-    const { rows } = await pool.query<{ kind: string; b: string }>('select kind, balance_cents as b from accounts where user_id = $1', [userId]);
+    const { rows } = await pool.query<{ kind: string; b: string }>('select kind, balance_cents as b from accounts where user_id = $1', [
+      userId,
+    ]);
     return Object.fromEntries(rows.map((r) => [r.kind, Number(r.b)]));
   };
 
@@ -482,7 +486,9 @@ describe('settlement worker', () => {
     const worker = new SettlementWorker({ pool, queue: redisDueQueue(redis, QUEUE), log, metrics: new Registry() }, WORKER_DEFAULTS);
     expect(await worker.round()).toBeGreaterThanOrEqual(1);
     expect(await redis.zscore(QUEUE, a.id)).toBeNull();
-    const { rows } = await pool.query<{ id: string; status: string }>('select id, status from orders where id = any($1::uuid[])', [[a.id, b.id]]);
+    const { rows } = await pool.query<{ id: string; status: string }>('select id, status from orders where id = any($1::uuid[])', [
+      [a.id, b.id],
+    ]);
     if (rows.length !== 2) throw new Error(JSON.stringify(rows));
     expect(Object.fromEntries(rows.map((r) => [r.id, r.status]))).toEqual({ [a.id]: 'won', [b.id]: 'open' });
 
@@ -546,7 +552,9 @@ describe('HTTP flow', () => {
     const ids: string[] = [];
     for (let i = 0; i < 3; i++) {
       clock += 10; // distinct opens_at, so the list order is deterministic
-      const res = await send('POST', '/api/orders', input({ stakeCents: 1000 + i }), { 'idempotency-key': `http-order-${i}-${me.slice(0, 8)}` });
+      const res = await send('POST', '/api/orders', input({ stakeCents: 1000 + i }), {
+        'idempotency-key': `http-order-${i}-${me.slice(0, 8)}`,
+      });
       expect(res.statusCode).toBe(201);
       ids.push(res.json<{ order: OrderView }>().order.id);
     }
@@ -565,9 +573,15 @@ describe('HTTP flow', () => {
     expect(p2.nextCursor).toBeNull();
     expect((await send('GET', '/api/orders?status=won')).json<{ items: unknown[] }>().items).toEqual([]);
 
-    const l1 = (await send('GET', '/api/ledger?limit=3')).json<{ items: Array<{ kind: string; deltaCents: number }>; nextCursor: string }>();
+    const l1 = (await send('GET', '/api/ledger?limit=3')).json<{
+      items: Array<{ kind: string; deltaCents: number }>;
+      nextCursor: string;
+    }>();
     expect(l1.items.map((x) => x.deltaCents)).toEqual([-1002, -1001, -1000]);
-    const l2 = (await send('GET', `/api/ledger?limit=3&cursor=${l1.nextCursor}`)).json<{ items: Array<{ kind: string }>; nextCursor: string | null }>();
+    const l2 = (await send('GET', `/api/ledger?limit=3&cursor=${l1.nextCursor}`)).json<{
+      items: Array<{ kind: string }>;
+      nextCursor: string | null;
+    }>();
     expect(l2).toMatchObject({ items: [{ kind: 'credit' }], nextCursor: null });
 
     expect((await send('GET', '/api/orders?cursor=garbage')).statusCode).toBe(400);

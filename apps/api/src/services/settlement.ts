@@ -75,10 +75,11 @@ export async function settleOrder(pool: pg.Pool, orderId: string, nowMs: number)
     const stake = Number(o.stake_cents);
     const credit = creditCents(status, stake, o.payout_pct);
 
-    await client.query(
-      `update orders set status = $2, close_price = $3, settled_at = now() where id = $1 and status = 'open'`,
-      [orderId, status, closePrice],
-    );
+    await client.query(`update orders set status = $2, close_price = $3, settled_at = now() where id = $1 and status = 'open'`, [
+      orderId,
+      status,
+      closePrice,
+    ]);
 
     if (credit > 0) {
       const acc = await client.query<{ balance_cents: string }>(

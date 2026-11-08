@@ -218,10 +218,20 @@ export function ForgotPage() {
       }
     >
       {sent ? (
-        <FormMessage tone="success">Se este e-mail estiver cadastrado, você receberá um link em instantes. Ele vale por 30 minutos.</FormMessage>
+        <FormMessage tone="success">
+          Se este e-mail estiver cadastrado, você receberá um link em instantes. Ele vale por 30 minutos.
+        </FormMessage>
       ) : (
         <form onSubmit={(e) => void submit(e)} noValidate className="flex flex-col gap-4">
-          <Field label="E-mail" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} error={fieldError} />
+          <Field
+            label="E-mail"
+            type="email"
+            autoComplete="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            error={fieldError}
+          />
           {error && <FormMessage tone="error">{error}</FormMessage>}
           <Button type="submit" busy={busy} className="w-full">
             Enviar link

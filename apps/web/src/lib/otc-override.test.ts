@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { OTC_OVERRIDE_HOLD_MS, OTC_OVERRIDE_LANDING_MS, OTC_OVERRIDE_RAMP_DEFAULT_MS } from '@traderoom/shared';
-import { editedCandle, epochToLocalMinute, localMinuteToEpoch, phaseAt, priceScale, priceToY, projectedCandle, rampPlan, requiredSpeed, withLiveCandle, yToPrice } from './otc-override';
+import {
+  editedCandle,
+  epochToLocalMinute,
+  localMinuteToEpoch,
+  phaseAt,
+  priceScale,
+  priceToY,
+  projectedCandle,
+  rampPlan,
+  requiredSpeed,
+  withLiveCandle,
+  yToPrice,
+} from './otc-override';
 
 describe('withLiveCandle', () => {
   const hist = [

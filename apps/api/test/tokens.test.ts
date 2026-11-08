@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  encodeSessionCookie,
-  generateToken,
-  parseSessionCookie,
-  safeEqual,
-  sha256Hex,
-} from '../src/lib/tokens.js';
+import { encodeSessionCookie, generateToken, parseSessionCookie, safeEqual, sha256Hex } from '../src/lib/tokens.js';
 
 describe('tokens', () => {
   it('generates 32-byte base64url tokens that do not repeat', () => {

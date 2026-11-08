@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { OTC_OVERRIDE_HOLD_MS, OTC_OVERRIDE_LANDING_MS, OTC_OVERRIDE_RELEASE_MS, otcOverrideRampStartMs, type OtcOverrideWire } from '@traderoom/shared';
+import {
+  OTC_OVERRIDE_HOLD_MS,
+  OTC_OVERRIDE_LANDING_MS,
+  OTC_OVERRIDE_RELEASE_MS,
+  otcOverrideRampStartMs,
+  type OtcOverrideWire,
+} from '@traderoom/shared';
 import { OtcWalk } from '../src/feed/otc.js';
 import { BAND_FRACTION, BAND_MIN_TICKS, OverridePath, SIGMA_FACTOR } from '../src/feed/override-path.js';
 

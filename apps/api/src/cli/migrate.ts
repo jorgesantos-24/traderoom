@@ -23,9 +23,7 @@ async function main(): Promise<void> {
   });
 
   console.log(
-    applied.length === 0
-      ? 'No migrations to run.'
-      : `Ran ${applied.length} migration(s): ${applied.map((m) => m.name).join(', ')}`,
+    applied.length === 0 ? 'No migrations to run.' : `Ran ${applied.length} migration(s): ${applied.map((m) => m.name).join(', ')}`,
   );
 }
 

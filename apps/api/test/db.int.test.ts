@@ -72,13 +72,11 @@ describe('schema', () => {
       const id = rows[0]!.id;
       await client.query('insert into accounts (user_id) values ($1)', [id]);
       await client.query('savepoint s');
-      await expect(client.query('update accounts set balance_cents = -1 where user_id = $1', [id])).rejects.toThrow(
-        /balance_cents_check/,
-      );
+      await expect(client.query('update accounts set balance_cents = -1 where user_id = $1', [id])).rejects.toThrow(/balance_cents_check/);
       await client.query('rollback to savepoint s');
-      await expect(
-        client.query(`insert into users (email, password_hash, name) values ('case@test.dev', 'x', 'T')`),
-      ).rejects.toThrow(/users_email_key/);
+      await expect(client.query(`insert into users (email, password_hash, name) values ('case@test.dev', 'x', 'T')`)).rejects.toThrow(
+        /users_email_key/,
+      );
     } finally {
       await client.query('rollback');
       client.release();

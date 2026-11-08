@@ -293,7 +293,11 @@ describe('PriceOverride, scheduled mode (market, 1m)', () => {
     const ov = new PriceOverride(scheduled({ ticks: 20 }), OPEN - 5000, { ...opts(2), onTarget: (p) => saved.push(p) });
     drive(ov, OPEN - 5000, OPEN - 250, 0);
     // The first tick of the candle is 76 003, the open (last tick of the previous minute) 76 000.50.
-    const first = ov.apply({ symbol: 'BTCUSDT', price: '76003.00000000', value: 76_003, ts: OPEN, recvMs: OPEN, provider: 'binance' }, OPEN, 76_000.5);
+    const first = ov.apply(
+      { symbol: 'BTCUSDT', price: '76003.00000000', value: 76_003, ts: OPEN, recvMs: OPEN, provider: 'binance' },
+      OPEN,
+      76_000.5,
+    );
     expect(first.ov).toBe('7');
     expect(ov.targetPrice).toBe(76_000.7);
     expect(ov.resolveTarget(76_000.5)).toBe(76_000.7);

@@ -53,10 +53,7 @@ export function Spinner({ small = false, label }: { small?: boolean; label?: str
     <span role={label ? 'status' : undefined} className="inline-flex items-center gap-2 text-muted">
       <span
         aria-hidden="true"
-        className={cx(
-          'inline-block animate-spin rounded-full border-2 border-current border-t-transparent',
-          small ? 'size-3.5' : 'size-5',
-        )}
+        className={cx('inline-block animate-spin rounded-full border-2 border-current border-t-transparent', small ? 'size-3.5' : 'size-5')}
       />
       {label && <span className="text-sm">{label}</span>}
     </span>

@@ -418,7 +418,8 @@ export function WithdrawDialog({ open, onClose }: { open: boolean; onClose(): vo
       {done !== null && (
         <>
           <FormMessage tone="success">
-            Pedido de saque de {formatMoney(done.usd)} ({formatBrl(done.brl)} via Pix) enviado. Ele está em análise e você acompanha o andamento na Carteira.
+            Pedido de saque de {formatMoney(done.usd)} ({formatBrl(done.brl)} via Pix) enviado. Ele está em análise e você acompanha o
+            andamento na Carteira.
           </FormMessage>
           <div className="flex justify-end">
             <Button onClick={onClose}>Fechar</Button>

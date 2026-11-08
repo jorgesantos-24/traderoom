@@ -95,7 +95,13 @@ describe('SourceSelector', () => {
   it('keeps state for remaining symbols and adds/removes others on setSymbols', () => {
     const s = selector();
     s.evaluate(T0 + 5001);
-    s.setSymbols([{ symbol: 'BTCUSDT', hasFallback: true }, { symbol: 'ETHUSDT', hasFallback: true }], T0 + 6000);
+    s.setSymbols(
+      [
+        { symbol: 'BTCUSDT', hasFallback: true },
+        { symbol: 'ETHUSDT', hasFallback: true },
+      ],
+      T0 + 6000,
+    );
     expect(s.sourceOf('BTCUSDT')).toBe('binance_backup');
     expect(s.sourceOf('ETHUSDT')).toBe('binance');
     expect(s.sourceOf('BNBUSDT')).toBeUndefined();

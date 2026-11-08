@@ -33,10 +33,10 @@ let invalidations = 0;
 const ik = () => `ik-${randomUUID()}`;
 
 async function newUser(name = 'Pessoa', email = `u-${randomUUID()}@${DOMAIN}`): Promise<string> {
-  const { rows } = await pool.query<{ id: string }>(
-    `insert into users (email, password_hash, name) values ($1, '!', $2) returning id`,
-    [email, name],
-  );
+  const { rows } = await pool.query<{ id: string }>(`insert into users (email, password_hash, name) values ($1, '!', $2) returning id`, [
+    email,
+    name,
+  ]);
   const id = rows[0]?.id ?? '';
   await pool.query('insert into accounts (user_id) values ($1)', [id]);
   return id;
@@ -98,14 +98,24 @@ describe('adjustBalance', () => {
     ]);
     const log = await auditOf(admin);
     expect(log.map((l) => l.action)).toEqual(['user.credit', 'user.debit']);
-    expect(log[1]?.payload).toMatchObject({ userId: user, deltaCents: -2500, balanceBefore: 10_000, balanceAfter: 7_500, note: 'Estorno parcial', ledgerId: d.ledgerId });
+    expect(log[1]?.payload).toMatchObject({
+      userId: user,
+      deltaCents: -2500,
+      balanceBefore: 10_000,
+      balanceAfter: 7_500,
+      note: 'Estorno parcial',
+      ledgerId: d.ledgerId,
+    });
   });
 
   it('refuses a debit below zero and leaves no trace', async () => {
     const admin = await newUser('Admin');
     const user = await newUser();
     await svc.adjustBalance(admin, user, 1_000, 'Crédito', ik());
-    await expect(svc.adjustBalance(admin, user, -1_001, 'Débito grande', ik())).rejects.toMatchObject({ statusCode: 400, code: 'insufficient_balance' });
+    await expect(svc.adjustBalance(admin, user, -1_001, 'Débito grande', ik())).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'insufficient_balance',
+    });
     const { rows } = await pool.query<{ n: string }>('select count(*) as n from ledger where user_id = $1', [user]);
     expect(Number(rows[0]?.n)).toBe(1);
     expect((await auditOf(admin)).map((l) => l.action)).toEqual(['user.credit']);
@@ -137,7 +147,10 @@ describe('adjustBalance', () => {
     const again = await svc.adjustBalance(admin, user, 3_000, 'Crédito único', key);
     expect(first.replayed).toBe(false);
     expect(again).toMatchObject({ replayed: true, ledgerId: first.ledgerId, user: { balanceCents: 3_000 } });
-    await expect(svc.adjustBalance(admin, user, 3_001, 'Crédito único', key)).rejects.toMatchObject({ statusCode: 409, code: 'idempotency_conflict' });
+    await expect(svc.adjustBalance(admin, user, 3_001, 'Crédito único', key)).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'idempotency_conflict',
+    });
     const other = await newUser();
     await expect(svc.adjustBalance(admin, other, 3_000, 'Crédito único', key)).rejects.toMatchObject({ statusCode: 409 });
     // Another admin may use the same key value: keys are per admin.
@@ -209,8 +222,14 @@ describe('updateAsset', () => {
     expect(invalidations).toBe(before + 3);
     const log = await auditOf(admin);
     expect(log).toEqual([
-      { action: 'asset.update', payload: { assetId, symbol: SYMBOL, before: { payoutPct: 80, enabled: true }, after: { payoutPct: 91, enabled: true } } },
-      { action: 'asset.update', payload: { assetId, symbol: SYMBOL, before: { payoutPct: 91, enabled: true }, after: { payoutPct: 91, enabled: false } } },
+      {
+        action: 'asset.update',
+        payload: { assetId, symbol: SYMBOL, before: { payoutPct: 80, enabled: true }, after: { payoutPct: 91, enabled: true } },
+      },
+      {
+        action: 'asset.update',
+        payload: { assetId, symbol: SYMBOL, before: { payoutPct: 91, enabled: true }, after: { payoutPct: 91, enabled: false } },
+      },
     ]);
     expect((await svc.listAssets()).find((x) => x.id === assetId)).toMatchObject({ payoutPct: 91, enabled: false });
     await expect(svc.updateAsset(admin, 999_999, { enabled: true })).rejects.toMatchObject({ statusCode: 404 });
@@ -304,7 +323,12 @@ describe('HTTP: /api/admin/*', () => {
     const cr = await admin.send('POST', `/api/admin/users/${target.id}/credit`, { deltaCents: 5_000, note: 'Bônus de boas-vindas' }, key);
     expect(cr.statusCode).toBe(200);
     expect(cr.headers['idempotency-replayed']).toBe('false');
-    const retry = await admin.send('POST', `/api/admin/users/${target.id}/credit`, { deltaCents: 5_000, note: 'Bônus de boas-vindas' }, key);
+    const retry = await admin.send(
+      'POST',
+      `/api/admin/users/${target.id}/credit`,
+      { deltaCents: 5_000, note: 'Bônus de boas-vindas' },
+      key,
+    );
     expect(retry.headers['idempotency-replayed']).toBe('true');
     expect(retry.json<{ ledgerId: string }>().ledgerId).toBe(cr.json<{ ledgerId: string }>().ledgerId);
     expect(cr.json<{ user: AdminUserView }>().user.balanceCents).toBe(5_000);
@@ -329,7 +353,8 @@ describe('HTTP: /api/admin/*', () => {
     expect((await admin.send('PATCH', `/api/admin/assets/${assetId}`, { payoutPct: 120 })).statusCode).toBe(400);
     expect((await admin.send('PATCH', `/api/admin/assets/${assetId}`, {})).statusCode).toBe(400);
     expect((await admin.send('PATCH', `/api/admin/assets/${assetId}`, { payoutPct: 85, symbol: 'X' })).statusCode).toBe(400);
-    const pub = async () => (await target.send('GET', '/api/assets')).json<{ assets: Array<{ symbol: string; payoutPct: number }> }>().assets;
+    const pub = async () =>
+      (await target.send('GET', '/api/assets')).json<{ assets: Array<{ symbol: string; payoutPct: number }> }>().assets;
     await pub(); // warm the cache
     const patched = await admin.send('PATCH', `/api/admin/assets/${assetId}`, { payoutPct: 85 });
     expect(patched.json<{ asset: AdminAssetView }>().asset.payoutPct).toBe(85);

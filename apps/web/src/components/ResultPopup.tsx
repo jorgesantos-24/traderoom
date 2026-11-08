@@ -46,19 +46,10 @@ function ResultCard({ result, onDismiss }: { result: ResultToast; onDismiss(key:
       )}
     >
       {won && <span aria-hidden="true" className="result-shine" />}
-      <span
-        aria-hidden="true"
-        className="result-drain"
-        style={{ animationDuration: `${RESULT_CARD_MS}ms` }}
-      />
+      <span aria-hidden="true" className="result-drain" style={{ animationDuration: `${RESULT_CARD_MS}ms` }} />
       <CoinIcon symbol={order.symbol} className="relative size-7" />
-      <span className={cx('relative min-w-0 flex-1 truncate text-sm font-semibold', won ? 'text-white' : 'text-text')}>
-        {display}
-      </span>
-      <span
-        className={cx('tabular relative text-sm font-bold', won ? 'text-white' : 'text-muted')}
-        data-testid="result-amount"
-      >
+      <span className={cx('relative min-w-0 flex-1 truncate text-sm font-semibold', won ? 'text-white' : 'text-text')}>{display}</span>
+      <span className={cx('tabular relative text-sm font-bold', won ? 'text-white' : 'text-muted')} data-testid="result-amount">
         {voided ? `${formatMoney(0)} · devolvido` : formatSignedMoney(net)}
       </span>
       <button

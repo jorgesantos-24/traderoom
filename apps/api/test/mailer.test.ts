@@ -54,7 +54,10 @@ describe('createResendMailer', () => {
     for (const first of [503, 429, 'throw'] as const) {
       const { log } = logSpy();
       const f = fakeFetch([first, 200]);
-      await createResendMailer(log, { apiKey: 'k', from: 'f@x.test', fetch: f.fn, sleep: async () => {} }).sendPasswordReset('a@x.test', LINK);
+      await createResendMailer(log, { apiKey: 'k', from: 'f@x.test', fetch: f.fn, sleep: async () => {} }).sendPasswordReset(
+        'a@x.test',
+        LINK,
+      );
       expect(f.calls).toHaveLength(2);
     }
   });

@@ -76,11 +76,7 @@ export class PriceOverride {
   private lastMs: number;
   private finished: boolean;
 
-  constructor(
-    wire: OtcOverrideWire,
-    nowMs: number,
-    opts: PriceOverrideOptions = {},
-  ) {
+  constructor(wire: OtcOverrideWire, nowMs: number, opts: PriceOverrideOptions = {}) {
     this.id = wire.id;
     this.schedule = wire.schedule ?? null;
     this.wireTarget = Number(wire.targetPrice);

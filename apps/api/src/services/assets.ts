@@ -42,7 +42,14 @@ export function createAssetRepo(pool: pg.Pool, opts: { ttlMs?: number; now?: () 
         'select id, symbol, display, payout_pct, kind, category from assets where enabled order by sort, id',
       )
       .then(({ rows }) => {
-        const list = rows.map((r) => ({ id: r.id, symbol: r.symbol, display: r.display, payoutPct: r.payout_pct, kind: r.kind, category: r.category }));
+        const list = rows.map((r) => ({
+          id: r.id,
+          symbol: r.symbol,
+          display: r.display,
+          payoutPct: r.payout_pct,
+          kind: r.kind,
+          category: r.category,
+        }));
         const value: EnabledAssets = {
           bySymbol: new Map(list.map((a) => [a.symbol, a])),
           byId: new Map(list.map((a) => [a.id, a])),

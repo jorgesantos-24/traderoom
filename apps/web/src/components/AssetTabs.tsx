@@ -30,7 +30,11 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
 
   return (
     <>
-      <div role="tablist" aria-label="Gráficos abertos" className="scrollbar-none flex min-w-0 flex-1 items-center gap-1 overflow-x-auto md:flex-initial">
+      <div
+        role="tablist"
+        aria-label="Gráficos abertos"
+        className="scrollbar-none flex min-w-0 flex-1 items-center gap-1 overflow-x-auto md:flex-initial"
+      >
         {open.map((a) => {
           const selected = a.symbol === active;
           return (

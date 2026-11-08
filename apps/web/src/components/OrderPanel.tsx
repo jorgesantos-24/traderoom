@@ -76,10 +76,7 @@ export function OrderPanel({ account, asset, limits, quote, feedStatus, balanceC
     setSending(direction);
     setError(null);
     try {
-      const order = await api.createOrder(
-        { account, assetId: asset.id, direction, stakeCents, durationSec },
-        newIdempotencyKey(),
-      );
+      const order = await api.createOrder({ account, assetId: asset.id, direction, stakeCents, durationSec }, newIdempotencyKey());
       playOrderSound(direction);
       onPlaced(order);
     } catch (err) {
@@ -101,100 +98,97 @@ export function OrderPanel({ account, asset, limits, quote, feedStatus, balanceC
         <h2 id={`${ids}-title`} className="text-sm font-semibold">
           Nova ordem
         </h2>
-        <span
-          className={cx('tabular text-sm font-semibold', quote?.stale ? 'text-muted' : 'text-text')}
-          data-testid="panel-price"
-        >
+        <span className={cx('tabular text-sm font-semibold', quote?.stale ? 'text-muted' : 'text-text')} data-testid="panel-price">
           {quote?.price != null ? formatPrice(quote.price) : '—'}
         </span>
       </div>
 
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
-      <fieldset className="contents">
-        <legend className="sr-only">Valor</legend>
-        <div className="order-1 flex min-w-0 items-stretch rounded-control border border-border bg-field focus-within:border-brand">
-          <label htmlFor={`${ids}-stake`} className="flex min-w-0 flex-1 flex-col px-2.5 py-1 lg:px-3 lg:py-1.5">
-            <span className="text-[11px] text-muted">Valor (US$)</span>
-            <input
-              id={`${ids}-stake`}
-              inputMode="decimal"
-              autoComplete="off"
-              value={stakeText}
-              onChange={(e) => setStakeText(e.target.value)}
-              aria-invalid={stakeCents === null || undefined}
-              className="tabular w-full bg-transparent text-lg font-semibold text-text outline-none"
-            />
-          </label>
+        <fieldset className="contents">
+          <legend className="sr-only">Valor</legend>
+          <div className="order-1 flex min-w-0 items-stretch rounded-control border border-border bg-field focus-within:border-brand">
+            <label htmlFor={`${ids}-stake`} className="flex min-w-0 flex-1 flex-col px-2.5 py-1 lg:px-3 lg:py-1.5">
+              <span className="text-[11px] text-muted">Valor (US$)</span>
+              <input
+                id={`${ids}-stake`}
+                inputMode="decimal"
+                autoComplete="off"
+                value={stakeText}
+                onChange={(e) => setStakeText(e.target.value)}
+                aria-invalid={stakeCents === null || undefined}
+                className="tabular w-full bg-transparent text-lg font-semibold text-text outline-none"
+              />
+            </label>
+            <div className="flex flex-col border-l border-border">
+              <button
+                type="button"
+                aria-label="Aumentar valor"
+                onClick={() => nudgeStake(1)}
+                className="flex-1 px-3 text-muted hover:bg-field hover:text-text"
+              >
+                +
+              </button>
+              <button
+                type="button"
+                aria-label="Diminuir valor"
+                onClick={() => nudgeStake(-1)}
+                className="flex-1 border-t border-border px-3 text-muted hover:bg-field hover:text-text"
+              >
+                −
+              </button>
+            </div>
+          </div>
+          <div className="order-3 col-span-2 grid grid-cols-4 gap-1 lg:order-2 lg:col-span-1">
+            {presets.map((c) => {
+              const active = stakeCents === c;
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setStakeText(String(c / 100))}
+                  className={cx(
+                    'tabular whitespace-nowrap rounded-control px-1 py-1 text-xs font-semibold',
+                    active ? 'bg-brand/15 text-brand' : 'bg-field text-muted hover:text-text',
+                  )}
+                >
+                  $ {c / 100}
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+
+        <div className="order-2 flex min-w-0 items-stretch rounded-control border border-border bg-field lg:order-3">
+          <div className="flex min-w-0 flex-1 flex-col px-2.5 py-1 lg:px-3 lg:py-1.5">
+            <span id={`${ids}-time`} className="text-[11px] text-muted">
+              Tempo
+            </span>
+            <output aria-labelledby={`${ids}-time`} aria-live="polite" className="tabular text-lg font-semibold text-text">
+              {formatDuration(durationSec)}
+            </output>
+          </div>
           <div className="flex flex-col border-l border-border">
             <button
               type="button"
-              aria-label="Aumentar valor"
-              onClick={() => nudgeStake(1)}
-              className="flex-1 px-3 text-muted hover:bg-field hover:text-text"
+              aria-label="Aumentar tempo"
+              onClick={() => setDurationSec(stepDuration(limits.durationsSec, durationSec, 1))}
+              disabled={durationIdx >= limits.durationsSec.length - 1}
+              className="flex-1 px-3 text-muted hover:bg-field hover:text-text disabled:opacity-30 disabled:hover:bg-transparent"
             >
               +
             </button>
             <button
               type="button"
-              aria-label="Diminuir valor"
-              onClick={() => nudgeStake(-1)}
-              className="flex-1 border-t border-border px-3 text-muted hover:bg-field hover:text-text"
+              aria-label="Diminuir tempo"
+              onClick={() => setDurationSec(stepDuration(limits.durationsSec, durationSec, -1))}
+              disabled={durationIdx <= 0}
+              className="flex-1 border-t border-border px-3 text-muted hover:bg-field hover:text-text disabled:opacity-30 disabled:hover:bg-transparent"
             >
               −
             </button>
           </div>
         </div>
-        <div className="order-3 col-span-2 grid grid-cols-4 gap-1 lg:order-2 lg:col-span-1">
-          {presets.map((c) => {
-            const active = stakeCents === c;
-            return (
-              <button
-                key={c}
-                type="button"
-                aria-pressed={active}
-                onClick={() => setStakeText(String(c / 100))}
-                className={cx(
-                  'tabular whitespace-nowrap rounded-control px-1 py-1 text-xs font-semibold',
-                  active ? 'bg-brand/15 text-brand' : 'bg-field text-muted hover:text-text',
-                )}
-              >
-                $ {c / 100}
-              </button>
-            );
-          })}
-        </div>
-      </fieldset>
-
-      <div className="order-2 flex min-w-0 items-stretch rounded-control border border-border bg-field lg:order-3">
-        <div className="flex min-w-0 flex-1 flex-col px-2.5 py-1 lg:px-3 lg:py-1.5">
-          <span id={`${ids}-time`} className="text-[11px] text-muted">
-            Tempo
-          </span>
-          <output aria-labelledby={`${ids}-time`} aria-live="polite" className="tabular text-lg font-semibold text-text">
-            {formatDuration(durationSec)}
-          </output>
-        </div>
-        <div className="flex flex-col border-l border-border">
-          <button
-            type="button"
-            aria-label="Aumentar tempo"
-            onClick={() => setDurationSec(stepDuration(limits.durationsSec, durationSec, 1))}
-            disabled={durationIdx >= limits.durationsSec.length - 1}
-            className="flex-1 px-3 text-muted hover:bg-field hover:text-text disabled:opacity-30 disabled:hover:bg-transparent"
-          >
-            +
-          </button>
-          <button
-            type="button"
-            aria-label="Diminuir tempo"
-            onClick={() => setDurationSec(stepDuration(limits.durationsSec, durationSec, -1))}
-            disabled={durationIdx <= 0}
-            className="flex-1 border-t border-border px-3 text-muted hover:bg-field hover:text-text disabled:opacity-30 disabled:hover:bg-transparent"
-          >
-            −
-          </button>
-        </div>
-      </div>
       </div>
 
       <div className="flex items-baseline justify-center gap-2 lg:flex-col lg:items-center lg:gap-0 lg:py-1">
@@ -229,7 +223,14 @@ export function OrderPanel({ account, asset, limits, quote, feedStatus, balanceC
         >
           <span>Vender</span>
           <svg aria-hidden="true" viewBox="0 0 24 24" className="size-5">
-            <path d="M6 6l12 12M18 9v9H9" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            <path
+              d="M6 6l12 12M18 9v9H9"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </svg>
         </Button>
       </div>

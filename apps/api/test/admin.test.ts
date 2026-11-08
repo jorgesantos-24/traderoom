@@ -41,7 +41,18 @@ async function build(overrides: Partial<AdminService> = {}, metrics = new Regist
     },
     updateAsset: async (...args) => {
       calls.push(['updateAsset', ...args]);
-      return { id: args[1], symbol: 'BTCUSDT', display: 'BTC/USD', payoutPct: 90, enabled: true, sort: 0, kind: 'market', category: 'crypto', otcVolPctHour: null, otcDriftPctHour: 0 };
+      return {
+        id: args[1],
+        symbol: 'BTCUSDT',
+        display: 'BTC/USD',
+        payoutPct: 90,
+        enabled: true,
+        sort: 0,
+        kind: 'market',
+        category: 'crypto',
+        otcVolPctHour: null,
+        otcDriftPctHour: 0,
+      };
     },
     listAudit: async (q) => {
       calls.push(['listAudit', q]);
@@ -106,7 +117,9 @@ describe('admin routes', () => {
   it('blocks by default and unblocks with blocked:false', async () => {
     const { app, calls } = await build();
     expect((await req(app, 'POST', `/api/admin/users/${TARGET}/block`)).json()).toMatchObject({ user: { status: 'blocked' } });
-    expect((await req(app, 'POST', `/api/admin/users/${TARGET}/block`, { blocked: false })).json()).toMatchObject({ user: { status: 'active' } });
+    expect((await req(app, 'POST', `/api/admin/users/${TARGET}/block`, { blocked: false })).json()).toMatchObject({
+      user: { status: 'active' },
+    });
     expect((await req(app, 'POST', `/api/admin/users/${TARGET}/block`, { blocked: 'yes' })).statusCode).toBe(400);
     expect((await req(app, 'POST', '/api/admin/users/123/block')).statusCode).toBe(400);
     expect(calls).toEqual([

@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { brlToUsdCents, formatBrl, formatCountdown, formatDuration, formatFxRate, formatMoney, formatPrice, formatSignedMoney, parseMoneyToCents, pricePrecision } from './format';
+import {
+  brlToUsdCents,
+  formatBrl,
+  formatCountdown,
+  formatDuration,
+  formatFxRate,
+  formatMoney,
+  formatPrice,
+  formatSignedMoney,
+  parseMoneyToCents,
+  pricePrecision,
+} from './format';
 
 const nbsp = (s: string) => s.replace(/ /g, ' ');
 

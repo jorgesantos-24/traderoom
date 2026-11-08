@@ -110,7 +110,11 @@ export interface OrderServiceDeps {
 }
 
 const sameRequest = (o: OrderView, i: CreateOrderInput): boolean =>
-  o.account === i.account && o.assetId === i.assetId && o.direction === i.direction && o.stakeCents === i.stakeCents && o.durationSec === i.durationSec;
+  o.account === i.account &&
+  o.assetId === i.assetId &&
+  o.direction === i.direction &&
+  o.stakeCents === i.stakeCents &&
+  o.durationSec === i.durationSec;
 
 function isUniqueViolation(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23505';
@@ -237,11 +241,7 @@ export function createOrderService(deps: OrderServiceDeps): OrderService {
         const orderId = ins.rows[0]?.id;
         if (!orderId) throw new Error('order insert returned no id');
         const newBalance = balance - input.stakeCents;
-        await client.query('update accounts set balance_cents = $2 where user_id = $1 and kind = $3', [
-          userId,
-          newBalance,
-          input.account,
-        ]);
+        await client.query('update accounts set balance_cents = $2 where user_id = $1 and kind = $3', [userId, newBalance, input.account]);
         await client.query(
           `insert into ledger (user_id, order_id, delta_cents, balance_after, kind, account) values ($1, $2, $3, $4, 'stake', $5)`,
           [userId, orderId, -input.stakeCents, newBalance, input.account],
