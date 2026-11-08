@@ -18,6 +18,7 @@ import { createNovusGateway } from './lib/novus.js';
 import { createPaymentService } from './services/payments.js';
 import { WEBHOOK_PATH } from './routes/payments.js';
 import { createKycService } from './services/kyc.js';
+import { createFirebaseKycStore } from './lib/kyc-storage.js';
 import { createOtcOverrideService } from './services/otc-override.js';
 
 const config = loadConfig();
@@ -27,7 +28,10 @@ const metrics = new Registry();
 metrics.gauge('process_resident_memory_bytes', 'Resident memory of the api process.', () => [[{}, process.memoryUsage().rss]]);
 const binanceResponses = metrics.counter('binance_rest_responses_total', 'Binance REST (klines) responses, by HTTP status.');
 const assets = createAssetRepo(pool);
-const kyc = createKycService({ pool });
+const kycBlobs = config.FIREBASE_STORAGE_BUCKET
+  ? await createFirebaseKycStore({ bucket: config.FIREBASE_STORAGE_BUCKET, credentialsFile: config.FIREBASE_CREDENTIALS_FILE })
+  : null;
+const kyc = createKycService({ pool, blobs: kycBlobs });
 const limits = createOrderLimitsRepo(pool);
 // Set once the app (and its logger) exists.
 let logScheduleError: (err: unknown, orderId: string) => void = () => {};

@@ -30,7 +30,8 @@
 		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
 		Cross-Origin-Opener-Policy "same-origin"
 		# 'unsafe-inline' for styles only: the chart library and progress bars set inline style attributes.
-		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' wss://{$TRADEROOM_DOMAIN}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
+		# blob: in img-src: the KYC page previews the re-encoded photo before upload.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' wss://{$TRADEROOM_DOMAIN}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
 		-Server
 	}
 
