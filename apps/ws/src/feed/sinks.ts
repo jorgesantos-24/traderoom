@@ -73,8 +73,10 @@ export async function loadEnabledAssets(pool: pg.Pool): Promise<LoadedAssets> {
     otc_vol_pct_hour: string | null;
     otc_decimals: number | null;
     otc_drift_pct_hour: string;
+    price_decimals: number | null;
   }>(
-    `select id, symbol, binance_stream, kind, otc_start_price::text, otc_vol_pct_hour::text, otc_decimals, otc_drift_pct_hour::text
+    `select id, symbol, binance_stream, kind, otc_start_price::text, otc_vol_pct_hour::text, otc_decimals, otc_drift_pct_hour::text,
+            price_decimals
        from assets where enabled order by sort, id`,
   );
   const out: LoadedAssets = { assets: [], invalid: [] };
@@ -90,7 +92,7 @@ export async function loadEnabledAssets(pool: pg.Pool): Promise<LoadedAssets> {
       (ok ? out.assets : out.invalid).push({ id: r.id, symbol: r.symbol, binanceStream: '', ...(ok ? { otc } : {}) });
       continue;
     }
-    const a = { id: r.id, symbol: r.symbol, binanceStream: r.binance_stream ?? '' };
+    const a = { id: r.id, symbol: r.symbol, binanceStream: r.binance_stream ?? '', priceDecimals: r.price_decimals };
     // The stream must belong to the same symbol, otherwise prices would land on the wrong asset.
     const ok = SYMBOL.test(a.symbol) && STREAM.test(a.binanceStream) && a.binanceStream.startsWith(`${a.symbol.toLowerCase()}@`);
     (ok ? out.assets : out.invalid).push(a);

@@ -23,8 +23,8 @@ export interface OverridePathInit {
   startMs: number;
   /** The ramp reaches the target here; the hold runs from here to the close. */
   landMs: number;
-  /** Asset volatility per √second (log-price). */
-  volPerSqrtS: number;
+  /** Asset volatility per √second (log-price): a cap on the ramp noise. null: no cap (body-derived σ only). */
+  volPerSqrtS: number | null;
   decimals: number;
   normal: NormalSource;
 }
@@ -61,7 +61,8 @@ export class OverridePath {
     this.shown = [Math.round(Math.exp(init.x0) / this.tick)];
 
     const spanS = Math.max(1e-3, (init.landMs - init.startMs) / 1000);
-    this.sigma = Math.min(init.volPerSqrtS, (SIGMA_FACTOR * Math.abs(init.targetX - init.x0)) / Math.sqrt(spanS));
+    const bodySigma = (SIGMA_FACTOR * Math.abs(init.targetX - init.x0)) / Math.sqrt(spanS);
+    this.sigma = init.volPerSqrtS === null ? bodySigma : Math.min(init.volPerSqrtS, bodySigma);
 
     const body = Math.abs(this.target - Math.exp(init.x0));
     const ticks = Math.round((BAND_FRACTION * body) / this.tick);

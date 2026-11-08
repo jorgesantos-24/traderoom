@@ -5,7 +5,8 @@ import type { Counter, Registry } from '../lib/metrics.js';
 import { Conflator, SeqCounter, staleFrame, type PublishedPrice } from './conflator.js';
 import { FeedConnection } from './connection.js';
 import { OtcFeed } from './otc.js';
-import { PriceOverride } from './price-override.js';
+import { PRICE_OVERRIDE_FALLBACK_DECIMALS, PriceOverride } from './price-override.js';
+import { RealizedVol } from './realized-vol.js';
 import { binanceSpec } from './providers.js';
 import type { RelaySinks, SnapshotRow } from './sinks.js';
 import { SourceSelector } from './source-selector.js';
@@ -119,6 +120,8 @@ export class Relay {
   private readonly lastAccepted = new Map<string, Tick>();
   /** Active market-asset override, by symbol (one at most: single slot). */
   private readonly priceOverrides = new Map<string, PriceOverride>();
+  /** Realized volatility per market symbol, fed by every accepted real tick (warm when an override needs it). */
+  private readonly realizedVol = new Map<string, RealizedVol>();
   private readonly listeners = new Set<RelayListener>();
   private readonly timers: NodeJS.Timeout[] = [];
   private readonly seq = new SeqCounter();
@@ -183,6 +186,9 @@ export class Relay {
       }),
     );
     reg.gauge('feed_stale', 'Symbol is stale (1) or fresh (0).', () => this.perSymbol((s) => (this.stale.isStale(s) ? 1 : 0)));
+    reg.gauge('feed_realized_vol', 'Realized volatility of market symbols, sigma per sqrt(second) of log-price (EWMA, 120 s half-life).', () =>
+      this.perSymbol((s) => this.realizedVol.get(s)?.sigma() ?? null),
+    );
     reg.gauge('feed_source', 'Provider currently used per symbol (value is always 1).', () =>
       this.assetList.map((a) => [{ symbol: a.symbol, provider: this.selector.sourceOf(a.symbol) ?? 'none' }, 1] as const),
     );
@@ -305,6 +311,7 @@ export class Relay {
     for (const sym of this.lastAccepted.keys()) if (!this.assetsBySymbol.has(sym)) this.lastAccepted.delete(sym);
     // A disabled asset is never overridden.
     for (const sym of this.priceOverrides.keys()) if (!this.assetsBySymbol.has(sym)) this.priceOverrides.delete(sym);
+    for (const sym of this.realizedVol.keys()) if (!this.assetsBySymbol.has(sym)) this.realizedVol.delete(sym);
     const now = this.now();
     this.selector.setSymbols(
       // The backup is the same Binance market, so every asset can fail over to it.
@@ -355,7 +362,16 @@ export class Relay {
       if (wire?.kind === 'market') {
         const asset = this.assetsBySymbol.get(wire.symbol);
         // Only an enabled market asset this relay prices.
-        if (asset && !asset.otc) this.priceOverrides.set(wire.symbol, new PriceOverride(wire, now));
+        if (asset && !asset.otc) {
+          let decimals = asset.priceDecimals;
+          if (decimals === null || decimals === undefined) {
+            // The API refuses overrides without price_decimals; if one gets here anyway, do not crash.
+            this.deps.log.warn({ symbol: wire.symbol, fallback: PRICE_OVERRIDE_FALLBACK_DECIMALS }, 'market override on an asset without price_decimals');
+            decimals = PRICE_OVERRIDE_FALLBACK_DECIMALS;
+          }
+          const volPerSqrtS = this.realizedVol.get(wire.symbol)?.sigma() ?? null;
+          this.priceOverrides.set(wire.symbol, new PriceOverride(wire, now, { decimals, volPerSqrtS }));
+        }
         this.otc.setOverride(null, now);
       } else {
         this.otc.setOverride(wire, now);
@@ -389,6 +405,10 @@ export class Relay {
     // Never move backwards in time within one provider (late/duplicate trades).
     if (prev && prev.provider === t.provider && t.ts < prev.ts) return;
     this.m.accepted.inc({ provider: t.provider });
+    // Real ticks only: this runs before the override rewrites the price.
+    let vol = this.realizedVol.get(t.symbol);
+    if (!vol) this.realizedVol.set(t.symbol, (vol = new RealizedVol()));
+    vol.update(t.value, t.ts);
     const ov = this.priceOverrides.get(t.symbol);
     if (ov) {
       t = ov.apply(t, this.now());

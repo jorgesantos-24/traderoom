@@ -1,8 +1,18 @@
 import { OTC_OVERRIDE_LANDING_MS, OTC_OVERRIDE_RELEASE_MS, type OtcOverrideWire } from '@traderoom/shared';
+import { cryptoNormal, type NormalSource } from './otc.js';
+import { OverridePath } from './override-path.js';
 import type { Tick } from './types.js';
 
-/** Ramp noise, relative to the price (1 bp), fading to zero on arrival. */
-const JITTER_REL = 0.0001;
+/** Grid when the asset has no price_decimals (the API refuses those overrides; this is a safety net). */
+export const PRICE_OVERRIDE_FALLBACK_DECIMALS = 8;
+
+export interface PriceOverrideOptions {
+  /** assets.price_decimals: the grid the target was rounded to and the chart draws. */
+  decimals?: number;
+  /** Realized volatility per √s (log-price), the ramp noise cap; null/absent: no cap. */
+  volPerSqrtS?: number | null;
+  normal?: NormalSource;
+}
 
 /** Decimal places of a provider price string ("76012.34000000" → 8). */
 function decimalsOf(price: string): number {
@@ -14,11 +24,13 @@ function decimalsOf(price: string): number {
  * Override of one market asset's price for one 1m candle close. Same phases as the OTC walk, but it
  * rewrites real ticks instead of generating them:
  * - before rampStartMs: the real price, untouched;
- * - ramp: deterministic easeOutCubic from the real price at the first ramp tick to the target;
- * - from holdStart - LANDING to closeMs: exactly the target;
+ * - ramp: Brownian bridge (OverridePath) from the real price at the first ramp tick to the target,
+ *   reaching it at holdStart - LANDING;
+ * - from there to closeMs: a wobble around the target inside the hold band, on the price_decimals grid;
  * - release: eases back to the real price (τ = release/3), then it is dropped.
+ * `jitter: false` keeps the legacy path: deterministic easeOutCubic ramp and exactly the target in the hold.
  * Only price and value change; ts and recvMs stay the real tick's, so staleness checks still see
- * the real feed.
+ * the real feed. The text keeps the provider's format (8 decimals): only the value sits on the grid.
  */
 export class PriceOverride {
   readonly id: string | undefined;
@@ -28,8 +40,14 @@ export class PriceOverride {
   private readonly closeMs: number;
   private readonly releaseEndMs: number;
   private readonly jitter: boolean;
-  /** Real price at the first ramp tick. */
+  private readonly decimals: number;
+  private readonly volPerSqrtS: number | null;
+  private readonly normal: NormalSource;
+  private readonly targetX: number;
+  /** Real price at the first ramp tick (legacy path). */
   private x0: number | null = null;
+  /** Ramp + hold (jitter path), born at the first ramp tick. */
+  private path: OverridePath | null = null;
   /** Last price shown, for the release easing. */
   private shown: number | null = null;
   private lastMs: number;
@@ -38,7 +56,7 @@ export class PriceOverride {
   constructor(
     wire: OtcOverrideWire,
     nowMs: number,
-    private readonly random: () => number = Math.random,
+    opts: PriceOverrideOptions = {},
   ) {
     this.id = wire.id;
     this.target = Number(wire.targetPrice);
@@ -49,6 +67,10 @@ export class PriceOverride {
     this.closeMs = wire.closeMs;
     this.releaseEndMs = wire.closeMs + wire.releaseMs;
     this.jitter = wire.jitter ?? true;
+    this.decimals = opts.decimals ?? PRICE_OVERRIDE_FALLBACK_DECIMALS;
+    this.volPerSqrtS = opts.volPerSqrtS ?? null;
+    this.normal = opts.normal ?? cryptoNormal();
+    this.targetX = Math.log(this.target);
     this.lastMs = nowMs;
     this.finished = !(this.target > 0) || nowMs >= this.releaseEndMs;
   }
@@ -76,6 +98,19 @@ export class PriceOverride {
       const from = this.shown;
       const k = 1 - Math.exp(-dtS / (OTC_OVERRIDE_RELEASE_MS / 1000 / 3));
       price = from + (real - from) * k;
+    } else if (this.jitter) {
+      // x0 is the real price at this, the first ramp tick, which is shown as is. startMs is kept
+      // before landMs so a first tick arriving at or after it lands on the target.
+      this.path ??= new OverridePath({
+        x0: Math.log(real),
+        targetX: this.targetX,
+        startMs: Math.min(nowMs, this.landMs - 1),
+        landMs: this.landMs,
+        volPerSqrtS: this.volPerSqrtS,
+        decimals: this.decimals,
+        normal: this.normal,
+      });
+      price = Number(Math.exp(this.path.step(nowMs)).toFixed(this.decimals));
     } else if (nowMs >= this.landMs) {
       price = this.target;
     } else {
@@ -84,10 +119,9 @@ export class PriceOverride {
       const p = Math.min(1, Math.max(0, (nowMs - this.rampStartMs) / span));
       const eased = 1 - (1 - p) ** 3;
       price = this.x0 + (this.target - this.x0) * eased;
-      if (this.jitter) price += (this.random() * 2 - 1) * JITTER_REL * real * (1 - p);
     }
     this.shown = price;
-    const text = price.toFixed(decimalsOf(tick.price));
+    const text = price.toFixed(Math.max(decimalsOf(tick.price), this.jitter ? this.decimals : 0));
     return { ...tick, price: text, value: Number(text), realPrice: tick.price, ov: this.id };
   }
 }

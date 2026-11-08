@@ -4,7 +4,7 @@ import type { PublishedPrice } from '../src/feed/conflator.js';
 import { RELAY_DEFAULTS, Relay, type RelayOptions } from '../src/feed/relay.js';
 import type { RelaySinks, SnapshotRow } from '../src/feed/sinks.js';
 import type { FeedAsset, Tick } from '../src/feed/types.js';
-import { binanceQuote, FakeUpstream, pump, silentLog } from './fake-upstream.js';
+import { binanceQuote, binanceTrade, FakeUpstream, pump, silentLog } from './fake-upstream.js';
 
 const ASSETS: FeedAsset[] = [
   { id: 1, symbol: 'BTCUSDT', binanceStream: 'btcusdt@bookTicker' },
@@ -153,6 +153,23 @@ describe('Relay', () => {
     expect(text).toContain('feed_source_switches_total{symbol="BTCUSDT",to="binance_backup"} 1');
     expect(text).toContain('feed_source_switches_total{symbol="BTCUSDT",to="binance"} 1');
     expect(text).toMatch(/feed_reconnects_total\{provider="binance"\} [1-9]/);
+  });
+
+  it('exposes feed_realized_vol per market symbol once it has enough history', async () => {
+    const metrics = new Registry();
+    await startRelay(new FakeSinks(), metrics);
+    const vol = () => metrics.render().match(/feed_realized_vol\{symbol="BTCUSDT"\} (\S+)/)?.[1];
+    // Exchange times 1.5 s apart: 40 trades cover 60 s. Too few at first: no value (no cap) yet.
+    const t0 = Date.now() - 60_000;
+    const price = (i: number) => (76_000 + (i % 2 ? 3 : -3)).toFixed(2);
+    for (let i = 0; i < 10; i++) binance.send(binanceTrade('BTCUSDT', price(i), t0 + i * 1500));
+    await vi.waitFor(() => expect(relay?.latest('BTCUSDT')).toBeDefined());
+    expect(vol()).toBeUndefined();
+    for (let i = 10; i < 40; i++) binance.send(binanceTrade('BTCUSDT', price(i), t0 + i * 1500));
+    await vi.waitFor(() => expect(vol()).toBeDefined());
+    // ±3 on 76 000 every 1.5 s: |r| ≈ 7.9e-5, σ ≈ 7.9e-5 / √1.5 ≈ 6.4e-5 per √s, reported ×1.3 ≈ 8.3e-5.
+    expect(Number(vol())).toBeGreaterThan(7e-5);
+    expect(Number(vol())).toBeLessThan(9.5e-5);
   });
 
   it('snapshots only fresh symbols, with the exact price string', async () => {

@@ -31,6 +31,8 @@ export interface FeedAsset {
   binanceStream: string;
   /** Set for OTC assets: priced by our generator, not by Binance. */
   otc?: OtcParams;
+  /** Market assets: assets.price_decimals, the grid of override targets and of the chart. Null if unset. */
+  priceDecimals?: number | null;
 }
 
 export type ParseResult =
