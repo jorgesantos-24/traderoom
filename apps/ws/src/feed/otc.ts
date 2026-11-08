@@ -1,5 +1,6 @@
 import { randomFillSync } from 'node:crypto';
 import { OTC_OVERRIDE_LANDING_MS, OTC_OVERRIDE_RELEASE_MS, type OtcOverrideWire } from '@traderoom/shared';
+import { OverridePath } from './override-path.js';
 import type { Tick } from './types.js';
 
 /**
@@ -82,13 +83,15 @@ const TREND_SCALE = 0.02;
 
 /** One intervention, bound to a single candle: force its close, then hand the price back. */
 interface ActiveOverride {
+  /** otc_overrides.id, stamped on every tick whose price it changes. */
+  id: string | undefined;
   /** Target in log-price; the exact close. */
   targetX: number;
   /** Where the price was when the admin took over (informational: the release follows the shadow). */
   basePrice: number;
   /** Ramp starts here (already clamped by the API so it ends at holdStart). */
   rampStartMs: number;
-  /** From here the target is held flat, so snapshots land on it before expiry. */
+  /** From here the price stays near the target (in the hold band; exactly on it without jitter) until the close. */
   holdStartMs: number;
   closeMs: number;
   /** Override is dropped here, after the candle is closed and the price is back. */
@@ -101,6 +104,10 @@ interface ActiveOverride {
    * the whole candle.
    */
   shadow: OtcWalk | null;
+  /** false: legacy deterministic easeOutCubic ramp and a flat hold on the exact target. */
+  jitter: boolean;
+  /** Ramp + hold path (jitter only). Born with the shadow. */
+  path: OverridePath | null;
 }
 
 /**
@@ -137,6 +144,16 @@ export class OtcWalk {
     return this.ov !== null;
   }
 
+  /** Id of the override while it is changing the price (from the ramp start); null otherwise. */
+  get overrideId(): string | null {
+    return this.ov?.shadow ? (this.ov.id ?? null) : null;
+  }
+
+  /** The price without the override: the shadow's while one is running, else the current price. */
+  get naturalPrice(): number {
+    return this.ov?.shadow ? this.ov.shadow.price : this.price;
+  }
+
   /**
    * Installs (or replaces) the intervention. Called on every tick with the same payload from Redis,
    * so it must be idempotent: same candle and same target must not restart the ramp or reset `x0`.
@@ -156,6 +173,7 @@ export class OtcWalk {
     if (this.ov && this.ov.closeMs === o.closeMs && this.ov.targetX === targetX) {
       // Same intervention: only pull the ramp earlier if the API decided so.
       this.ov.rampStartMs = Math.min(this.ov.rampStartMs, o.rampStartMs);
+      this.ov.id ??= o.id;
       return;
     }
     // A finished one arriving again (the key outlives the release by its TTL margin, or the ws
@@ -167,6 +185,7 @@ export class OtcWalk {
     // A new intervention (first one, new target or another candle): nothing is captured yet, the
     // ramp start does that, so a target set long before the ramp does not drag an old price in.
     this.ov = {
+      id: o.id,
       targetX,
       basePrice: base > 0 ? base : this.price,
       // Never in the past: read late (poll lag, restart, re-target) the ramp would start half done and jump.
@@ -176,6 +195,8 @@ export class OtcWalk {
       releaseEndMs: o.closeMs + o.releaseMs,
       x0: null,
       shadow: null,
+      jitter: o.jitter ?? true,
+      path: null,
     };
     // Re-targeting mid-ramp: the new ramp starts where the price is now, not from the old anchor.
     if (nowMs >= this.ov.rampStartMs) this.ov.x0 = this.x;
@@ -240,9 +261,24 @@ export class OtcWalk {
       }
       ov.shadow.step(dtS, atMs);
 
-      // Hold: exact target. This is the price the expiry snapshots pick up. It lands a little before
-      // holdStart, so a snapshot early in the hold never reads the last ramp tick.
       const landMs = Math.max(ov.rampStartMs, ov.holdStartMs - OTC_OVERRIDE_LANDING_MS);
+      if (ov.jitter) {
+        // Brownian bridge to the target by landMs, then a small wobble around it until the close.
+        ov.path ??= new OverridePath({
+          x0: ov.x0 ?? this.x,
+          targetX: ov.targetX,
+          startMs: ov.rampStartMs,
+          landMs,
+          volPerSqrtS: this.sigma(),
+          decimals: this.params.decimals,
+          normal: this.normal,
+        });
+        this.x = ov.path.step(atMs);
+        return this.price;
+      }
+
+      // Legacy hold: exact target. This is the price the expiry snapshots pick up. It lands a little before
+      // holdStart, so a snapshot early in the hold never reads the last ramp tick.
       if (atMs >= landMs) {
         this.x = ov.targetX;
         return this.price;
@@ -372,7 +408,14 @@ export class OtcFeed {
       const p = s.walk.step((now - s.lastMs) / 1000, now);
       s.lastMs = now;
       const price = s.walk.format(p);
-      out.push({ symbol, price, value: Number(price), ts: now, recvMs: now, provider: 'otc' });
+      const tick: Tick = { symbol, price, value: Number(price), ts: now, recvMs: now, provider: 'otc' };
+      // While an override changes the price: mark it, and keep the natural (shadow) price for settlement.
+      const ov = s.walk.overrideId;
+      if (ov) {
+        tick.ov = ov;
+        tick.realPrice = s.walk.format(s.walk.naturalPrice);
+      }
+      out.push(tick);
     }
     return out;
   }

@@ -263,3 +263,88 @@ describe('GET /api/candles', () => {
     expect(res.json()).toEqual({ error: { code: 'unknown_asset', message: 'Ativo não encontrado.' } });
   });
 });
+
+describe('snapshot candles (platform price)', () => {
+  // What price_snapshots hold for each asset: the platform's price, override included.
+  const snap = (base: number): Candle[] => [
+    { t: T0, o: base, h: base + 3, l: base - 1, c: base + 2, v: 0 },
+    { t: T0 + 60_000, o: base + 2, h: base + 5, l: base + 2, c: base + 4, v: 0 },
+  ];
+
+  function snapSetup() {
+    const klines: string[] = [];
+    const asked: string[] = [];
+    const svc = createCandleService({
+      cache: memoryCache(() => T0),
+      fetchKlines: async (symbol, interval, limit) => {
+        klines.push(`${symbol}:${interval}:${limit}`);
+        return candles(1000);
+      },
+      assets: { enabledSymbols: async () => new Set(['BTCUSDT', 'ZZOTC']) },
+      otc: {
+        has: async (symbol) => symbol === 'ZZOTC',
+        candles: async (symbol, interval) => {
+          asked.push(`otc:${symbol}:${interval}`);
+          return symbol === 'ZZOTC' ? snap(1) : [];
+        },
+        fromSnapshots: async (symbol, interval) => {
+          asked.push(`snap:${symbol}:${interval}`);
+          return snap(100);
+        },
+      },
+      log,
+      now: () => T0,
+    });
+    return { svc, klines, asked };
+  }
+
+  it.each(['1m', '5m', '15m'] as const)('market %s comes from snapshots without calling Binance', async (interval) => {
+    const s = snapSetup();
+    expect(await s.svc.get('BTCUSDT', interval, 500)).toEqual(snap(100));
+    expect(s.asked).toEqual([`snap:BTCUSDT:${interval}`]);
+    expect(s.klines).toEqual([]);
+  });
+
+  it.each(['30m', '1h', '4h', '1d'] as const)('market %s still comes from Binance', async (interval) => {
+    const s = snapSetup();
+    expect(await s.svc.get('BTCUSDT', interval, 5)).toHaveLength(5);
+    expect(s.klines).toEqual([`BTCUSDT:${interval}:1000`]);
+    expect(s.asked).toEqual([]);
+  });
+
+  it.each(['1m', '1h', '1d'] as const)('OTC %s is unchanged: its own source, never Binance', async (interval) => {
+    const s = snapSetup();
+    expect(await s.svc.get('ZZOTC', interval, 500)).toEqual(snap(1));
+    expect(s.asked).toEqual([`otc:ZZOTC:${interval}`]);
+    expect(s.klines).toEqual([]);
+  });
+
+  it('trims snapshot candles to the limit', async () => {
+    const s = snapSetup();
+    expect(await s.svc.get('BTCUSDT', '1m', 1)).toEqual(snap(100).slice(-1));
+  });
+
+  it('the warmer only fetches the Binance intervals of market assets', async () => {
+    const s = snapSetup();
+    await s.svc.warmOnce(['1m', '5m', '15m', '1h']);
+    expect(s.klines).toEqual(['BTCUSDT:1h:1000']);
+  });
+
+  it('GET /api/candles of a market asset in 1m returns the snapshot OHLC; 1h still calls Binance', async () => {
+    const s = snapSetup();
+    const app = await testApp({ candles: s.svc });
+    try {
+      const headers = { cookie: `sid=${FAKE_SID}` };
+      const res = await app.inject({ method: 'GET', url: '/api/candles?symbol=BTCUSDT&interval=1m', headers });
+      expect(res.statusCode).toBe(200);
+      expect(res.json<CandlesResponse>().candles).toEqual(snap(100));
+      expect(s.klines).toEqual([]);
+
+      const hour = await app.inject({ method: 'GET', url: '/api/candles?symbol=BTCUSDT&interval=1h', headers });
+      expect(hour.statusCode).toBe(200);
+      expect(s.klines).toEqual(['BTCUSDT:1h:1000']);
+    } finally {
+      await app.close();
+    }
+  });
+});

@@ -27,6 +27,7 @@ const ORDER: OrderView = {
   opensAt: '2026-11-06T15:00:00.000000Z',
   expiresAt: '2026-11-06T15:01:00.000000Z',
   settledAt: null,
+  overrideId: null,
 };
 
 let app: FastifyInstance | undefined;

@@ -17,6 +17,8 @@ export interface Quote {
   /** Price time from the feed, epoch ms (0 when unknown). */
   ts: number;
   stale: boolean;
+  /** Set while the platform sets this price (price override): the override id. */
+  ov?: string;
 }
 
 /** The subset of the browser WebSocket the feed uses, so tests can inject a fake. */
@@ -250,7 +252,7 @@ export class PriceFeed {
   private applyPrice(item: PriceItem): void {
     if (!this.refs.has(item.s)) return;
     this.receivedAt.set(item.s, this.o.now());
-    this.setQuote(item.s, { price: item.p, ts: item.ts, stale: false });
+    this.setQuote(item.s, item.ov ? { price: item.p, ts: item.ts, stale: false, ov: item.ov } : { price: item.p, ts: item.ts, stale: false });
   }
 
   private afterClose(code: number): void {

@@ -6,6 +6,8 @@ import type { FeedAsset, Tick } from './types.js';
 export interface SnapshotRow {
   assetId: number;
   price: string;
+  /** Real provider price, only while an override changes `price`. */
+  realPrice?: string | null;
   capturedAt: Date;
 }
 
@@ -20,10 +22,17 @@ export interface RelaySinks {
   lastPrice?(assetId: number): Promise<number | null>;
   /** Raw `otc:override` value. Optional: without it no override is ever applied. */
   readOverride?(): Promise<string | null>;
+  /** Scheduled override: stores the target resolved at its candle's open. Optional. */
+  saveOverrideTarget?(id: string, price: string): Promise<void>;
+  /** Scheduled override: the stored target_price (null until frozen). Optional. */
+  loadOverrideTarget?(id: string): Promise<string | null>;
 }
 
 export function toPriceRecord(t: Tick): PriceRecord {
-  return { p: t.price, ts: t.ts, rt: t.recvMs, src: t.provider };
+  const rec: PriceRecord = { p: t.price, ts: t.ts, rt: t.recvMs, src: t.provider };
+  if (t.ov) rec.ov = t.ov;
+  if (t.ov && t.realPrice) rec.realPrice = t.realPrice;
+  return rec;
 }
 
 export async function writePricesToRedis(redis: Redis, ticks: readonly Tick[]): Promise<void> {
@@ -43,9 +52,9 @@ export async function writePricesToRedis(redis: Redis, ticks: readonly Tick[]): 
 export async function insertSnapshots(pool: pg.Pool, rows: readonly SnapshotRow[]): Promise<void> {
   if (rows.length === 0) return;
   await pool.query(
-    `insert into price_snapshots (asset_id, price, captured_at)
-     select * from unnest($1::int[], $2::numeric[], $3::timestamptz[])`,
-    [rows.map((r) => r.assetId), rows.map((r) => r.price), rows.map((r) => r.capturedAt)],
+    `insert into price_snapshots (asset_id, price, real_price, captured_at)
+     select * from unnest($1::int[], $2::numeric[], $3::numeric[], $4::timestamptz[])`,
+    [rows.map((r) => r.assetId), rows.map((r) => r.price), rows.map((r) => r.realPrice ?? null), rows.map((r) => r.capturedAt)],
   );
 }
 
@@ -68,8 +77,10 @@ export async function loadEnabledAssets(pool: pg.Pool): Promise<LoadedAssets> {
     otc_vol_pct_hour: string | null;
     otc_decimals: number | null;
     otc_drift_pct_hour: string;
+    price_decimals: number | null;
   }>(
-    `select id, symbol, binance_stream, kind, otc_start_price::text, otc_vol_pct_hour::text, otc_decimals, otc_drift_pct_hour::text
+    `select id, symbol, binance_stream, kind, otc_start_price::text, otc_vol_pct_hour::text, otc_decimals, otc_drift_pct_hour::text,
+            price_decimals
        from assets where enabled order by sort, id`,
   );
   const out: LoadedAssets = { assets: [], invalid: [] };
@@ -85,12 +96,22 @@ export async function loadEnabledAssets(pool: pg.Pool): Promise<LoadedAssets> {
       (ok ? out.assets : out.invalid).push({ id: r.id, symbol: r.symbol, binanceStream: '', ...(ok ? { otc } : {}) });
       continue;
     }
-    const a = { id: r.id, symbol: r.symbol, binanceStream: r.binance_stream ?? '' };
+    const a = { id: r.id, symbol: r.symbol, binanceStream: r.binance_stream ?? '', priceDecimals: r.price_decimals };
     // The stream must belong to the same symbol, otherwise prices would land on the wrong asset.
     const ok = SYMBOL.test(a.symbol) && STREAM.test(a.binanceStream) && a.binanceStream.startsWith(`${a.symbol.toLowerCase()}@`);
     (ok ? out.assets : out.invalid).push(a);
   }
   return out;
+}
+
+/** First write wins: a ws restarted mid-candle must not replace the target the candle was steered to. */
+export async function saveOverrideTarget(pool: pg.Pool, id: string, price: string): Promise<void> {
+  await pool.query('update otc_overrides set target_price = $2 where id = $1::bigint and target_price is null', [id, price]);
+}
+
+export async function loadOverrideTarget(pool: pg.Pool, id: string): Promise<string | null> {
+  const { rows } = await pool.query<{ p: string | null }>('select target_price::text as p from otc_overrides where id = $1::bigint', [id]);
+  return rows[0]?.p ?? null;
 }
 
 export async function lastPrice(pool: pg.Pool, assetId: number): Promise<number | null> {

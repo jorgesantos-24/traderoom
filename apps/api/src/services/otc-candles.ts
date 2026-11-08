@@ -12,10 +12,17 @@ const INTERVAL_SEC: Record<CandleInterval, number> = {
   '1d': 86_400,
 };
 
-/** Candles of OTC assets, built from our own per-second prices (there is no exchange to ask). */
+/** Candles built from our own per-second prices (price_snapshots). */
 export interface OtcCandleSource {
+  /** True for OTC assets (no exchange history; every interval comes from snapshots). */
   has(symbol: string): Promise<boolean>;
+  /** Candles of an OTC asset; [] for anything else. */
   candles(symbol: string, interval: CandleInterval, limit: number): Promise<Candle[]>;
+  /**
+   * Candles of any enabled asset (OTC or market) from price_snapshots, so the chart shows the platform's
+   * price, overrides included. Snapshots are kept 7 days, so long series come back short. [] if not enabled.
+   */
+  fromSnapshots(symbol: string, interval: CandleInterval, limit: number): Promise<Candle[]>;
 }
 
 export function createOtcCandleSource(
@@ -65,6 +72,24 @@ export function createOtcCandleSource(
     return rows.map((r) => ({ t: Number(r.t), o: Number(r.o), h: Number(r.h), l: Number(r.l), c: Number(r.c), v: 0 }));
   }
 
+  function cached(assetId: number, symbol: string, interval: CandleInterval, limit: number): Promise<Candle[]> {
+    const key = `${symbol}:${interval}:${limit}`;
+    const ttl = INTERVAL_SEC[interval] >= 3600 ? 30_000 : 3_000;
+    const hit = cache.get(key);
+    if (hit && now() - hit.at < ttl) return Promise.resolve(hit.candles);
+    let p = inFlight.get(key);
+    if (!p) {
+      p = load(assetId, interval, limit)
+        .then((candles) => {
+          cache.set(key, { at: now(), candles });
+          return candles;
+        })
+        .finally(() => inFlight.delete(key));
+      inFlight.set(key, p);
+    }
+    return p;
+  }
+
   return {
     async has(symbol) {
       return (await assets.enabled()).bySymbol.get(symbol)?.kind === 'otc';
@@ -72,21 +97,12 @@ export function createOtcCandleSource(
     async candles(symbol, interval, limit) {
       const asset = (await assets.enabled()).bySymbol.get(symbol);
       if (!asset || asset.kind !== 'otc') return [];
-      const key = `${symbol}:${interval}:${limit}`;
-      const ttl = INTERVAL_SEC[interval] >= 3600 ? 30_000 : 3_000;
-      const hit = cache.get(key);
-      if (hit && now() - hit.at < ttl) return hit.candles;
-      let p = inFlight.get(key);
-      if (!p) {
-        p = load(asset.id, interval, limit)
-          .then((candles) => {
-            cache.set(key, { at: now(), candles });
-            return candles;
-          })
-          .finally(() => inFlight.delete(key));
-        inFlight.set(key, p);
-      }
-      return p;
+      return cached(asset.id, symbol, interval, limit);
+    },
+    async fromSnapshots(symbol, interval, limit) {
+      const asset = (await assets.enabled()).bySymbol.get(symbol);
+      if (!asset) return [];
+      return cached(asset.id, symbol, interval, limit);
     },
   };
 }

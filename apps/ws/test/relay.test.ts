@@ -4,7 +4,7 @@ import type { PublishedPrice } from '../src/feed/conflator.js';
 import { RELAY_DEFAULTS, Relay, type RelayOptions } from '../src/feed/relay.js';
 import type { RelaySinks, SnapshotRow } from '../src/feed/sinks.js';
 import type { FeedAsset, Tick } from '../src/feed/types.js';
-import { binanceQuote, FakeUpstream, pump, silentLog } from './fake-upstream.js';
+import { binanceQuote, binanceTrade, FakeUpstream, pump, silentLog } from './fake-upstream.js';
 
 const ASSETS: FeedAsset[] = [
   { id: 1, symbol: 'BTCUSDT', binanceStream: 'btcusdt@bookTicker' },
@@ -155,6 +155,23 @@ describe('Relay', () => {
     expect(text).toMatch(/feed_reconnects_total\{provider="binance"\} [1-9]/);
   });
 
+  it('exposes feed_realized_vol per market symbol once it has enough history', async () => {
+    const metrics = new Registry();
+    await startRelay(new FakeSinks(), metrics);
+    const vol = () => metrics.render().match(/feed_realized_vol\{symbol="BTCUSDT"\} (\S+)/)?.[1];
+    // Exchange times 1.5 s apart: 40 trades cover 60 s. Too few at first: no value (no cap) yet.
+    const t0 = Date.now() - 60_000;
+    const price = (i: number) => (76_000 + (i % 2 ? 3 : -3)).toFixed(2);
+    for (let i = 0; i < 10; i++) binance.send(binanceTrade('BTCUSDT', price(i), t0 + i * 1500));
+    await vi.waitFor(() => expect(relay?.latest('BTCUSDT')).toBeDefined());
+    expect(vol()).toBeUndefined();
+    for (let i = 10; i < 40; i++) binance.send(binanceTrade('BTCUSDT', price(i), t0 + i * 1500));
+    await vi.waitFor(() => expect(vol()).toBeDefined());
+    // ±3 on 76 000 every 1.5 s: |r| ≈ 7.9e-5, σ ≈ 7.9e-5 / √1.5 ≈ 6.4e-5 per √s, reported ×1.3 ≈ 8.3e-5.
+    expect(Number(vol())).toBeGreaterThan(7e-5);
+    expect(Number(vol())).toBeLessThan(9.5e-5);
+  });
+
   it('snapshots only fresh symbols, with the exact price string', async () => {
     const sinks = new FakeSinks();
     await startRelay(sinks);
@@ -202,5 +219,103 @@ describe('Relay', () => {
     binance.send(binanceQuote('BTCUSDT', '100'));
     await vi.waitFor(() => expect(r.latest('BTCUSDT')).toBeDefined());
     expect(r.latest('XRPUSDT')).toBeUndefined();
+  });
+});
+
+describe('Relay, scheduled market override', () => {
+  it('derives the target from the last tick before the rollover and leaves the previous candle raw', async () => {
+    const OPEN = Math.floor(Date.now() / 60_000) * 60_000 + 120_000;
+    let clock = OPEN - 2000;
+    const saved: Array<[string, string]> = [];
+    const sinks = new FakeSinks();
+    sinks.assets = [{ id: 1, symbol: 'BTCUSDT', binanceStream: 'btcusdt@trade', priceDecimals: 2 }];
+    const wire = {
+      id: '42',
+      kind: 'market',
+      symbol: 'BTCUSDT',
+      basePrice: '76000.00',
+      closeMs: OPEN + 60_000,
+      rampStartMs: OPEN,
+      holdMs: 3000,
+      releaseMs: 2000,
+      schedule: { openMs: OPEN, direction: 'up', ticks: 20, maxOverridePct: 1 },
+    };
+    Object.assign(sinks, {
+      readOverride: async () => JSON.stringify(wire),
+      saveOverrideTarget: async (id: string, price: string) => void saved.push([id, price]),
+    });
+    // The clock jumps: keep failover and staleness out of the way.
+    relay = new Relay(
+      { ...FAST, failoverMs: 600_000, staleMs: 600_000, binanceUrl: binance.url, binanceBackupUrl: backup.url },
+      { sinks, log: silentLog, metrics: new Registry(), now: () => clock },
+    );
+    await relay.start();
+    await vi.waitFor(() => expect(binance.open).toBe(1));
+    const r = relay;
+    let ts = Date.now();
+    const send = async (p: string) => {
+      binance.send(binanceTrade('BTCUSDT', p, ++ts));
+      await vi.waitFor(() => expect(Number(r.latest('BTCUSDT')?.realPrice ?? r.latest('BTCUSDT')?.price)).toBe(Number(p)));
+      return r.latest('BTCUSDT')!;
+    };
+
+    // Previous minute: raw, no override stamp.
+    expect((await send('76000.00')).ov).toBeUndefined();
+    const last = await send('76000.50');
+    expect(last.ov).toBeUndefined();
+    expect(last.price).toBe('76000.50');
+
+    // First tick of the booked minute: steered from here on.
+    clock = OPEN + 100;
+    expect((await send('76003.00')).ov).toBe('42');
+    // Past half the ramp the target freezes and is saved: open (76 000.50) + 20 ticks.
+    clock = OPEN + 30_000;
+    await send('76003.10');
+    await vi.waitFor(() => expect(saved).toEqual([['42', '76000.70']]));
+  });
+
+  it('restarted inside the booked candle: no open from the previous minute, the persisted target is used', async () => {
+    const OPEN = Math.floor(Date.now() / 60_000) * 60_000 + 120_000;
+    let clock = OPEN + 20_000;
+    const saved: string[] = [];
+    const sinks = new FakeSinks();
+    sinks.assets = [{ id: 1, symbol: 'BTCUSDT', binanceStream: 'btcusdt@trade', priceDecimals: 2 }];
+    const wire = {
+      id: '43',
+      kind: 'market',
+      symbol: 'BTCUSDT',
+      basePrice: '76000.00',
+      closeMs: OPEN + 60_000,
+      rampStartMs: OPEN,
+      holdMs: 3000,
+      releaseMs: 2000,
+      schedule: { openMs: OPEN, direction: 'up', ticks: 20, maxOverridePct: 1 },
+    };
+    Object.assign(sinks, {
+      readOverride: async () => JSON.stringify(wire),
+      saveOverrideTarget: async (_id: string, price: string) => void saved.push(price),
+      loadOverrideTarget: async (id: string) => (id === '43' ? '76000.70' : null),
+    });
+    relay = new Relay(
+      { ...FAST, failoverMs: 600_000, staleMs: 600_000, binanceUrl: binance.url, binanceBackupUrl: backup.url },
+      { sinks, log: silentLog, metrics: new Registry(), now: () => clock },
+    );
+    await relay.start();
+    await vi.waitFor(() => expect(binance.open).toBe(1));
+    const r = relay;
+    let ts = Date.now();
+    const send = async (p: string) => {
+      binance.send(binanceTrade('BTCUSDT', p, ++ts));
+      await vi.waitFor(() => expect(Number(r.latest('BTCUSDT')?.realPrice ?? r.latest('BTCUSDT')?.price)).toBe(Number(p)));
+      return r.latest('BTCUSDT')!;
+    };
+    // First tick after the restart is 76 010: it would give 76 010.20 as the target.
+    expect((await send('76010.00')).ov).toBe('43');
+    clock = OPEN + 58_000;
+    await send('76010.01');
+    clock = OPEN + 60_000;
+    const atClose = await send('76010.02');
+    expect(Number(atClose.price)).toBe(76_000.7);
+    expect(saved).toEqual([]);
   });
 });

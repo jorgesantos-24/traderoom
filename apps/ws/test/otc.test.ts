@@ -7,6 +7,7 @@ import {
   type OtcOverrideWire,
 } from '@traderoom/shared';
 import { cryptoNormal, OtcFeed, OtcWalk, type OtcHistoryRow } from '../src/feed/otc.js';
+import { BAND_FRACTION } from '../src/feed/override-path.js';
 
 /** Repeatable normals for tests (xorshift + Box–Muller). */
 function seeded(seed = 42) {
@@ -240,7 +241,14 @@ describe('OtcWalk override', () => {
     return out;
   }
 
-  it('lands exactly on the target at closeMs and holds it for at least 3 ticks, up and down, any tick phase', () => {
+  /**
+   * With jitter the hold wobbles around the target within BAND_FRACTION of the body (target − ramp start).
+   * `drift` covers how far the ramp start may be from `from` when the test cannot see it.
+   */
+  const nearTarget = (p: string | number, target: string, from: number, drift = 0) =>
+    Math.abs(Number(p) - Number(target)) <= BAND_FRACTION * (Math.abs(Number(target) - from) + drift) + 0.01 + 1e-9;
+
+  it('jitter off: lands exactly on the target at closeMs and holds it for at least 3 ticks, up and down, any tick phase', () => {
     for (const [seed, target] of [
       [1, '76450.00'],
       [2, '75600.00'],
@@ -248,7 +256,7 @@ describe('OtcWalk override', () => {
     ] as const) {
       for (const offset of [0, 137, 250, 499]) {
         const w = new OtcWalk(BTC, 76_000, seeded(seed));
-        w.setOverride(wire(target), START);
+        w.setOverride(wire(target, { jitter: false }), START);
         const ticks = run(w, CLOSE + OTC_OVERRIDE_RELEASE_MS + 1000, offset, [CLOSE]);
         const atClose = ticks.find((x) => x.t === CLOSE);
         expect(atClose?.p).toBe(target);
@@ -266,10 +274,10 @@ describe('OtcWalk override', () => {
     }
   });
 
-  it('a snapshot anywhere in the hold sees the target even when the newest tick is 700 ms old', () => {
+  it('jitter off: a snapshot anywhere in the hold sees the target even when the newest tick is 700 ms old', () => {
     for (const offset of [0, 1, 137, 250, 499]) {
       const w = new OtcWalk(BTC, 76_000, seeded(21 + offset));
-      w.setOverride(wire('76321.09'), START);
+      w.setOverride(wire('76321.09', { jitter: false }), START);
       const ticks = run(w, CLOSE, offset, [CLOSE]);
       for (let at = CLOSE - OTC_OVERRIDE_HOLD_MS; at <= CLOSE; at += 50) {
         // Newest tick published by `at`: one OTC tick plus one 200 ms conflation window late.
@@ -279,13 +287,13 @@ describe('OtcWalk override', () => {
     }
   });
 
-  it('after close+release the price is back on the natural path (< 0.1%)', () => {
+  it('jitter off: after close+release the price is back on the natural path (< 0.1%)', () => {
     // Fixed normals: the natural path is deterministic, so a walk without override is the reference.
     const zero = () => 0;
     for (const target of ['77500.00', '74500.00']) {
       const ov = new OtcWalk(BTC, 76_000, zero);
       const ref = new OtcWalk(BTC, 76_000, zero);
-      ov.setOverride(wire(target), START);
+      ov.setOverride(wire(target, { jitter: false }), START);
       const end = CLOSE + OTC_OVERRIDE_RELEASE_MS + 5000;
       const a = run(ov, end);
       const b = run(ref, end);
@@ -354,15 +362,15 @@ describe('OtcWalk override', () => {
     }
   });
 
-  it('re-targeting mid-ramp resets x0 and the shadow to the current price', () => {
+  it('jitter off: re-targeting mid-ramp resets x0 and the shadow to the current price', () => {
     const zero = () => 0;
     const w = new OtcWalk(BTC, 76_000, zero);
-    w.setOverride(wire('77000.00'), START);
+    w.setOverride(wire('77000.00', { jitter: false }), START);
     const mid = CLOSE - OTC_OVERRIDE_HOLD_MS - 5000;
     const before = run(w, mid);
     const atRetarget = Number(before.at(-1)!.p);
     expect(atRetarget).toBeGreaterThan(76_300); // well into the first ramp
-    w.setOverride(wire('76500.00'), mid);
+    w.setOverride(wire('76500.00', { jitter: false }), mid);
     const step1 = w.step(TICK_MS / 1000, mid + TICK_MS);
     expect(step1).toBeLessThan(atRetarget); // heads to the new target, from here
     let t = mid + TICK_MS;
@@ -412,7 +420,7 @@ describe('OtcWalk override', () => {
     expect(Math.abs(next / p0 - 1)).toBeLessThan(0.002);
     w.setOverride(wire('75500.00'), mid + TICK_MS);
     const jump = w.step(TICK_MS / 1000, mid + 2 * TICK_MS);
-    // A fresh ramp from the current price: the first step is easeOut progress, not a leap to the target
+    // A fresh ramp from the current price: the first step is bridge progress, not a leap to the target
     // (ramping on the old clock covered ~90% of the way in one tick).
     expect(jump).toBeLessThan(next);
     expect(Math.abs(jump - next)).toBeLessThan(0.55 * Math.abs(75_500 - next));
@@ -421,7 +429,7 @@ describe('OtcWalk override', () => {
       t += TICK_MS;
       w.step(TICK_MS / 1000, t);
     }
-    expect(w.format(w.step(0.001, CLOSE))).toBe('75500.00');
+    expect(nearTarget(w.step(0.001, CLOSE), '75500.00', next)).toBe(true);
   });
 
   it('OtcFeed applies the override only to its symbol', async () => {
@@ -436,7 +444,41 @@ describe('OtcWalk override', () => {
     feed.setOverride(wire('76600.00'), START);
     let last: ReturnType<OtcFeed['tick']> = [];
     for (let t = START + TICK_MS; t <= CLOSE; t += TICK_MS) last = feed.tick(t);
-    expect(last.find((x) => x.symbol === 'BTCOTC')?.price).toBe('76600.00');
+    expect(nearTarget(last.find((x) => x.symbol === 'BTCOTC')!.price, '76600.00', 76_000, 300)).toBe(true);
     expect(last.find((x) => x.symbol === 'ETHOTC')?.price).not.toBe('76600.00');
+  });
+
+  it('OtcFeed marks ticks with ov and the natural price only while the override changes the price', async () => {
+    const feed = new OtcFeed({ lastPrice: async () => 76_000, writeHistory: async () => {}, normal: seeded(5), onError: () => {} });
+    await feed.sync([{ id: 1, symbol: 'BTCOTC', otc: BTC }], START);
+    const w = wire('76600.00', { id: '9' });
+    const releaseEnd = CLOSE + OTC_OVERRIDE_RELEASE_MS;
+    feed.setOverride(w, START);
+    let marked = 0;
+    for (let t = START + TICK_MS; t <= releaseEnd + 3000; t += TICK_MS) {
+      const tick = feed.tick(t).find((x) => x.symbol === 'BTCOTC');
+      if (!tick) throw new Error('no tick');
+      if (t < w.rampStartMs || t >= releaseEnd) {
+        expect(tick.ov).toBeUndefined();
+        expect(tick.realPrice).toBeUndefined();
+        continue;
+      }
+      marked++;
+      expect(tick.ov).toBe('9');
+      expect(tick.realPrice).toMatch(/^\d+\.\d{2}$/);
+      // In the hold the shown price is near the target; the natural path is elsewhere.
+      if (t >= CLOSE - OTC_OVERRIDE_HOLD_MS && t <= CLOSE) {
+        expect(nearTarget(tick.price, '76600.00', 76_000, 300)).toBe(true);
+        expect(tick.realPrice).not.toBe('76600.00');
+      }
+    }
+    expect(marked).toBeGreaterThan(10);
+
+    // A wire without an id (written before ids existed) changes the price but cannot mark it.
+    const legacy = new OtcWalk(BTC, 76_000, seeded(6));
+    legacy.setOverride(wire('76600.00'), START);
+    legacy.step(TICK_MS / 1000, w.rampStartMs);
+    expect(legacy.overrideId).toBeNull();
+    expect(legacy.naturalPrice).not.toBe(legacy.price);
   });
 });

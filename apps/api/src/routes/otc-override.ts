@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { OtcOverrideInput, type Counter, type Registry } from '@traderoom/shared';
+import { z } from 'zod';
+import { OtcOverrideInput, SymbolSchema, type Counter, type Registry } from '@traderoom/shared';
 import { authOf } from '../plugins/security.js';
 import type { OtcOverrideService } from '../services/otc-override.js';
 
@@ -21,6 +22,13 @@ export function otcOverrideRoutes(app: FastifyInstance, deps: { otcOverride: Otc
       'admin otc override',
     );
     return reply.header('cache-control', noStore).send({ override });
+  });
+
+  // Any signed-in client: shown as a badge while the platform sets this asset's price.
+  const PublicQuery = z.object({ symbol: SymbolSchema });
+  app.get('/api/market/override', { preHandler: app.requireAuth }, async (req, reply) => {
+    const { symbol } = PublicQuery.parse(req.query);
+    return reply.header('cache-control', noStore).send(await deps.otcOverride.publicState(symbol));
   });
 
   app.delete('/api/admin/otc-override', guard, async (req, reply) => {

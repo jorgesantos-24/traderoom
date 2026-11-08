@@ -1,7 +1,7 @@
 import { RedisKeys } from '@traderoom/shared';
 import { loadConfig } from './config.js';
 import { RELAY_DEFAULTS, Relay } from './feed/relay.js';
-import { insertSnapshots, lastPrice, loadEnabledAssets, writePricesToRedis } from './feed/sinks.js';
+import { insertSnapshots, lastPrice, loadEnabledAssets, loadOverrideTarget, saveOverrideTarget, writePricesToRedis } from './feed/sinks.js';
 import { GATEWAY_DEFAULTS, Gateway } from './gateway/gateway.js';
 import { createSessionStore } from './gateway/session.js';
 import { createHttpServer } from './http.js';
@@ -36,6 +36,8 @@ const relay = new Relay(
       writeSnapshots: (rows) => insertSnapshots(pool, rows),
       lastPrice: (id) => lastPrice(pool, id),
       readOverride: () => redis.get(RedisKeys.otcOverride),
+      saveOverrideTarget: (id, price) => saveOverrideTarget(pool, id, price),
+      loadOverrideTarget: (id) => loadOverrideTarget(pool, id),
       loadAssets: async () => {
         const { assets, invalid } = await loadEnabledAssets(pool);
         if (invalid.length > 0) log.error({ invalid }, 'skipping assets with malformed symbol, binance_stream or OTC settings');

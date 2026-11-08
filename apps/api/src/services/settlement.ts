@@ -37,9 +37,12 @@ export async function settleOrder(pool: pg.Pool, orderId: string, nowMs: number)
       payout_pct: number;
       open_price: string;
       status: OrderStatus;
+      opens_at: Date;
       expires_at: Date;
+      override_id: string | null;
     }>(
-      `select user_id, account, asset_id, direction, stake_cents, payout_pct, open_price::text as open_price, status, expires_at
+      `select user_id, account, asset_id, direction, stake_cents, payout_pct, open_price::text as open_price, status,
+              opens_at, expires_at, override_id::text as override_id
          from orders where id = $1 for update`,
       [orderId],
     );
@@ -57,9 +60,12 @@ export async function settleOrder(pool: pg.Pool, orderId: string, nowMs: number)
       return { kind: 'not_due' };
     }
 
-    // Latest snapshot at or before expiry, no older than the window.
+    // Latest snapshot at or before expiry, no older than the window. An order opened on a natural
+    // price settles on the real market price even if an override was showing another one at expiry;
+    // only an order opened on the override's price settles on the shown price.
+    const closeCol = o.override_id === null ? 'coalesce(real_price, price)' : 'price';
     const snap = await client.query<{ price: string }>(
-      `select price::text as price from price_snapshots
+      `select ${closeCol}::text as price from price_snapshots
         where asset_id = $1 and captured_at <= $2 and captured_at >= $2 - make_interval(secs => $3)
         order by captured_at desc limit 1`,
       [o.asset_id, o.expires_at, CLOSE_PRICE_WINDOW_MS / 1000],

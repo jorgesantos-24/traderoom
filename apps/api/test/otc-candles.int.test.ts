@@ -12,15 +12,25 @@ const envFile = fileURLToPath(new URL('../../../.env', import.meta.url));
 if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 const SYMBOL = 'ZZTESTOTC';
+const MARKET = 'ZZTESTMKT';
 let pool: pg.Pool;
 let assetId: number;
+let marketId: number;
 // A fixed minute boundary, so buckets are known.
 const T0 = Date.UTC(2026, 10, 7, 12, 0, 0);
 
 beforeAll(async () => {
   pool = createPool(loadConfig());
   await pool.query(`delete from price_snapshots where asset_id in (select id from assets where symbol = $1)`, [SYMBOL]);
-  await pool.query(`delete from assets where symbol = $1`, [SYMBOL]);
+  await pool.query(`delete from price_snapshots where asset_id in (select id from assets where symbol = $1)`, [MARKET]);
+  await pool.query(`delete from assets where symbol = any($1)`, [[SYMBOL, MARKET]]);
+  marketId = (
+    await pool.query<{ id: number }>(
+      `insert into assets (symbol, display, binance_stream, payout_pct, enabled, sort)
+       values ($1, 'ZZMKT/USD', 'zztestmktusdt@bookTicker', 80, true, 9996) returning id`,
+      [MARKET],
+    )
+  ).rows[0]!.id;
   const { rows } = await pool.query<{ id: number }>(
     `insert into assets (symbol, display, kind, enabled, otc_start_price, otc_vol_pct_hour, otc_decimals)
      values ($1, 'Teste (OTC)', 'otc', true, 1, 1, 2) returning id`,
@@ -41,12 +51,17 @@ beforeAll(async () => {
       p,
       new Date(T0 + s * 1000),
     ]);
+    await pool.query('insert into price_snapshots (asset_id, price, captured_at) values ($1, $2, $3)', [
+      marketId,
+      p * 10,
+      new Date(T0 + s * 1000),
+    ]);
   }
 });
 
 afterAll(async () => {
-  await pool.query('delete from price_snapshots where asset_id = $1', [assetId]);
-  await pool.query('delete from assets where id = $1', [assetId]);
+  await pool.query('delete from price_snapshots where asset_id = any($1)', [[assetId, marketId]]);
+  await pool.query('delete from assets where id = any($1)', [[assetId, marketId]]);
   await pool.end();
 });
 
@@ -77,5 +92,16 @@ describe('OTC candles', () => {
     ]);
     const src = createOtcCandleSource(pool, createAssetRepo(pool, { ttlMs: 0 }), { now: () => T0 + 340_000 });
     expect((await src.candles(SYMBOL, '1m', 6)).at(-1)).toEqual({ t: T0 + 300_000, o: 7, h: 8, l: 7, c: 8, v: 0 });
+  });
+
+  it('fromSnapshots builds the same candles for a market asset; candles() stays OTC-only', async () => {
+    const src = createOtcCandleSource(pool, createAssetRepo(pool, { ttlMs: 0 }), { now: () => T0 + 100_000 });
+    expect(await src.has(MARKET)).toBe(false);
+    expect(await src.candles(MARKET, '1m', 5)).toEqual([]);
+    expect(await src.fromSnapshots(MARKET, '1m', 5)).toEqual([
+      { t: T0, o: 10, h: 30, l: 5, c: 20, v: 0 },
+      { t: T0 + 60_000, o: 20, h: 50, l: 20, c: 40, v: 0 },
+    ]);
+    expect(await src.fromSnapshots('ZZNOPE', '1m', 5)).toEqual([]);
   });
 });

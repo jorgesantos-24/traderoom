@@ -23,6 +23,7 @@ const order = (over: Partial<OrderView> = {}): OrderView => ({
   opensAt: '2026-11-06T15:00:00.000000Z',
   expiresAt: EXPIRES,
   settledAt: '2026-11-06T15:01:01.000000Z',
+  overrideId: null,
   ...over,
 });
 

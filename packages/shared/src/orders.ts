@@ -86,6 +86,8 @@ export interface OrderView {
   opensAt: string;
   expiresAt: string;
   settledAt: string | null;
+  /** Set when the entry price was set by the platform (price override). */
+  overrideId: string | null;
 }
 
 export interface Page<T> {

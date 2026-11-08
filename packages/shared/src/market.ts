@@ -20,6 +20,10 @@ export const PriceRecordSchema = z.object({
   /** Local receive time, epoch ms. Staleness is judged on this, never on exchange clocks. */
   rt: z.number().int().nonnegative(),
   src: z.enum(FEED_PROVIDERS),
+  /** Set while a price override changes this price: the otc_overrides id. */
+  ov: z.string().optional(),
+  /** With `ov`: the price without the override (provider tick, or the OTC natural path). */
+  realPrice: z.string().regex(decimal).optional(),
 });
 export type PriceRecord = z.infer<typeof PriceRecordSchema>;
 

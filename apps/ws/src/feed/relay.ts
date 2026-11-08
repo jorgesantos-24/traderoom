@@ -5,6 +5,8 @@ import type { Counter, Registry } from '../lib/metrics.js';
 import { Conflator, SeqCounter, staleFrame, type PublishedPrice } from './conflator.js';
 import { FeedConnection } from './connection.js';
 import { OtcFeed } from './otc.js';
+import { PRICE_OVERRIDE_FALLBACK_DECIMALS, PriceOverride } from './price-override.js';
+import { RealizedVol } from './realized-vol.js';
 import { binanceSpec } from './providers.js';
 import type { RelaySinks, SnapshotRow } from './sinks.js';
 import { SourceSelector } from './source-selector.js';
@@ -116,6 +118,15 @@ export class Relay {
   private assetsKey = '';
   private readonly assetsBySymbol = new Map<string, FeedAsset>();
   private readonly lastAccepted = new Map<string, Tick>();
+  /** Active market-asset override, by symbol (one at most: single slot). */
+  private readonly priceOverrides = new Map<string, PriceOverride>();
+  /**
+   * Scheduled override: the last tick before the rollover into its candle (the open the target is
+   * derived from). Taken before the first tick of the new minute replaces lastAccepted; cleared once used.
+   */
+  private readonly bucketOpen = new Map<string, number>();
+  /** Realized volatility per market symbol, fed by every accepted real tick (warm when an override needs it). */
+  private readonly realizedVol = new Map<string, RealizedVol>();
   private readonly listeners = new Set<RelayListener>();
   private readonly timers: NodeJS.Timeout[] = [];
   private readonly seq = new SeqCounter();
@@ -180,6 +191,9 @@ export class Relay {
       }),
     );
     reg.gauge('feed_stale', 'Symbol is stale (1) or fresh (0).', () => this.perSymbol((s) => (this.stale.isStale(s) ? 1 : 0)));
+    reg.gauge('feed_realized_vol', 'Realized volatility of market symbols, sigma per sqrt(second) of log-price (EWMA, 120 s half-life).', () =>
+      this.perSymbol((s) => this.realizedVol.get(s)?.sigma() ?? null),
+    );
     reg.gauge('feed_source', 'Provider currently used per symbol (value is always 1).', () =>
       this.assetList.map((a) => [{ symbol: a.symbol, provider: this.selector.sourceOf(a.symbol) ?? 'none' }, 1] as const),
     );
@@ -235,6 +249,8 @@ export class Relay {
     this.started = false;
     for (const t of this.timers) clearInterval(t);
     this.timers.length = 0;
+    this.priceOverrides.clear();
+    this.bucketOpen.clear();
     await Promise.all([this.connections.binance.stop(), this.connections.binance_backup.stop()]);
   }
 
@@ -299,6 +315,10 @@ export class Relay {
     this.assetsBySymbol.clear();
     for (const a of assets) this.assetsBySymbol.set(a.symbol, a);
     for (const sym of this.lastAccepted.keys()) if (!this.assetsBySymbol.has(sym)) this.lastAccepted.delete(sym);
+    // A disabled asset is never overridden.
+    for (const sym of this.priceOverrides.keys()) if (!this.assetsBySymbol.has(sym)) this.priceOverrides.delete(sym);
+    for (const sym of this.bucketOpen.keys()) if (!this.priceOverrides.has(sym)) this.bucketOpen.delete(sym);
+    for (const sym of this.realizedVol.keys()) if (!this.assetsBySymbol.has(sym)) this.realizedVol.delete(sym);
     const now = this.now();
     this.selector.setSymbols(
       // The backup is the same Binance market, so every asset can fail over to it.
@@ -344,14 +364,65 @@ export class Relay {
       if (raw === this.lastOverrideRaw) return;
       this.lastOverrideRaw = raw;
       const wire = parseOtcOverride(raw);
-      this.otc.setOverride(wire, this.now());
-      if (wire) this.deps.log.info({ symbol: wire.symbol, targetPrice: wire.targetPrice, closeMs: wire.closeMs }, 'otc override applied');
+      const now = this.now();
+      this.priceOverrides.clear();
+      this.bucketOpen.clear();
+      if (wire?.kind === 'market') {
+        const asset = this.assetsBySymbol.get(wire.symbol);
+        // Only an enabled market asset this relay prices.
+        if (asset && !asset.otc) {
+          let decimals = asset.priceDecimals;
+          if (decimals === null || decimals === undefined) {
+            // The API refuses overrides without price_decimals; if one gets here anyway, do not crash.
+            this.deps.log.warn({ symbol: wire.symbol, fallback: PRICE_OVERRIDE_FALLBACK_DECIMALS }, 'market override on an asset without price_decimals');
+            decimals = PRICE_OVERRIDE_FALLBACK_DECIMALS;
+          }
+          const volPerSqrtS = this.realizedVol.get(wire.symbol)?.sigma() ?? null;
+          const id = wire.id;
+          const onTarget = id === undefined ? undefined : (price: string) => this.saveOverrideTarget(id, price);
+          const persistedTarget = wire.schedule && id !== undefined ? await this.loadOverrideTarget(id) : null;
+          this.priceOverrides.set(
+            wire.symbol,
+            new PriceOverride(wire, this.now(), { decimals, volPerSqrtS, persistedTarget, ...(onTarget ? { onTarget } : {}) }),
+          );
+        }
+        this.otc.setOverride(null, now);
+      } else {
+        this.otc.setOverride(wire, now);
+      }
+      if (wire) {
+        this.deps.log.info(
+          { symbol: wire.symbol, targetPrice: wire.targetPrice, closeMs: wire.closeMs, ...(wire.schedule ? { schedule: wire.schedule } : {}) },
+          'otc override applied',
+        );
+      }
       else this.deps.log.info({ invalid: raw !== null }, 'otc override cleared');
     } catch (err) {
       this.deps.log.error({ err }, 'failed to read otc override');
     } finally {
       this.overrideInFlight = false;
     }
+  }
+
+  /** Scheduled override: the target an earlier run froze (a restart inside the candle), or null. */
+  private async loadOverrideTarget(id: string): Promise<number | null> {
+    const load = this.deps.sinks.loadOverrideTarget;
+    if (!load) return null;
+    try {
+      const p = await load(id);
+      return p === null ? null : Number(p);
+    } catch (err) {
+      this.deps.log.error({ err, overrideId: id }, 'failed to load the scheduled override target');
+      return null;
+    }
+  }
+
+  /** Scheduled override: the target frozen in its candle goes to otc_overrides (marks, admin view). */
+  private saveOverrideTarget(id: string, price: string): void {
+    const save = this.deps.sinks.saveOverrideTarget;
+    if (!save) return;
+    this.deps.log.info({ overrideId: id, targetPrice: price }, 'scheduled override target resolved');
+    save(id, price).catch((err: unknown) => this.deps.log.error({ err, overrideId: id }, 'failed to save the scheduled override target'));
   }
 
   /** OTC ticks skip the source selector: the generator is their only source. */
@@ -374,6 +445,26 @@ export class Relay {
     // Never move backwards in time within one provider (late/duplicate trades).
     if (prev && prev.provider === t.provider && t.ts < prev.ts) return;
     this.m.accepted.inc({ provider: t.provider });
+    // Real ticks only: this runs before the override rewrites the price.
+    let vol = this.realizedVol.get(t.symbol);
+    if (!vol) this.realizedVol.set(t.symbol, (vol = new RealizedVol()));
+    vol.update(t.value, t.ts);
+    const ov = this.priceOverrides.get(t.symbol);
+    if (ov) {
+      const nowMs = this.now();
+      const sym = t.symbol;
+      // First tick of the scheduled candle: the open is the tick before it, still in lastAccepted. Only a
+      // tick from before openMs counts; after a restart there is none and the override falls back to the
+      // persisted target (or, failing that, this tick).
+      if (ov.needsOpen(nowMs) && !this.bucketOpen.has(sym)) {
+        const prev = this.lastAccepted.get(sym);
+        const openMs = ov.openMs;
+        if (prev && openMs !== null && prev.recvMs < openMs) this.bucketOpen.set(sym, prev.value);
+      }
+      t = ov.apply(t, nowMs, this.bucketOpen.get(sym));
+      if (!ov.needsOpen(nowMs)) this.bucketOpen.delete(sym);
+      if (ov.done) this.priceOverrides.delete(sym);
+    }
     this.lastAccepted.set(t.symbol, t);
     this.conflator.push(t);
     const change = this.stale.seen(t.symbol, t.recvMs);
@@ -435,7 +526,7 @@ export class Relay {
     for (const a of this.assetList) {
       if (this.stale.isStale(a.symbol)) continue;
       const t = this.lastAccepted.get(a.symbol);
-      if (t) rows.push({ assetId: a.id, price: t.price, capturedAt });
+      if (t) rows.push({ assetId: a.id, price: t.price, realPrice: t.realPrice ?? null, capturedAt });
     }
     if (rows.length === 0) return;
     this.snapshotInFlight = true;

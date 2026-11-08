@@ -18,6 +18,10 @@ export interface Tick {
   /** Local receive time, epoch ms. */
   recvMs: number;
   provider: FeedProvider;
+  /** Set when a price override changed `price`: the otc_overrides id. */
+  ov?: string;
+  /** With `ov`: the price without the override (what the provider sent, or the OTC natural path). */
+  realPrice?: string;
 }
 
 export interface FeedAsset {
@@ -27,6 +31,8 @@ export interface FeedAsset {
   binanceStream: string;
   /** Set for OTC assets: priced by our generator, not by Binance. */
   otc?: OtcParams;
+  /** Market assets: assets.price_decimals, the grid of override targets and of the chart. Null if unset. */
+  priceDecimals?: number | null;
 }
 
 export type ParseResult =

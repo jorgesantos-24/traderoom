@@ -35,7 +35,7 @@ export function loadCandles(symbol: string, interval: CandleInterval, limit: num
     p = api
       .candles(symbol, interval, limit)
       .then((r) => {
-        storeCandles(symbol, interval, r.candles);
+        storeCandles(symbol, interval, r.candles, Date.now());
         return r.candles;
       })
       .finally(() => inFlight.delete(k));

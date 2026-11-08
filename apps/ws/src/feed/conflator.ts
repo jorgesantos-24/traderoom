@@ -43,7 +43,7 @@ export class Conflator {
       const frame: TickFrame = {
         t: 'tick',
         seq: this.seq.next(),
-        data: [{ s: tick.symbol, p: tick.value, ts: tick.ts }],
+        data: [tick.ov ? { s: tick.symbol, p: tick.value, ts: tick.ts, ov: tick.ov } : { s: tick.symbol, p: tick.value, ts: tick.ts }],
       };
       out.push({ tick, frame: Buffer.from(JSON.stringify(frame)) });
     }
