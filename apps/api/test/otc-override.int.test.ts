@@ -20,6 +20,7 @@ import {
 } from '@traderoom/shared';
 // The real generator, driven by the wire this API writes: the same code the ws runs.
 import { OtcFeed, OtcWalk } from '../../ws/src/feed/otc.js';
+import { BAND_FRACTION } from '../../ws/src/feed/override-path.js';
 import { insertSnapshots, toPriceRecord, type SnapshotRow } from '../../ws/src/feed/sinks.js';
 import { loadConfig } from '../src/config.js';
 import { AppError } from '../src/lib/errors.js';
@@ -221,6 +222,14 @@ describe('apply', () => {
   });
 });
 
+/**
+ * The OTC hold wobbles around the target within BAND_FRACTION of the body (target − price at the ramp
+ * start). The ramp starts near 100.00; 0.01 covers that drift and the rounding.
+ */
+function inBand(price: string | undefined, target: number, from = 100): boolean {
+  return price !== undefined && Math.abs(Number(price) - target) <= BAND_FRACTION * Math.abs(target - from) + 0.01 + 1e-9;
+}
+
 describe('settlement on the forced close', () => {
   /** Seeded normals, so the natural part of the path is noisy but repeatable. */
   function seeded(seed: number) {
@@ -234,61 +243,76 @@ describe('settlement on the forced close', () => {
     return () => Math.sqrt(-2 * Math.log(u())) * Math.cos(2 * Math.PI * u());
   }
 
-  it('an order expiring at the close settles at the target and wins', async () => {
-    for (const [dir, target] of [
-      ['call', 100.6],
-      ['put', 99.4],
-    ] as const) {
-      clock = T0 + 15_000;
-      await setPrice(OTC_A, '100.00');
-      const v = await svc.apply(adminId, input({ assetId: ids.a, targetPrice: target }));
-      const wire = parseOtcOverride(await redis.get(KEY));
-      expect(wire).not.toBeNull();
+  /**
+   * One order expiring at the forced close, priced by the ws generator and its 1 s snapshots.
+   * `jitter: false` drives the legacy path (flat hold on the exact target), which the wire can still select.
+   */
+  async function settleAtClose(dir: 'call' | 'put', target: number, seed: number, jitter?: false) {
+    clock = T0 + 15_000;
+    await setPrice(OTC_A, '100.00');
+    const v = await svc.apply(adminId, input({ assetId: ids.a, targetPrice: target }));
+    const stored = parseOtcOverride(await redis.get(KEY));
+    expect(stored).not.toBeNull();
+    const wire = stored && jitter === false ? { ...stored, jitter } : stored;
 
-      const user = await newUser(`Cliente ${dir}`);
-      await pool.query(`insert into accounts (user_id, kind, balance_cents) values ($1, 'real', 100000)`, [user]);
-      const { rows } = await pool.query<{ id: string }>(
-        `insert into orders (user_id, asset_id, direction, stake_cents, payout_pct, duration_sec, open_price, opens_at, expires_at, idempotency_key, account)
-         values ($1, $2, $3, 10000, 90, 60, '100.00', $4, $5, $6, 'real') returning id`,
-        [user, ids.a, dir, new Date(clock), new Date(v.candleCloseMs), randomUUID()],
-      );
-      const orderId = rows[0]?.id ?? '';
+    const user = await newUser(`Cliente ${dir}`);
+    await pool.query(`insert into accounts (user_id, kind, balance_cents) values ($1, 'real', 100000)`, [user]);
+    const { rows } = await pool.query<{ id: string }>(
+      `insert into orders (user_id, asset_id, direction, stake_cents, payout_pct, duration_sec, open_price, opens_at, expires_at, idempotency_key, account)
+       values ($1, $2, $3, 10000, 90, 60, '100.00', $4, $5, $6, 'real') returning id`,
+      [user, ids.a, dir, new Date(clock), new Date(v.candleCloseMs), randomUUID()],
+    );
+    const orderId = rows[0]?.id ?? '';
 
-      // Relay: generator ticks every 500 ms, snapshots every 1 s at an arbitrary phase.
-      await pool.query('delete from price_snapshots where asset_id = $1', [ids.a]);
-      const walk = new OtcWalk({ startPrice: 100, volPctHour: 0.8, decimals: 2 }, 100, seeded(dir === 'call' ? 7 : 8));
-      walk.setOverride(wire, clock);
-      const snaps: Array<{ price: string; at: Date }> = [];
-      let last = clock;
-      let price = walk.format();
-      const end = v.releaseEndMs + 3000;
-      for (let t = clock + 1; t <= end; t++) {
-        if ((t - clock) % 500 === 0) {
-          price = walk.format(walk.step((t - last) / 1000, t));
-          last = t;
-        }
-        if ((t - clock) % 1000 === 317) snaps.push({ price, at: new Date(t) });
+    // Relay: generator ticks every 500 ms, snapshots every 1 s at an arbitrary phase.
+    await pool.query('delete from price_snapshots where asset_id = $1', [ids.a]);
+    const walk = new OtcWalk({ startPrice: 100, volPctHour: 0.8, decimals: 2 }, 100, seeded(seed));
+    walk.setOverride(wire, clock);
+    const snaps: Array<{ price: string; at: Date }> = [];
+    let last = clock;
+    let price = walk.format();
+    const end = v.releaseEndMs + 3000;
+    for (let t = clock + 1; t <= end; t++) {
+      if ((t - clock) % 500 === 0) {
+        price = walk.format(walk.step((t - last) / 1000, t));
+        last = t;
       }
-      await pool.query(
-        `insert into price_snapshots (asset_id, price, captured_at) select $1, * from unnest($2::numeric[], $3::timestamptz[])`,
-        [ids.a, snaps.map((s) => s.price), snaps.map((s) => s.at)],
-      );
-      const inHold = snaps.filter((s) => s.at.getTime() >= v.holdStartMs && s.at.getTime() <= v.candleCloseMs);
-      expect(inHold.length).toBeGreaterThanOrEqual(3);
-      for (const s of inHold) expect(s.price).toBe(target.toFixed(2));
-
-      const r = await settleOrder(pool, orderId, v.candleCloseMs + 1500);
-      expect(r).toMatchObject({ kind: 'settled', status: 'won' });
-      const { rows: o } = await pool.query<{ status: string; close_price: string }>(
-        'select status, close_price::text as close_price from orders where id = $1',
-        [orderId],
-      );
-      expect(o[0]).toEqual({ status: 'won', close_price: target.toFixed(8) });
-      const { rows: l } = await pool.query<{ kind: string; delta_cents: string }>('select kind, delta_cents from ledger where order_id = $1', [orderId]);
-      expect(l).toEqual([{ kind: 'payout', delta_cents: '19000' }]);
-
-      await svc.release(adminId);
+      if ((t - clock) % 1000 === 317) snaps.push({ price, at: new Date(t) });
     }
+    await pool.query(
+      `insert into price_snapshots (asset_id, price, captured_at) select $1, * from unnest($2::numeric[], $3::timestamptz[])`,
+      [ids.a, snaps.map((s) => s.price), snaps.map((s) => s.at)],
+    );
+    const inHold = snaps.filter((s) => s.at.getTime() >= v.holdStartMs && s.at.getTime() <= v.candleCloseMs);
+    expect(inHold.length).toBeGreaterThanOrEqual(3);
+    for (const s of inHold) {
+      if (jitter === false) expect(s.price).toBe(target.toFixed(2));
+      else expect(inBand(s.price, target), `hold snapshot ${s.price}`).toBe(true);
+    }
+    const atExpiry = snaps.filter((s) => s.at.getTime() <= v.candleCloseMs).at(-1);
+    if (jitter === false) expect(atExpiry?.price).toBe(target.toFixed(2));
+
+    const r = await settleOrder(pool, orderId, v.candleCloseMs + 1500);
+    expect(r).toMatchObject({ kind: 'settled', status: 'won' });
+    const { rows: o } = await pool.query<{ status: string; close_price: string }>(
+      'select status, close_price::text as close_price from orders where id = $1',
+      [orderId],
+    );
+    // Settled on the snapshot at expiry (within the band of the target; exactly on it without jitter).
+    expect(o[0]).toEqual({ status: 'won', close_price: Number(atExpiry?.price).toFixed(8) });
+    const { rows: l } = await pool.query<{ kind: string; delta_cents: string }>('select kind, delta_cents from ledger where order_id = $1', [orderId]);
+    expect(l).toEqual([{ kind: 'payout', delta_cents: '19000' }]);
+
+    await svc.release(adminId);
+  }
+
+  it('an order expiring at the close settles near the target and wins', async () => {
+    await settleAtClose('call', 100.6, 7);
+    await settleAtClose('put', 99.4, 8);
+  });
+
+  it('jitter: false (legacy path) settles exactly on the target and wins', async () => {
+    await settleAtClose('call', 100.6, 9, false);
   });
 });
 
@@ -333,9 +357,9 @@ describe('OTC: same disclosure and protection as market assets', () => {
       if (at < v.rampStartMs || at >= v.releaseEndMs) expect(s.real_price).toBeNull();
     }
     const atExpiry = snaps.filter((s) => Number(s.at) <= v.candleCloseMs).at(-1);
-    expect(atExpiry?.price).toBe('100.60000000');
+    expect(inBand(atExpiry?.price, 100.6), `price at expiry ${atExpiry?.price}`).toBe(true);
     expect(atExpiry?.real_price).not.toBeNull();
-    expect(atExpiry?.real_price).not.toBe('100.60000000');
+    expect(atExpiry?.real_price).not.toBe(atExpiry?.price);
 
     // Entry on a marked OTC price records the override, through the real order service.
     const orders = createOrderService({
@@ -369,7 +393,7 @@ describe('OTC: same disclosure and protection as market assets', () => {
       return r[0]?.close_price;
     };
     expect(await closeOf(await open(null))).toBe(atExpiry?.real_price);
-    expect(await closeOf(await open(v.id))).toBe('100.60000000');
+    expect(await closeOf(await open(v.id))).toBe(atExpiry?.price);
   });
 });
 
