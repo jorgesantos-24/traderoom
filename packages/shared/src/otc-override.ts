@@ -9,7 +9,10 @@ export const OTC_OVERRIDE_MIN_LEAD_MS = 6000;
 export const OTC_OVERRIDE_HOLD_MS = 3000;
 /** Tempo de volta ao preço base depois do fechamento. */
 export const OTC_OVERRIDE_RELEASE_MS = 2000;
-export const OTC_OVERRIDE_RAMP_DEFAULT_MS = 8000;
+export const OTC_OVERRIDE_RAMP_DEFAULT_MS = 25_000;
+// 25 s, not 8: the drift-to-noise ratio of the bridge is (1/SIGMA_FACTOR)·√(dt/T). At 8 s it is 2.5
+// and almost no tick goes against the direction, so the ramp looks drawn. At 25 s it is ~1.4 and the
+// candle wobbles. Lower this and the ramp goes straight again.
 /**
  * The ramp reaches the target this long before the hold starts. Snapshots see the newest tick,
  * which can be one OTC tick (500 ms) plus one conflation window (200 ms) old: landing early keeps
@@ -60,7 +63,10 @@ export const OtcOverrideWire = z.object({
   id: z.string().optional(),
   /** Absent means 'otc' (payloads written before market overrides existed). */
   kind: z.enum(PRICE_OVERRIDE_KINDS).optional(),
-  /** Market only: small noise on the ramp. Absent means true. */
+  /**
+   * Absent means true. Market: small noise on the ramp. OTC: Brownian-bridge ramp and a wobble around the
+   * target in the hold (close within a few ticks of it); false keeps the easeOut ramp and the exact, flat hold.
+   */
   jitter: z.boolean().optional(),
   symbol: z.string(),
   targetPrice: z.string(),

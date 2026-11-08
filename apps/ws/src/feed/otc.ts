@@ -1,5 +1,6 @@
 import { randomFillSync } from 'node:crypto';
 import { OTC_OVERRIDE_LANDING_MS, OTC_OVERRIDE_RELEASE_MS, type OtcOverrideWire } from '@traderoom/shared';
+import { OverridePath } from './override-path.js';
 import type { Tick } from './types.js';
 
 /**
@@ -90,7 +91,7 @@ interface ActiveOverride {
   basePrice: number;
   /** Ramp starts here (already clamped by the API so it ends at holdStart). */
   rampStartMs: number;
-  /** From here the target is held flat, so snapshots land on it before expiry. */
+  /** From here the price stays near the target (in the hold band; exactly on it without jitter) until the close. */
   holdStartMs: number;
   closeMs: number;
   /** Override is dropped here, after the candle is closed and the price is back. */
@@ -103,6 +104,10 @@ interface ActiveOverride {
    * the whole candle.
    */
   shadow: OtcWalk | null;
+  /** false: legacy deterministic easeOutCubic ramp and a flat hold on the exact target. */
+  jitter: boolean;
+  /** Ramp + hold path (jitter only). Born with the shadow. */
+  path: OverridePath | null;
 }
 
 /**
@@ -190,6 +195,8 @@ export class OtcWalk {
       releaseEndMs: o.closeMs + o.releaseMs,
       x0: null,
       shadow: null,
+      jitter: o.jitter ?? true,
+      path: null,
     };
     // Re-targeting mid-ramp: the new ramp starts where the price is now, not from the old anchor.
     if (nowMs >= this.ov.rampStartMs) this.ov.x0 = this.x;
@@ -254,9 +261,24 @@ export class OtcWalk {
       }
       ov.shadow.step(dtS, atMs);
 
-      // Hold: exact target. This is the price the expiry snapshots pick up. It lands a little before
-      // holdStart, so a snapshot early in the hold never reads the last ramp tick.
       const landMs = Math.max(ov.rampStartMs, ov.holdStartMs - OTC_OVERRIDE_LANDING_MS);
+      if (ov.jitter) {
+        // Brownian bridge to the target by landMs, then a small wobble around it until the close.
+        ov.path ??= new OverridePath({
+          x0: ov.x0 ?? this.x,
+          targetX: ov.targetX,
+          startMs: ov.rampStartMs,
+          landMs,
+          volPerSqrtS: this.sigma(),
+          decimals: this.params.decimals,
+          normal: this.normal,
+        });
+        this.x = ov.path.step(atMs);
+        return this.price;
+      }
+
+      // Legacy hold: exact target. This is the price the expiry snapshots pick up. It lands a little before
+      // holdStart, so a snapshot early in the hold never reads the last ramp tick.
       if (atMs >= landMs) {
         this.x = ov.targetX;
         return this.price;
