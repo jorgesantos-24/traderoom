@@ -14,7 +14,6 @@ import type { CandleService } from '../src/services/candles.js';
 import type { OrderService } from '../src/services/orders.js';
 import type { WalletService } from '../src/services/wallet.js';
 import type { OtcOverrideService } from '../src/services/otc-override.js';
-import type { OverrideMarkSource } from '../src/services/override-marks.js';
 
 export const okHealth: HealthDeps = {
   pingPostgres: async () => {},
@@ -108,9 +107,6 @@ export const unusedOtcOverride: OtcOverrideService = {
   publicState: notUsed('otcOverride.publicState'),
 };
 
-/** No candle has an override. */
-export const noMarks: OverrideMarkSource = { marks: async () => [] };
-
 export function fakeAssets(
   input: Array<Omit<AssetRow, 'kind' | 'category'> & Partial<Pick<AssetRow, 'kind' | 'category'>>> = [
     { id: 1, symbol: 'BTCUSDT', display: 'BTC/USD', payoutPct: 87 },
@@ -164,7 +160,6 @@ export function testApp(o: TestAppOptions = {}): Promise<FastifyInstance> {
       payments: o.deps?.payments ?? unusedPayments,
       kyc: o.deps?.kyc ?? unusedKyc,
       otcOverride: o.deps?.otcOverride ?? unusedOtcOverride,
-      overrideMarks: o.deps?.overrideMarks ?? noMarks,
       metrics: o.deps?.metrics ?? new Registry(),
     },
     {

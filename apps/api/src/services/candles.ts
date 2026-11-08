@@ -159,7 +159,7 @@ export function createCandleService(deps: CandleServiceDeps): CandleService {
       const enabled = await deps.assets.enabledSymbols();
       if (!enabled.has(symbol)) throw new AppError(404, ErrorCode.UnknownAsset, 'Ativo não encontrado.');
       if (deps.otc && (await deps.otc.has(symbol))) return (await deps.otc.candles(symbol, interval, limit)).slice(-limit);
-      // The chart shows the platform's price: the same one orders settle at and override marks point to.
+      // The chart shows the platform's price: the same one orders settle at.
       if (deps.otc && SNAPSHOT_INTERVALS.has(interval)) return (await deps.otc.fromSnapshots(symbol, interval, limit)).slice(-limit);
 
       const key = RedisKeys.candles(symbol, interval);

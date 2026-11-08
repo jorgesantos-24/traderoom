@@ -1,4 +1,4 @@
-import type { Candle, CandleInterval, CandleMark } from '@traderoom/shared';
+import type { Candle, CandleInterval } from '@traderoom/shared';
 import { api } from './api';
 
 /** A cached series is shown instantly for this long; the chart still refreshes it in the background. */
@@ -8,7 +8,6 @@ const MAX_ENTRIES = 40;
 interface Entry {
   at: number;
   candles: Candle[];
-  marks: CandleMark[];
 }
 
 const cache = new Map<string, Entry>();
@@ -21,21 +20,10 @@ export function cachedCandles(symbol: string, interval: CandleInterval, now = Da
   return e && now - e.at < CANDLE_CACHE_MS ? e.candles : null;
 }
 
-/** Override marks that came with the stored series (none when nothing is stored). */
-export function cachedMarks(symbol: string, interval: CandleInterval): CandleMark[] {
-  return cache.get(key(symbol, interval))?.marks ?? [];
-}
-
-export function storeCandles(
-  symbol: string,
-  interval: CandleInterval,
-  candles: Candle[],
-  now = Date.now(),
-  marks: CandleMark[] = [],
-): void {
+export function storeCandles(symbol: string, interval: CandleInterval, candles: Candle[], now = Date.now()): void {
   const k = key(symbol, interval);
   cache.delete(k);
-  cache.set(k, { at: now, candles, marks });
+  cache.set(k, { at: now, candles });
   while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value as string);
 }
 
@@ -47,7 +35,7 @@ export function loadCandles(symbol: string, interval: CandleInterval, limit: num
     p = api
       .candles(symbol, interval, limit)
       .then((r) => {
-        storeCandles(symbol, interval, r.candles, Date.now(), r.marks ?? []);
+        storeCandles(symbol, interval, r.candles, Date.now());
         return r.candles;
       })
       .finally(() => inFlight.delete(k));

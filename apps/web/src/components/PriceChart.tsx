@@ -11,9 +11,9 @@ import {
   type Logical,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import type { Candle, CandleInterval, CandleMark, OrderView } from '@traderoom/shared';
+import type { Candle, CandleInterval, OrderView } from '@traderoom/shared';
 import { ApiError } from '../lib/api';
-import { cachedCandles, cachedMarks, loadCandles } from '../lib/candle-cache';
+import { cachedCandles, loadCandles } from '../lib/candle-cache';
 import { MOTION_TAU_MS, seedCandle, stepCandle } from '../lib/candle-motion';
 import { intervalMs, mergePrice } from '../lib/candles';
 import { crosshairLabel, tickLabel } from '../lib/chart-time';
@@ -21,7 +21,6 @@ import { resultBubbles } from '../lib/chart-orders';
 import { serverClock, parseServerTime } from '../lib/clock';
 import { formatCountdown, formatMoney, formatPrice, formatSignedMoney, pricePrecision } from '../lib/format';
 import { useQuote } from '../lib/session-data';
-import { platformPriceUntil, usePlatformPrice } from '../lib/use-platform-price';
 import type { ResultToast } from '../lib/use-trade-orders';
 import { useDrawings } from '../lib/use-drawings';
 import { IndicatorRenderer } from '../lib/indicator-series';
@@ -82,11 +81,6 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
   const tagTimeRef = useRef<HTMLSpanElement>(null);
   const orderTagsRef = useRef<HTMLDivElement>(null);
   const bubblesRef = useRef<HTMLDivElement>(null);
-  const markColsRef = useRef<HTMLDivElement>(null);
-  const markDotsRef = useRef<HTMLDivElement>(null);
-  /** Candles whose close the platform set (price override); they keep the mark after it ends. */
-  const [marks, setMarks] = useState<CandleMark[]>([]);
-  const [hoverMark, setHoverMark] = useState<number | null>(null);
   const ordersRef = useRef(orders);
   ordersRef.current = orders;
   const chartRef = useRef<IChartApi | null>(null);
@@ -102,7 +96,6 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
   const [load, setLoad] = useState<LoadState>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
   const quote = useQuote(symbol);
-  const platform = usePlatformPrice(symbol, quote?.ov);
   stepRef.current = intervalMs(interval);
 
   // Chart instance lives as long as the component.
@@ -191,7 +184,6 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
       rendererRef.current?.setAll(candles, intervalMs(interval), precisionRef.current ?? 2);
       candlesRef.current = candles;
       shownRef.current = last ? { ...last } : null;
-      setMarks(cachedMarks(symbol, interval));
       // Dragging/zooming the price axis turns auto-scale off; a new asset or timeframe
       // must fit its own prices, not keep the previous range (BTC ~76k vs ETH ~2k).
       series.priceScale().applyOptions({ autoScale: true });
@@ -207,7 +199,6 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
     } else {
       candlesRef.current = null;
       shownRef.current = null;
-      setMarks([]);
       setLoad({ status: 'loading' });
       seriesRef.current?.setData([]);
       rendererRef.current?.setAll([], intervalMs(interval), 2);
@@ -231,34 +222,6 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
     );
     return () => ctrl.abort();
   }, [symbol, interval, attempt]);
-
-  // When the live override ends, its candle gets the permanent mark: ask for the marks again.
-  const platformOn = platform !== null;
-  const platformWasOn = useRef(false);
-  useEffect(() => {
-    const ended = platformWasOn.current && !platformOn;
-    platformWasOn.current = platformOn;
-    if (!ended) return;
-    const ctrl = new AbortController();
-    loadCandles(symbol, interval, CANDLE_LIMIT, ctrl.signal).then(
-      () => setMarks(cachedMarks(symbol, interval)),
-      () => {},
-    );
-    return () => ctrl.abort();
-  }, [platformOn, symbol, interval]);
-
-  // Tooltip of a marked candle while the crosshair is on it.
-  useEffect(() => {
-    const chart = chartRef.current;
-    if (!chart) return;
-    const marked = new Set(marks.map((m) => m.openMs));
-    const onMove = (param: { time?: unknown }) => {
-      const t = typeof param.time === 'number' ? param.time * 1000 : null;
-      setHoverMark(t !== null && marked.has(t) ? t : null);
-    };
-    chart.subscribeCrosshairMove(onMove);
-    return () => chart.unsubscribeCrosshairMove(onMove);
-  }, [marks]);
 
   // Each tick updates the real candle; the frame loop below animates the drawing toward it.
   useEffect(() => {
@@ -309,8 +272,6 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
         hide(tagRef.current);
         for (const el of orderTagsRef.current?.children ?? []) hide(el as HTMLElement);
         for (const el of bubblesRef.current?.children ?? []) hide(el as HTMLElement);
-        for (const el of markColsRef.current?.children ?? []) hide(el as HTMLElement);
-        for (const el of markDotsRef.current?.children ?? []) hide(el as HTMLElement);
         return;
       }
       const precision = precisionRef.current ?? pricePrecision(real.c);
@@ -387,34 +348,6 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
           el.style.transform = `translate(${Math.round(lx - el.offsetWidth / 2)}px, ${Math.round(py - el.offsetHeight - 10)}px)`;
         }
       }
-
-      // Override marks: the bar's column, tinted, and a dot just above its high.
-      const cols = markColsRef.current?.children as HTMLCollectionOf<HTMLElement> | undefined;
-      const dots = markDotsRef.current?.children as HTMLCollectionOf<HTMLElement> | undefined;
-      if (cols && dots) {
-        for (let i = 0; i < cols.length; i++) {
-          const col = cols[i] as HTMLElement;
-          const dot = dots[i];
-          const idx = candleIndex(candles, Number(col.dataset.open));
-          const x = idx === null ? null : logicalX(chart, idx);
-          const x1 = idx === null ? null : logicalX(chart, idx + 1);
-          const high = idx === null ? undefined : idx === candles.length - 1 ? Math.max(shown.h, shown.o, shown.c) : candles[idx]?.h;
-          const py = high === undefined ? null : series.priceToCoordinate(high);
-          if (x === null || x1 === null || py === null || x < -50 || x > plotWidth + 50) {
-            hide(col);
-            if (dot) hide(dot);
-            continue;
-          }
-          const w = Math.max(2, Math.abs(x1 - x));
-          col.style.visibility = 'visible';
-          col.style.width = `${w}px`;
-          col.style.transform = `translateX(${Math.round(x - w / 2)}px)`;
-          if (dot) {
-            dot.style.visibility = 'visible';
-            dot.style.transform = `translate(${Math.round(x - 2.5)}px, ${Math.round(py - 11)}px)`;
-          }
-        }
-      }
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
@@ -464,12 +397,6 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
         </div>
       </div>
       <div ref={hostRef} className="chart-map relative min-w-0 flex-1 overflow-hidden">
-        {/* Under the chart (its background is transparent), so the tint sits behind the candles. */}
-        <div ref={markColsRef} className="pointer-events-none absolute inset-0" aria-hidden="true">
-          {marks.map((m) => (
-            <div key={m.openMs} className="override-col" data-open={m.openMs} />
-          ))}
-        </div>
         <div
           ref={containerRef}
           className="absolute inset-0"
@@ -491,18 +418,6 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
                   {TAG_LABEL[o.direction]} {formatMoney(o.stakeCents)}
                 </span>
                 <span className="order-tag-time" />
-              </div>
-            ))}
-          </div>
-          <div ref={markDotsRef} data-testid="override-marks">
-            {marks.map((m) => (
-              <div key={m.openMs} className="override-dot" data-open={m.openMs} data-direction={m.direction}>
-                {hoverMark === m.openMs && (
-                  <div className="override-tip">
-                    Preço definido pela plataforma · alvo{' '}
-                    <span className="tabular">{formatPrice(m.targetPrice, precisionRef.current ?? pricePrecision(m.targetPrice))}</span>
-                  </div>
-                )}
               </div>
             ))}
           </div>
@@ -542,15 +457,6 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
             setEditingIndicator(null);
           }}
         />
-        {platform && (
-          <div
-            role="status"
-            className="pointer-events-none absolute bottom-8 left-2 z-10 rounded-control border border-warn/40 bg-bg/90 px-2 py-0.5 text-[11px] text-warn"
-            data-testid="chart-platform-price"
-          >
-            Preço da plataforma · {platformPriceUntil(platform.untilMs)}
-          </div>
-        )}
         {load.status === 'loading' && (
           <div className="absolute inset-0 z-20 bg-bg/80">
             <LoadingState label="Carregando gráfico…" className="h-full" />
@@ -585,20 +491,6 @@ function logicalX(chart: IChartApi, logical: number): number | null {
   const b = ts.logicalToCoordinate((base + 1) as Logical);
   if (b === null) return null;
   return a + (b - a) * frac;
-}
-
-/** Index of the candle that opens at `t` (candles are sorted by time), or null. */
-function candleIndex(candles: readonly Candle[], t: number): number | null {
-  let lo = 0;
-  let hi = candles.length - 1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    const ct = (candles[mid] as Candle).t;
-    if (ct === t) return mid;
-    if (ct < t) lo = mid + 1;
-    else hi = mid - 1;
-  }
-  return null;
 }
 
 function applyPrecision(series: ISeriesApi<'Candlestick'>, ref: { current: number | null }, price: number): void {

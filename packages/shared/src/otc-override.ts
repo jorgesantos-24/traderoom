@@ -204,7 +204,8 @@ export interface PublicOverrideState {
   active: boolean;
   /** When the price is back to normal (release end), epoch ms. */
   untilMs: number | null;
-  targetPrice: number | null;
+  /** Scheduled override: when its minute opens, epoch ms. Null otherwise. */
+  scheduledFor: number | null;
 }
 
 /** GET /api/admin/otc-override */

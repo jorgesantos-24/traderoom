@@ -393,19 +393,20 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
     },
 
     async publicState(symbol) {
-      const { rows } = await pool.query<{ target_price: string | null; candle_close_ms: string }>(
-        `select o.target_price::text as target_price, o.candle_close_ms::text as candle_close_ms
+      const { rows } = await pool.query<{ scheduled_for: string | null; candle_close_ms: string }>(
+        `select case when o.direction is not null then o.candle_open_ms::text end as scheduled_for,
+                o.candle_close_ms::text as candle_close_ms
            from otc_overrides o join assets a on a.id = o.asset_id
           where o.active and a.symbol = $1 and o.candle_close_ms + $2 > $3`,
         [symbol, OTC_OVERRIDE_RELEASE_MS, now()],
       );
       const r = rows[0];
-      if (!r) return { active: false, untilMs: null, targetPrice: null };
-      // Announced from creation, before the ramp moves anything. Scheduled: no target until the ws resolves it.
+      if (!r) return { active: false, untilMs: null, scheduledFor: null };
+      // Active from creation, before the ramp moves anything. Never carries the target.
       return {
         active: true,
         untilMs: Number(r.candle_close_ms) + OTC_OVERRIDE_RELEASE_MS,
-        targetPrice: r.target_price === null ? null : Number(r.target_price),
+        scheduledFor: r.scheduled_for === null ? null : Number(r.scheduled_for),
       };
     },
   };

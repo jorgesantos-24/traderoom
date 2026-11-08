@@ -10,7 +10,6 @@ import { createAssetRepo } from './services/assets.js';
 import { createAuthService } from './services/auth.js';
 import { createCandleService } from './services/candles.js';
 import { createOtcCandleSource } from './services/otc-candles.js';
-import { createOverrideMarkSource } from './services/override-marks.js';
 import { createOrderLimitsRepo } from './services/order-limits.js';
 import { createAdminService } from './services/admin.js';
 import { createOrderService, redisDueScheduler, redisPriceReader } from './services/orders.js';
@@ -106,7 +105,6 @@ const app = await buildApp(
     }),
     kyc,
     otcOverride: createOtcOverrideService({ pool, redis }),
-    overrideMarks: createOverrideMarkSource(pool),
     metrics,
   },
   {

@@ -183,11 +183,6 @@ function Section({
                 <span className="block truncate text-sm font-medium text-text">{name(o.symbol)}</span>
                 <span className="block text-xs text-muted">
                   {o.payoutPct}%
-                  {o.overrideId && (
-                    <span className="ml-1.5 text-warn" title="Aberta com preço definido pela plataforma" data-testid="history-platform-price">
-                      · preço da plataforma
-                    </span>
-                  )}
                 </span>
               </span>
               <span className="shrink-0 text-right">
@@ -274,7 +269,6 @@ function OperationDetail({ order: o, name, onTrade }: { order: OrderView; name: 
           <InfoRow label="Fechamento">{formatTime(o.expiresAt)}</InfoRow>
           <InfoRow label="Preço de abertura">
             {formatPrice(o.openPrice)}
-            {o.overrideId && <span className="ml-1.5 text-xs text-warn">(preço da plataforma)</span>}
           </InfoRow>
           <InfoRow label="Preço de fechamento">{o.closePrice ? formatPrice(o.closePrice) : '—'}</InfoRow>
         </dl>

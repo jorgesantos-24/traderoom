@@ -192,37 +192,3 @@ input[type='number']::-webkit-outer-spin-button {
     display: none;
   }
 }
-
-/* Candle whose close the platform set (price override): tinted column behind the bar, dot above it. */
-.override-col {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  visibility: hidden;
-  background: color-mix(in oklab, var(--color-warn) 7%, transparent);
-}
-.override-dot {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 5px;
-  height: 5px;
-  visibility: hidden;
-  border-radius: 9999px;
-  background: color-mix(in oklab, var(--color-warn) 80%, transparent);
-}
-.override-tip {
-  position: absolute;
-  bottom: 9px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 3px 7px;
-  border: 1px solid color-mix(in oklab, var(--color-warn) 40%, transparent);
-  border-radius: 6px;
-  white-space: nowrap;
-  font-size: 11px;
-  line-height: 1.35;
-  color: var(--color-text);
-  background: color-mix(in oklab, var(--color-bg) 92%, transparent);
-}

@@ -25,7 +25,6 @@ import { paymentRoutes } from './routes/payments.js';
 import { kycRoutes } from './routes/kyc.js';
 import { otcOverrideRoutes } from './routes/otc-override.js';
 import type { OtcOverrideService } from './services/otc-override.js';
-import type { OverrideMarkSource } from './services/override-marks.js';
 import type { KycService } from './services/kyc.js';
 
 export const BODY_LIMIT_BYTES = 16 * 1024;
@@ -44,8 +43,6 @@ export interface AppDeps {
   payments: PaymentService;
   kyc: KycService;
   otcOverride: OtcOverrideService;
-  /** Marks on candles whose close a price override set. */
-  overrideMarks: OverrideMarkSource;
   metrics: Registry;
 }
 
@@ -121,7 +118,7 @@ export async function buildApp(deps: AppDeps, opts: AppOptions): Promise<Fastify
     const stopWarming = candles.startWarming(opts.warmCandleIntervals);
     app.addHook('onClose', async () => stopWarming());
   }
-  marketRoutes(app, { candles, marks: deps.overrideMarks });
+  marketRoutes(app, { candles });
   orderRoutes(app, { orders: deps.orders, wallet: deps.wallet, assets: deps.assets, limits: deps.limits, metrics: deps.metrics });
   adminRoutes(app, { admin: deps.admin, metrics: deps.metrics });
   otcOverrideRoutes(app, { otcOverride: deps.otcOverride, metrics: deps.metrics });

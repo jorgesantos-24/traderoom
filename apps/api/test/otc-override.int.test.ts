@@ -34,7 +34,6 @@ import { createAuthService } from '../src/services/auth.js';
 import { createOrderLimitsRepo } from '../src/services/order-limits.js';
 import { createOrderService, redisDueScheduler, redisPriceReader } from '../src/services/orders.js';
 import { createOtcOverrideService, type OtcOverrideService } from '../src/services/otc-override.js';
-import { createOverrideMarkSource } from '../src/services/override-marks.js';
 import { settleOrder } from '../src/services/settlement.js';
 import { CookieJar, testApp } from './helpers.js';
 
@@ -567,8 +566,8 @@ describe('market assets (1m close only)', () => {
     expect(state.assets.find((a) => a.symbol === MKT)).toMatchObject({ kind: 'market', decimals: 2, maxOverridePct: 0.1 });
     expect(state.assets.find((a) => a.symbol === OTC_A)).toMatchObject({ kind: 'otc', maxOverridePct: null });
 
-    expect(await svc.publicState(MKT)).toEqual({ active: true, untilMs: T0 + MIN + OTC_OVERRIDE_RELEASE_MS, targetPrice: 50_040 });
-    expect(await svc.publicState(OTC_B)).toEqual({ active: false, untilMs: null, targetPrice: null });
+    expect(await svc.publicState(MKT)).toEqual({ active: true, untilMs: T0 + MIN + OTC_OVERRIDE_RELEASE_MS, scheduledFor: null });
+    expect(await svc.publicState(OTC_B)).toEqual({ active: false, untilMs: null, scheduledFor: null });
   });
 
   it('400 for any interval but 1m', async () => {
@@ -702,7 +701,7 @@ describe('scheduled override (market, 1m)', () => {
       [v.id],
     );
     expect(rows[0]).toEqual({ target_price: null, direction: 'up', body_ticks: 20, ramp_ms: MIN - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS });
-    expect(await svc.publicState(MKT)).toEqual({ active: true, untilMs: OPEN + MIN + OTC_OVERRIDE_RELEASE_MS, targetPrice: null });
+    expect(await svc.publicState(MKT)).toEqual({ active: true, untilMs: OPEN + MIN + OTC_OVERRIDE_RELEASE_MS, scheduledFor: OPEN });
   });
 
   it('400 in the past, inside the minimum lead, past the horizon, on an OTC asset, and with the slot taken', async () => {
@@ -759,17 +758,12 @@ describe('scheduled override (market, 1m)', () => {
     await saveOverrideTarget(pool, v.id, '50009.99');
     const state = await svc.get();
     expect(state.override).toMatchObject({ id: v.id, targetPrice: 50_001.25 });
-
-    // The candle mark shows up once the target is known.
-    const marks = createOverrideMarkSource(pool);
-    const candle = { t: OPEN, o: 50_001, h: 50_002, l: 50_000, c: 50_001.25, v: 0 };
-    expect(await marks.marks(MKT, '1m', [candle])).toEqual([{ openMs: OPEN, targetPrice: 50_001.25, direction: 'up' }]);
   });
 
-  // Its own minute: earlier tests leave marked rows on OPEN.
+  // Its own minute: earlier tests leave override rows on OPEN.
   const BOOKED = OPEN + 5 * MIN;
 
-  it('ws restarted inside the candle: the second run reads target_price and closes where the mark points', async () => {
+  it('ws restarted inside the candle: the second run reads target_price and closes on the saved target', async () => {
     const v = await svc.apply(adminId, sched({ atMs: BOOKED, ticks: 20 }));
     const wire = parseOtcOverride(await redis.get(KEY));
     if (!wire) throw new Error('no wire');
@@ -792,7 +786,5 @@ describe('scheduled override (market, 1m)', () => {
     }
     expect(close).toBe(50_001.2);
     expect(saved).toEqual([]);
-    const marks = await createOverrideMarkSource(pool).marks(MKT, '1m', [{ t: BOOKED, o: 50_001, h: 50_030, l: 50_001, c: close, v: 0 }]);
-    expect(marks).toEqual([{ openMs: BOOKED, targetPrice: close, direction: 'up' }]);
   });
 });
