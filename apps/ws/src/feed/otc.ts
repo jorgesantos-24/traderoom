@@ -82,6 +82,8 @@ const TREND_SCALE = 0.02;
 
 /** One intervention, bound to a single candle: force its close, then hand the price back. */
 interface ActiveOverride {
+  /** otc_overrides.id, stamped on every tick whose price it changes. */
+  id: string | undefined;
   /** Target in log-price; the exact close. */
   targetX: number;
   /** Where the price was when the admin took over (informational: the release follows the shadow). */
@@ -137,6 +139,16 @@ export class OtcWalk {
     return this.ov !== null;
   }
 
+  /** Id of the override while it is changing the price (from the ramp start); null otherwise. */
+  get overrideId(): string | null {
+    return this.ov?.shadow ? (this.ov.id ?? null) : null;
+  }
+
+  /** The price without the override: the shadow's while one is running, else the current price. */
+  get naturalPrice(): number {
+    return this.ov?.shadow ? this.ov.shadow.price : this.price;
+  }
+
   /**
    * Installs (or replaces) the intervention. Called on every tick with the same payload from Redis,
    * so it must be idempotent: same candle and same target must not restart the ramp or reset `x0`.
@@ -156,6 +168,7 @@ export class OtcWalk {
     if (this.ov && this.ov.closeMs === o.closeMs && this.ov.targetX === targetX) {
       // Same intervention: only pull the ramp earlier if the API decided so.
       this.ov.rampStartMs = Math.min(this.ov.rampStartMs, o.rampStartMs);
+      this.ov.id ??= o.id;
       return;
     }
     // A finished one arriving again (the key outlives the release by its TTL margin, or the ws
@@ -167,6 +180,7 @@ export class OtcWalk {
     // A new intervention (first one, new target or another candle): nothing is captured yet, the
     // ramp start does that, so a target set long before the ramp does not drag an old price in.
     this.ov = {
+      id: o.id,
       targetX,
       basePrice: base > 0 ? base : this.price,
       // Never in the past: read late (poll lag, restart, re-target) the ramp would start half done and jump.
@@ -372,7 +386,14 @@ export class OtcFeed {
       const p = s.walk.step((now - s.lastMs) / 1000, now);
       s.lastMs = now;
       const price = s.walk.format(p);
-      out.push({ symbol, price, value: Number(price), ts: now, recvMs: now, provider: 'otc' });
+      const tick: Tick = { symbol, price, value: Number(price), ts: now, recvMs: now, provider: 'otc' };
+      // While an override changes the price: mark it, and keep the natural (shadow) price for settlement.
+      const ov = s.walk.overrideId;
+      if (ov) {
+        tick.ov = ov;
+        tick.realPrice = s.walk.format(s.walk.naturalPrice);
+      }
+      out.push(tick);
     }
     return out;
   }

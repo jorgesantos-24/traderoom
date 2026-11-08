@@ -27,6 +27,7 @@ export interface RelaySinks {
 export function toPriceRecord(t: Tick): PriceRecord {
   const rec: PriceRecord = { p: t.price, ts: t.ts, rt: t.recvMs, src: t.provider };
   if (t.ov) rec.ov = t.ov;
+  if (t.ov && t.realPrice) rec.realPrice = t.realPrice;
   return rec;
 }
 

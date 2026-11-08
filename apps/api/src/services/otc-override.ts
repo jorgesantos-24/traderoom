@@ -262,8 +262,8 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
           });
 
           const w: OtcOverrideWire = {
-            // The OTC wire stays as it was: the generator needs no id (it never stamps prices).
-            ...(market ? { id: inserted.id, kind: 'market' as const, jitter: asset.market_jitter } : {}),
+            id: inserted.id,
+            ...(market ? { kind: 'market' as const, jitter: asset.market_jitter } : {}),
             symbol: asset.symbol,
             targetPrice: targetText,
             basePrice: base,

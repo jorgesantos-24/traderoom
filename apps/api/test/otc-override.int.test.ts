@@ -19,7 +19,8 @@ import {
   type PriceRecord,
 } from '@traderoom/shared';
 // The real generator, driven by the wire this API writes: the same code the ws runs.
-import { OtcWalk } from '../../ws/src/feed/otc.js';
+import { OtcFeed, OtcWalk } from '../../ws/src/feed/otc.js';
+import { insertSnapshots, toPriceRecord, type SnapshotRow } from '../../ws/src/feed/sinks.js';
 import { loadConfig } from '../src/config.js';
 import { AppError } from '../src/lib/errors.js';
 import { createPool } from '../src/lib/db.js';
@@ -148,6 +149,7 @@ describe('apply', () => {
 
     const wire = parseOtcOverride(await redis.get(KEY));
     expect(wire).toEqual({
+      id: v.id,
       symbol: OTC_A,
       targetPrice: '101.23',
       basePrice: '100.00',
@@ -287,6 +289,87 @@ describe('settlement on the forced close', () => {
 
       await svc.release(adminId);
     }
+  });
+});
+
+describe('OTC: same disclosure and protection as market assets', () => {
+  it('orders opened before the override settle on the natural path; opened during it, on the shown price', async () => {
+    clock = T0 + 15_000;
+    await setPrice(OTC_A, '100.00');
+    const v = await svc.apply(adminId, input({ assetId: ids.a, targetPrice: 100.6 }));
+    const wire = parseOtcOverride(await redis.get(KEY));
+    expect(wire?.id).toBe(v.id);
+
+    // The ws generator, its ticks and snapshots, exactly as the relay builds them.
+    const fail = (err: unknown) => {
+      throw err;
+    };
+    const feed = new OtcFeed({ lastPrice: async () => 100, writeHistory: async () => {}, onError: fail });
+    await feed.sync([{ id: ids.a, symbol: OTC_A, otc: { startPrice: 100, volPctHour: 0.8, decimals: 2 } }], clock);
+    feed.setOverride(wire, clock);
+    const start = clock;
+    const rows: SnapshotRow[] = [];
+    let last = feed.tick(start)[0];
+    let during: ReturnType<typeof toPriceRecord> | null = null;
+    for (let t = start + 500; t <= v.releaseEndMs + 3000; t += 500) {
+      last = feed.tick(t)[0];
+      if (!last) throw new Error('no OTC tick');
+      if (t < v.rampStartMs || t >= v.releaseEndMs) expect(last.ov).toBeUndefined();
+      else expect(last.ov).toBe(v.id);
+      if (!during && last.ov && t >= v.holdStartMs - 2000) during = toPriceRecord(last);
+      if ((t - start) % 1000 === 500) rows.push({ assetId: ids.a, price: last.price, realPrice: last.realPrice ?? null, capturedAt: new Date(t - 183) });
+    }
+    await pool.query('delete from price_snapshots where asset_id = $1', [ids.a]);
+    await insertSnapshots(pool, rows);
+
+    // Snapshots of changed ticks keep the natural price; the others have none.
+    const { rows: snaps } = await pool.query<{ price: string; real_price: string | null; at: string }>(
+      `select price::text as price, real_price::text as real_price, (extract(epoch from captured_at) * 1000)::bigint::text as at
+         from price_snapshots where asset_id = $1 order by captured_at`,
+      [ids.a],
+    );
+    for (const s of snaps) {
+      const at = Number(s.at);
+      if (at < v.rampStartMs || at >= v.releaseEndMs) expect(s.real_price).toBeNull();
+    }
+    const atExpiry = snaps.filter((s) => Number(s.at) <= v.candleCloseMs).at(-1);
+    expect(atExpiry?.price).toBe('100.60000000');
+    expect(atExpiry?.real_price).not.toBeNull();
+    expect(atExpiry?.real_price).not.toBe('100.60000000');
+
+    // Entry on a marked OTC price records the override, through the real order service.
+    const orders = createOrderService({
+      pool,
+      prices: redisPriceReader(redis),
+      scheduler: redisDueScheduler(redis, QUEUE),
+      assets: createAssetRepo(pool, { ttlMs: 0 }),
+      limits: createOrderLimitsRepo(pool, { ttlMs: 0 }),
+      now: () => clock,
+    });
+    const user = await newUser('Cliente OTC');
+    await pool.query(`insert into accounts (user_id, kind, balance_cents) values ($1, 'real', 100000)`, [user]);
+    if (!during) throw new Error('no marked tick in the hold');
+    clock = during.rt;
+    await redis.set(RedisKeys.price(OTC_A), JSON.stringify(during), 'PX', 600_000);
+    const body = { assetId: ids.a, direction: 'call', stakeCents: 1000, durationSec: 60, account: 'real' } as const;
+    expect((await orders.create(user, body, randomUUID())).order.overrideId).toBe(v.id);
+
+    // Same expiry, one order opened before the override (natural price), one opened during it.
+    const open = async (overrideId: string | null) => {
+      const { rows: r } = await pool.query<{ id: string }>(
+        `insert into orders (user_id, asset_id, direction, stake_cents, payout_pct, duration_sec, open_price, opens_at, expires_at, idempotency_key, account, override_id)
+         values ($1, $2, 'call', 10000, 90, 60, '100.00', $3, $4, $5, 'real', $6) returning id`,
+        [user, ids.a, new Date(v.candleCloseMs - MIN), new Date(v.candleCloseMs), randomUUID(), overrideId],
+      );
+      return r[0]?.id ?? '';
+    };
+    const closeOf = async (id: string) => {
+      await settleOrder(pool, id, v.candleCloseMs + 1500);
+      const { rows: r } = await pool.query<{ close_price: string }>('select close_price::text as close_price from orders where id = $1', [id]);
+      return r[0]?.close_price;
+    };
+    expect(await closeOf(await open(null))).toBe(atExpiry?.real_price);
+    expect(await closeOf(await open(v.id))).toBe('100.60000000');
   });
 });
 

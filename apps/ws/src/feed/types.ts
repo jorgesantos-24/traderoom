@@ -20,7 +20,7 @@ export interface Tick {
   provider: FeedProvider;
   /** Set when a price override changed `price`: the otc_overrides id. */
   ov?: string;
-  /** With `ov`: the price the provider really sent. */
+  /** With `ov`: the price without the override (what the provider sent, or the OTC natural path). */
   realPrice?: string;
 }
 

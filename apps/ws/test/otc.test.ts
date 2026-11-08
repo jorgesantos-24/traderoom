@@ -439,4 +439,38 @@ describe('OtcWalk override', () => {
     expect(last.find((x) => x.symbol === 'BTCOTC')?.price).toBe('76600.00');
     expect(last.find((x) => x.symbol === 'ETHOTC')?.price).not.toBe('76600.00');
   });
+
+  it('OtcFeed marks ticks with ov and the natural price only while the override changes the price', async () => {
+    const feed = new OtcFeed({ lastPrice: async () => 76_000, writeHistory: async () => {}, normal: seeded(5), onError: () => {} });
+    await feed.sync([{ id: 1, symbol: 'BTCOTC', otc: BTC }], START);
+    const w = wire('76600.00', { id: '9' });
+    const releaseEnd = CLOSE + OTC_OVERRIDE_RELEASE_MS;
+    feed.setOverride(w, START);
+    let marked = 0;
+    for (let t = START + TICK_MS; t <= releaseEnd + 3000; t += TICK_MS) {
+      const tick = feed.tick(t).find((x) => x.symbol === 'BTCOTC');
+      if (!tick) throw new Error('no tick');
+      if (t < w.rampStartMs || t >= releaseEnd) {
+        expect(tick.ov).toBeUndefined();
+        expect(tick.realPrice).toBeUndefined();
+        continue;
+      }
+      marked++;
+      expect(tick.ov).toBe('9');
+      expect(tick.realPrice).toMatch(/^\d+\.\d{2}$/);
+      // In the hold the shown price is the target; the natural path is elsewhere.
+      if (t >= CLOSE - OTC_OVERRIDE_HOLD_MS && t <= CLOSE) {
+        expect(tick.price).toBe('76600.00');
+        expect(tick.realPrice).not.toBe('76600.00');
+      }
+    }
+    expect(marked).toBeGreaterThan(10);
+
+    // A wire without an id (written before ids existed) changes the price but cannot mark it.
+    const legacy = new OtcWalk(BTC, 76_000, seeded(6));
+    legacy.setOverride(wire('76600.00'), START);
+    legacy.step(TICK_MS / 1000, w.rampStartMs);
+    expect(legacy.overrideId).toBeNull();
+    expect(legacy.naturalPrice).not.toBe(legacy.price);
+  });
 });
