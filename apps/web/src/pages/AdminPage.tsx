@@ -84,7 +84,7 @@ export function AdminPage() {
       <div role="status" aria-live="polite" className="sr-only" data-testid="admin-notice">
         {notice}
       </div>
-      <div role="tablist" aria-label="Seções do admin" className="mb-4 flex gap-1 border-b border-border" onKeyDown={onKey}>
+      <div role="tablist" aria-label="Seções do admin" className="scrollbar-none mb-4 flex gap-1 overflow-x-auto shadow-[inset_0_-1px_0] shadow-border" onKeyDown={onKey}>
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -99,7 +99,7 @@ export function AdminPage() {
             tabIndex={tab === t.id ? 0 : -1}
             onClick={() => select(t.id)}
             className={cx(
-              '-mb-px border-b-2 px-3 py-2 text-sm font-medium',
+              'shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium',
               tab === t.id ? 'border-brand text-text' : 'border-transparent text-muted hover:text-text',
             )}
           >

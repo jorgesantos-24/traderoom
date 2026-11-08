@@ -30,7 +30,7 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
 
   return (
     <>
-      <div role="tablist" aria-label="Gráficos abertos" className="flex min-w-0 items-center gap-1 overflow-x-auto">
+      <div role="tablist" aria-label="Gráficos abertos" className="scrollbar-none flex min-w-0 flex-1 items-center gap-1 overflow-x-auto md:flex-initial">
         {open.map((a) => {
           const selected = a.symbol === active;
           return (
@@ -80,7 +80,7 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
         aria-label="Abrir outro gráfico"
         title="Abrir outro gráfico"
         onClick={() => setPicking(true)}
-        className="flex size-10 shrink-0 items-center justify-center rounded-control border border-border bg-field text-xl font-semibold text-muted hover:border-brand hover:text-brand"
+        className="flex size-9 shrink-0 items-center sm:size-10 justify-center rounded-control border border-border bg-field text-xl font-semibold text-muted hover:border-brand hover:text-brand"
       >
         +
       </button>

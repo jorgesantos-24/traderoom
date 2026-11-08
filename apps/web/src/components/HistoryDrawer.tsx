@@ -79,7 +79,7 @@ export function HistoryDrawer({ open, onClose }: { open: boolean; onClose(): voi
         aria-hidden={!open}
         inert={!open}
         className={cx(
-          'absolute inset-y-0 left-0 z-40 flex w-[min(360px,calc(100vw-76px))] flex-col border-r border-border bg-bg shadow-2xl',
+          'absolute inset-y-0 left-0 z-40 flex w-[min(360px,100vw)] md:w-[min(360px,calc(100vw-76px))] flex-col border-r border-border bg-bg shadow-2xl',
           'transition-transform duration-300 ease-out',
           open ? 'translate-x-0' : '-translate-x-full',
         )}

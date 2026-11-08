@@ -294,7 +294,7 @@ function OverrideScreen() {
             ))}
           </select>
         </div>
-        <dl className="ml-auto grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-3">
+        <dl className="grid w-full sm:ml-auto sm:w-auto grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-3">
           <dt className="text-muted">Preço atual</dt>
           <dd className="font-mono tabular-nums sm:col-span-2" data-testid="otc-price">
             {fmt(price)}
@@ -336,7 +336,7 @@ function OverrideScreen() {
               value={targetText}
               onChange={(e) => onTargetText(e.target.value)}
               placeholder={price === null ? '' : fmt(price)}
-              className="w-48"
+              className="w-full sm:w-48"
             />
             <dl className="grid grid-cols-[auto_auto] gap-x-4 gap-y-1 text-sm">
               <dt className="text-muted">Distância</dt>
@@ -451,7 +451,7 @@ function OverrideChart({ candles, decimals, price, editTarget, activeTarget, can
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(([e]) => e && setWidth(Math.max(320, Math.floor(e.contentRect.width))));
+    const ro = new ResizeObserver(([e]) => e && setWidth(Math.max(240, Math.floor(e.contentRect.width))));
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -626,7 +626,7 @@ function OverrideChart({ candles, decimals, price, editTarget, activeTarget, can
   };
 
   return (
-    <div ref={wrapRef} className="w-full">
+    <div ref={wrapRef} className="w-full min-w-0 overflow-hidden">
       <canvas
         ref={canvasRef}
         style={{ width, height: HEIGHT, cursor: canEdit && (dragging || hover) ? 'ns-resize' : 'default', touchAction: 'none' }}

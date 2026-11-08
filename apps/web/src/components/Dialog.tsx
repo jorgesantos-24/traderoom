@@ -44,7 +44,7 @@ export function Dialog({
       className={`m-auto ${wide ? 'w-[min(900px,calc(100vw-2rem))]' : 'w-[min(440px,calc(100vw-2rem))]'} rounded-card border border-border bg-surface p-0 text-text backdrop:bg-bg/80`}
     >
       {open && (
-        <div className="flex flex-col gap-4 p-5">
+        <div className="flex flex-col gap-4 p-4 sm:p-5">
           <h2 id={titleId} className="text-lg font-semibold">
             {title}
           </h2>

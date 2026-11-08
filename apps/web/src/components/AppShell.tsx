@@ -33,6 +33,13 @@ const navItemCls = (active: boolean) =>
     active ? 'bg-brand/10 text-brand' : 'text-muted hover:bg-field hover:text-text',
   );
 
+/** Bottom tab bar on phones. */
+const tabItemCls = (active: boolean) =>
+  cx(
+    'flex min-w-0 flex-1 flex-col items-center gap-0.5 px-1 pt-2 pb-1.5 text-[11px] font-medium',
+    active ? 'text-brand' : 'text-muted hover:text-text',
+  );
+
 function NavIcon({ name }: { name: string }) {
   return (
     <svg
@@ -83,6 +90,40 @@ export function AppShell({
     }
   };
 
+  const isAdmin = pathname.startsWith('/admin');
+  const navItems = (cls: (active: boolean) => string) => (
+    <>
+      {NAV.map((item) => (
+        <Link
+          key={item.href}
+          href={item.href}
+          aria-current={pathname === item.href ? 'page' : undefined}
+          onClick={closeHistory}
+          className={cls(pathname === item.href && !historyOpen)}
+        >
+          <NavIcon name={item.href} />
+          {item.label}
+        </Link>
+      ))}
+      <button
+        type="button"
+        aria-expanded={historyOpen}
+        aria-controls="history-drawer"
+        onClick={() => setHistoryOpen((v) => !v)}
+        className={cls(historyOpen)}
+      >
+        <NavIcon name="history" />
+        Histórico
+      </button>
+      {user.role === 'admin' && (
+        <Link href="/admin" aria-current={isAdmin ? 'page' : undefined} onClick={closeHistory} className={cls(isAdmin && !historyOpen)}>
+          <NavIcon name="/admin" />
+          Admin
+        </Link>
+      )}
+    </>
+  );
+
   return (
     <div className={cx('flex flex-col', fullBleed ? 'h-full' : 'min-h-full')}>
       <a
@@ -92,13 +133,16 @@ export function AppShell({
         Pular para o conteúdo
       </a>
       <header className="sticky top-0 z-30 border-b border-border bg-surface/95 backdrop-blur">
-        <div className="flex items-center gap-x-4 gap-y-2 px-4 py-2">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-2 py-1.5 sm:gap-x-4 sm:px-4 sm:py-2 md:flex-nowrap">
           <Link href="/traderoom" className="flex shrink-0 items-center" aria-label="Kyden — início">
             <img src="/brand/kyden-mark.png" alt="" className="size-8 rounded-md sm:hidden" />
             <img src="/brand/kyden-logo.png" alt="" className="hidden h-9 w-auto sm:block" />
           </Link>
-          {headerExtra && <div className="flex min-w-0 flex-1 items-center gap-2">{headerExtra}</div>}
-          <div className="ml-auto flex shrink-0 items-center gap-2">
+          {/* Phones: wraps to a full-width second row; desktop: next to the logo. */}
+          {headerExtra && (
+            <div className="order-last flex min-w-0 basis-full items-center gap-2 md:order-none md:flex-1 md:basis-auto">{headerExtra}</div>
+          )}
+          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
             <ProfileMenu user={user} onOpenHistory={openHistory} onLogout={() => void onLogout()} leaving={leaving} />
             <AccountSwitcher />
             <DepositButton />
@@ -109,46 +153,11 @@ export function AppShell({
       <div className="relative flex min-h-0 flex-1">
         <nav
           aria-label="Principal"
-          className="relative z-50 flex w-[76px] shrink-0 flex-col items-stretch gap-1 border-r border-border bg-surface px-1.5 py-2"
+          className="relative z-50 hidden w-[76px] shrink-0 flex-col items-stretch gap-1 border-r border-border bg-surface px-1.5 py-2 md:flex"
         >
-          {NAV.map((item) => {
-            const active = pathname === item.href && !historyOpen;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={pathname === item.href ? 'page' : undefined}
-                onClick={closeHistory}
-                className={navItemCls(active)}
-              >
-                <NavIcon name={item.href} />
-                {item.label}
-              </Link>
-            );
-          })}
-          <button
-            type="button"
-            aria-expanded={historyOpen}
-            aria-controls="history-drawer"
-            onClick={() => setHistoryOpen((v) => !v)}
-            className={navItemCls(historyOpen)}
-          >
-            <NavIcon name="history" />
-            Histórico
-          </button>
-          {user.role === 'admin' && (
-            <Link
-              href="/admin"
-              aria-current={pathname.startsWith('/admin') ? 'page' : undefined}
-              onClick={closeHistory}
-              className={navItemCls(pathname.startsWith('/admin') && !historyOpen)}
-            >
-              <NavIcon name="/admin" />
-              Admin
-            </Link>
-          )}
+          {navItems(navItemCls)}
         </nav>
-        <div className="pointer-events-none absolute inset-y-0 right-0 left-[76px] overflow-hidden">
+        <div className="pointer-events-none absolute inset-y-0 right-0 left-0 overflow-hidden md:left-[76px]">
           <div className="pointer-events-auto contents">
             <HistoryDrawer open={historyOpen} onClose={closeHistory} />
           </div>
@@ -156,11 +165,17 @@ export function AppShell({
         <main
           id="main"
           tabIndex={-1}
-          className={cx('min-w-0 flex-1 outline-none', fullBleed ? 'min-h-0 p-2' : 'mx-auto max-w-[1440px] px-4 py-4')}
+          className={cx('min-w-0 flex-1 outline-none', fullBleed ? 'min-h-0 p-1 sm:p-2' : 'mx-auto w-full max-w-[1440px] px-3 py-3 sm:px-4 sm:py-4')}
         >
           {children}
         </main>
       </div>
+      <nav
+        aria-label="Principal (celular)"
+        className="sticky bottom-0 z-50 flex shrink-0 items-stretch justify-around border-t border-border bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
+      >
+        {navItems(tabItemCls)}
+      </nav>
     </div>
   );
 }

@@ -380,18 +380,21 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
   const bubbles = useMemo(() => resultBubbles(results, symbol), [results, symbol]);
 
   return (
-    <div className="flex h-full min-h-[320px]">
-      <div className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-border pt-2">
+    <div className="flex h-full min-h-[220px] lg:min-h-[320px]">
+      <div className="flex w-10 shrink-0 flex-col items-center gap-1 border-r border-border pt-2 sm:w-12">
         {toolbarTop}
         <IndicatorsButton onClick={() => setPickerOpen(true)} />
-        <div className="h-px w-6 bg-border" />
-        <DrawingToolbar
-          state={drawings}
-          onClearAll={() => {
-            drawings.commit([]);
-            drawings.select(null);
-          }}
-        />
+        {/* Drawing needs a precise pointer and room; phones get the chart instead. */}
+        <div className="hidden flex-col items-center gap-1 sm:flex">
+          <div className="h-px w-6 bg-border" />
+          <DrawingToolbar
+            state={drawings}
+            onClearAll={() => {
+              drawings.commit([]);
+              drawings.select(null);
+            }}
+          />
+        </div>
       </div>
       <div ref={hostRef} className="chart-map relative min-w-0 flex-1 overflow-hidden">
         <div
