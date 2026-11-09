@@ -10,11 +10,12 @@ import {
   type Registry,
 } from '@traderoom/shared';
 import { AppError } from '../lib/errors.js';
+import { webhookPath, type GatewayName } from '../lib/gateway.js';
 import { authOf } from '../plugins/security.js';
 import type { PaymentService } from '../services/payments.js';
 
-/** Where the gateway posts status changes. Exempt from CSRF and sessions; authenticated by HMAC signature. */
-export const WEBHOOK_PATH = '/api/webhooks/novus';
+/** Each gateway posts to its own path (see webhookPath); exempt from CSRF and sessions, authenticated by signature. */
+const WEBHOOK_PROVIDERS: GatewayName[] = ['novus', 'eagle'];
 
 export function paymentRoutes(app: FastifyInstance, deps: { payments: PaymentService; metrics: Registry }): void {
   const webhooks: Counter = deps.metrics.counter('payment_webhooks_total', 'Gateway notifications, by result.');
@@ -80,26 +81,27 @@ export function paymentRoutes(app: FastifyInstance, deps: { payments: PaymentSer
   void app.register(async (raw) => {
     raw.removeAllContentTypeParsers();
     raw.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: 64 * 1024 }, (_req, body, done) => done(null, body));
-    raw.post(WEBHOOK_PATH, { config: { rateLimit: false } }, async (req, reply) => {
-      const body = req.body;
-      if (!Buffer.isBuffer(body) || body.length === 0) throw new AppError(400, ErrorCode.BadRequest, 'Corpo vazio.');
-      const sig = req.headers['x-webhook-signature'];
-      let ok: boolean;
-      try {
-        ok = await deps.payments.handleWebhook(body, typeof sig === 'string' ? sig : undefined);
-      } catch (err) {
-        webhooks.inc({ result: 'error' });
-        req.log.error({ err }, 'payment webhook failed');
-        // 5xx: the gateway retries later.
-        throw err;
-      }
-      if (!ok) {
-        webhooks.inc({ result: 'bad_signature' });
-        req.log.warn('payment webhook with invalid signature');
-        throw new AppError(401, ErrorCode.Unauthorized, 'Assinatura inválida.');
-      }
-      webhooks.inc({ result: 'ok' });
-      return reply.send({ ok: true });
-    });
+    for (const provider of WEBHOOK_PROVIDERS) {
+      raw.post(webhookPath(provider), { config: { rateLimit: false } }, async (req, reply) => {
+        const body = req.body;
+        if (!Buffer.isBuffer(body) || body.length === 0) throw new AppError(400, ErrorCode.BadRequest, 'Corpo vazio.');
+        let ok: boolean;
+        try {
+          ok = await deps.payments.handleWebhook(provider, body, req.headers);
+        } catch (err) {
+          webhooks.inc({ provider, result: 'error' });
+          req.log.error({ err, provider }, 'payment webhook failed');
+          // 5xx: the gateway retries later.
+          throw err;
+        }
+        if (!ok) {
+          webhooks.inc({ provider, result: 'bad_signature' });
+          req.log.warn({ provider }, 'payment webhook with invalid signature');
+          throw new AppError(401, ErrorCode.Unauthorized, 'Assinatura inválida.');
+        }
+        webhooks.inc({ provider, result: 'ok' });
+        return reply.send({ ok: true });
+      });
+    }
   });
 }

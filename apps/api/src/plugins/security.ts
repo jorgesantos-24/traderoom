@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Redis } from 'ioredis';
 import { CSRF_HEADER, ErrorCode, SESSION_COOKIE } from '@traderoom/shared';
 import { AppError } from '../lib/errors.js';
+import { WEBHOOK_PATHS } from '../lib/gateway.js';
 import { generateToken, safeEqual } from '../lib/tokens.js';
 import { SESSION_TTL_SEC, type AuthService, type SessionInfo } from '../services/auth.js';
 
@@ -43,7 +44,7 @@ declare module 'fastify' {
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 /** The only state-changing route exempt from CSRF (spec). It rotates the CSRF token itself. */
 // The payment gateway's webhook has no cookies; it is authenticated by its HMAC signature instead.
-const CSRF_EXEMPT = new Set(['/api/auth/login', '/api/webhooks/novus']);
+const CSRF_EXEMPT = new Set(['/api/auth/login', ...WEBHOOK_PATHS]);
 
 /** Use inside handlers behind `requireAuth`. */
 export function authOf(req: FastifyRequest): SessionInfo {

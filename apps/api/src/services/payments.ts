@@ -3,6 +3,7 @@ import {
   ErrorCode,
   isValidCpf,
   normalizePixKey,
+  withdrawalFeeCents,
   onlyDigits,
   type AdminWithdrawalView,
   type AdminWithdrawalsQuery,
@@ -16,22 +17,14 @@ import {
   type PaymentsInfo,
   type PixKeyType,
   type WithdrawalStatus,
+  type WithdrawalSpeed,
   type WithdrawalView,
 } from '@traderoom/shared';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 import { inTransaction } from '../lib/db.js';
 import { AppError } from '../lib/errors.js';
 import { brlToUsdCents, FxUnavailableError, usdToBrlCents, type FxService } from '../lib/fx.js';
-import {
-  GatewayError,
-  isPayoutPayload,
-  parseChargeState,
-  parsePayoutState,
-  verifySignature,
-  type ChargeState,
-  type PaymentGateway,
-  type PayoutState,
-} from '../lib/novus.js';
+import { GatewayError, type ChargeState, type GatewayName, type Headers, type PaymentGateway, type PayoutState } from '../lib/gateway.js';
 import { isoUs } from './orders.js';
 
 export interface PaymentLimits {
@@ -57,15 +50,19 @@ export const DEFAULT_PAYMENT_LIMITS: PaymentLimits = {
 
 export interface PaymentServiceDeps {
   pool: pg.Pool;
-  /** Null when no gateway key is configured: deposits and withdrawals are off. */
+  /** Takes new deposits and withdrawals. Null when no gateway is configured: deposits and withdrawals are off. */
   gateway: PaymentGateway | null;
-  /** Secrets that may sign incoming webhooks: the private key (postbacks) and, optionally, a global webhook secret. */
-  webhookSecrets: string[];
+  /** Gateways used before the current one: still asked (and heard) about their own open transactions. */
+  previousGateways?: PaymentGateway[];
   /** Absolute URL the gateway posts status changes to; null in development (status is then pulled on demand). */
   postbackUrl: string | null;
   limits?: PaymentLimits;
   /** Dollar quote: balances are in USD, Pix moves BRL. */
   fx: FxService;
+  /** Broker fee kept on a standard withdrawal (admin review), in percent of the amount asked. Default 0. */
+  withdrawFeePct?: number;
+  /** Broker fee on an instant withdrawal (sent to the gateway with no review). Unset/null = instant withdrawals off. */
+  instantWithdrawFeePct?: number | null;
   /** Throws unless the user passed identity verification (KYC). Omitted = no check. */
   requireKyc?: (userId: string) => Promise<void>;
 }
@@ -82,10 +79,17 @@ export interface PaymentService {
   approve(adminId: string, id: string): Promise<AdminWithdrawalView>;
   reject(adminId: string, id: string, note: string): Promise<AdminWithdrawalView>;
   refreshWithdrawal(id: string): Promise<AdminWithdrawalView>;
-  /** Verifies and applies a gateway notification. Returns false for a bad signature. */
-  handleWebhook(rawBody: Buffer, signature: string | undefined): Promise<boolean>;
-  applyChargeState(state: ChargeState): Promise<void>;
-  applyPayoutState(state: PayoutState): Promise<void>;
+  /** Verifies and applies a notification posted to that gateway's webhook. Returns false for a bad signature. */
+  handleWebhook(provider: GatewayName, rawBody: Buffer, headers: Headers): Promise<boolean>;
+  /**
+   * Asks each gateway about its open transactions: payouts being sent (EaglePay has no payout webhook) and
+   * unpaid charges (covers lost webhooks and development, where the gateway cannot reach us).
+   * Unpaid charges well past their expiry are closed. Returns how many were checked.
+   */
+  syncOpen(): Promise<{ deposits: number; withdrawals: number }>;
+  /** `provider` defaults to the current gateway. */
+  applyChargeState(state: ChargeState, provider?: GatewayName): Promise<void>;
+  applyPayoutState(state: PayoutState, provider?: GatewayName): Promise<void>;
 }
 
 const disabled = () => new AppError(503, ErrorCode.Unavailable, 'Depósitos e saques ainda não estão disponíveis.');
@@ -102,6 +106,7 @@ interface DepositRow {
   user_id: string;
   amount_cents: string;
   status: DepositStatus;
+  provider: string | null;
   provider_id: string | null;
   pix_code: string | null;
   expires_at: string | null;
@@ -110,7 +115,7 @@ interface DepositRow {
   created_at: string;
   paid_at: string | null;
 }
-const DEPOSIT_COLS = `id, user_id, amount_cents, status, provider_id, pix_code, ${isoUs('expires_at')} as expires_at, credited_cents, fx_rate,
+const DEPOSIT_COLS = `id, user_id, amount_cents, status, provider, provider_id, pix_code, ${isoUs('expires_at')} as expires_at, credited_cents, fx_rate,
   ${isoUs('created_at')} as created_at, ${isoUs('paid_at')} as paid_at`;
 const toDeposit = (r: DepositRow): DepositView => ({
   id: r.id,
@@ -129,10 +134,13 @@ interface WithdrawalRow {
   user_id: string;
   amount_cents: string;
   pix_amount_cents: string;
+  fee_cents: string;
   fx_rate: string;
   pix_key: string;
   pix_key_type: PixKeyType;
+  speed: WithdrawalSpeed;
   status: WithdrawalStatus;
+  provider: string | null;
   provider_id: string | null;
   provider_status: string | null;
   note: string | null;
@@ -143,13 +151,15 @@ interface WithdrawalRow {
   name?: string;
   cpf?: string | null;
 }
-const W_COLS = `w.id, w.user_id, w.amount_cents, w.pix_amount_cents, w.fx_rate, w.pix_key, w.pix_key_type, w.status, w.provider_id, w.provider_status, w.note,
+const W_COLS = `w.id, w.user_id, w.amount_cents, w.fee_cents, w.pix_amount_cents, w.fx_rate, w.pix_key, w.pix_key_type, w.speed, w.status, w.provider, w.provider_id, w.provider_status, w.note,
   w.last_error, ${isoUs('w.created_at')} as created_at, ${isoUs('w.completed_at')} as completed_at`;
 const toWithdrawal = (r: WithdrawalRow): WithdrawalView => ({
   id: r.id,
   amountCents: Number(r.amount_cents),
+  feeCents: Number(r.fee_cents),
   pixAmountCents: Number(r.pix_amount_cents),
   fxRate: Number(r.fx_rate),
+  speed: r.speed,
   pixKeyType: r.pix_key_type,
   pixKey: r.pix_key,
   status: r.status,
@@ -194,7 +204,14 @@ async function moveReal(
 
 export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
   const { pool, gateway } = deps;
+  const gateways = [...(gateway ? [gateway] : []), ...(deps.previousGateways ?? []).filter((g) => g.name !== gateway?.name)];
+  /** Only the gateway that holds a transaction is asked about it. */
+  const holder = (provider: string | null): PaymentGateway | null => gateways.find((g) => g.name === provider) ?? null;
   const limits = deps.limits ?? DEFAULT_PAYMENT_LIMITS;
+  const feePct = deps.withdrawFeePct ?? 0;
+  const instantFeePct = deps.instantWithdrawFeePct ?? null;
+  /** How long a payout request may be in flight; meanwhile the withdrawal cannot be refused. */
+  const SEND_GRACE = "interval '2 minutes'";
 
   async function depositById(db: pg.Pool | pg.PoolClient, id: string, lock = false): Promise<DepositRow | null> {
     const { rows } = await db.query<DepositRow>(`select ${DEPOSIT_COLS} from deposits where id = $1${lock ? ' for update' : ''}`, [id]);
@@ -225,6 +242,60 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
     }
   }
 
+  /**
+   * Sends an approved withdrawal to the gateway. adminId = the reviewer approving a standard withdrawal now;
+   * null = an instant one (already approved when made). Gateway errors are stored in last_error and rethrown.
+   */
+  async function sendPayout(id: string, adminId: string | null): Promise<void> {
+    if (!gateway) throw disabled();
+    const w = await inTransaction(pool, async (c) => {
+      const { rows } = await c.query<WithdrawalRow>(`select ${W_COLS} from withdrawals w where w.id = $1 for update`, [id]);
+      const row = rows[0];
+      if (!row) throw new AppError(404, ErrorCode.NotFound, 'Saque não encontrado.');
+      // 'approved' without a gateway id = an earlier send failed; sending again is safe (same Idempotency-Key).
+      if (!(row.status === 'requested' || (row.status === 'approved' && !row.provider_id))) {
+        throw new AppError(409, ErrorCode.Conflict, 'Este saque já foi processado.');
+      }
+      const sending = await c.query(
+        `select 1 from withdrawals where id = $1 and send_started_at > now() - ${SEND_GRACE} and last_error is null`,
+        [id],
+      );
+      if (sending.rowCount) {
+        throw new AppError(409, ErrorCode.Conflict, 'O envio deste saque está em andamento. Aguarde alguns minutos e atualize.');
+      }
+      if (row.status === 'requested') {
+        if (!adminId) throw new AppError(409, ErrorCode.Conflict, 'Este saque precisa de aprovação.');
+        await c.query(`update withdrawals set status = 'approved', reviewed_by = $2, updated_at = now() where id = $1`, [id, adminId]);
+        await audit(c, adminId, 'withdrawal.approve', { withdrawalId: id, userId: row.user_id, amountCents: Number(row.amount_cents) });
+      }
+      await c.query('update withdrawals set send_started_at = now(), last_error = null where id = $1', [id]);
+      return row;
+    });
+
+    try {
+      const payout = await gateway.createPayout({
+        externalId: w.id,
+        amountCents: Number(w.pix_amount_cents),
+        pixKey: w.pix_key,
+        pixKeyType: w.pix_key_type,
+        description: `Saque ${w.id.slice(0, 8)}`,
+        postbackUrl: deps.postbackUrl,
+      });
+      await pool.query(
+        `update withdrawals set status = 'processing', provider = $4, provider_id = $2, provider_status = $3, last_error = null, updated_at = now()
+            where id = $1 and status = 'approved'`,
+        [id, payout.providerId, payout.status, gateway.name],
+      );
+      await service.applyPayoutState(payout);
+    } catch (err) {
+      await pool.query('update withdrawals set last_error = $2, updated_at = now() where id = $1', [
+        id,
+        err instanceof Error ? err.message.slice(0, 300) : 'erro',
+      ]);
+      throw err;
+    }
+  }
+
   const service: PaymentService = {
     async info(userId) {
       const { rows } = await pool.query<{ cpf: string | null; kyc_status: KycStatus }>('select cpf, kyc_status from users where id = $1', [
@@ -242,6 +313,8 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
         depositMinCents: limits.depositMinCents,
         depositMaxCents: limits.depositMaxCents,
         withdrawMinCents: limits.withdrawMinCents,
+        withdrawFeePct: feePct,
+        instantWithdrawFeePct: instantFeePct,
         depositRate: quote?.depositRate ?? null,
         withdrawRate: quote?.withdrawRate ?? null,
       };
@@ -296,8 +369,8 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
           postbackUrl: deps.postbackUrl,
         });
         await pool.query(
-          `update deposits set provider_id = $2, pix_code = $3, expires_at = $4, provider_status = $5, updated_at = now() where id = $1`,
-          [deposit.id, charge.providerId, charge.pixCode, charge.expiresAt, charge.status],
+          `update deposits set provider = $6, provider_id = $2, pix_code = $3, expires_at = $4, provider_status = $5, updated_at = now() where id = $1`,
+          [deposit.id, charge.providerId, charge.pixCode, charge.expiresAt, charge.status, gateway.name],
         );
       } catch (err) {
         await pool.query(`update deposits set status = 'failed', provider_status = $2, updated_at = now() where id = $1`, [
@@ -313,9 +386,10 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
     async getDeposit(userId, id) {
       let row = await depositById(pool, id);
       if (!row || row.user_id !== userId) throw new AppError(404, ErrorCode.NotFound, 'Depósito não encontrado.');
-      if (row.status === 'pending' && row.provider_id && gateway) {
+      const g = holder(row.provider);
+      if (row.status === 'pending' && row.provider_id && g) {
         try {
-          await service.applyChargeState(await gateway.getCharge(row.provider_id));
+          await service.applyChargeState(await g.getCharge(row.provider_id), g.name);
           row = (await depositById(pool, id)) ?? row;
         } catch (err) {
           // The webhook will still arrive; show the last known state.
@@ -339,8 +413,14 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
       if (input.amountCents < limits.withdrawMinCents) {
         throw new AppError(400, ErrorCode.ValidationFailed, `amountCents: o saque mínimo é ${fmtUsd(limits.withdrawMinCents)}.`);
       }
+      const speed: WithdrawalSpeed = input.speed ?? 'standard';
+      if (speed === 'instant' && instantFeePct === null) {
+        throw new AppError(400, ErrorCode.ValidationFailed, 'speed: saque automático indisponível no momento.');
+      }
       const rate = await currentQuote('withdraw');
-      const pixCents = usdToBrlCents(input.amountCents, rate);
+      // The client is debited the full amount; the broker keeps the fee and the Pix carries the rest.
+      const fee = withdrawalFeeCents(input.amountCents, speed === 'instant' ? (instantFeePct ?? 0) : feePct);
+      const pixCents = usdToBrlCents(input.amountCents - fee, rate);
       const key = normalizePixKey(input.pixKeyType, input.pixKey);
       if (!key) throw new AppError(400, ErrorCode.ValidationFailed, 'pixKey: chave Pix inválida para o tipo escolhido.');
 
@@ -355,9 +435,10 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
           throw new AppError(429, ErrorCode.RateLimited, 'Você já tem saques em andamento. Aguarde a conclusão para pedir outro.');
         }
         const ins = await c.query<{ id: string }>(
-          `insert into withdrawals (user_id, amount_cents, pix_amount_cents, fx_rate, pix_key, pix_key_type)
-           values ($1, $2, $3, $4, $5, $6) returning id`,
-          [userId, input.amountCents, pixCents, rate, key, input.pixKeyType],
+          `insert into withdrawals (user_id, amount_cents, fee_cents, pix_amount_cents, fx_rate, pix_key, pix_key_type, speed, status)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
+          // Instant: no review, it is approved as it is made.
+          [userId, input.amountCents, fee, pixCents, rate, key, input.pixKeyType, speed, speed === 'instant' ? 'approved' : 'requested'],
         );
         const wid = ins.rows[0]!.id;
         await moveReal(
@@ -365,13 +446,23 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
           userId,
           -input.amountCents,
           'withdrawal',
-          `Saque Pix (${input.pixKeyType}): ${fmt(pixCents)} (US$ 1 = ${fmtRate(rate)})`,
+          fee > 0
+            ? `Saque Pix${speed === 'instant' ? ' automático' : ''} (${input.pixKeyType}): ${fmt(pixCents)} = ${fmtUsd(input.amountCents - fee)} (US$ 1 = ${fmtRate(rate)}) + taxa de saque ${fmtUsd(fee)}`
+            : `Saque Pix (${input.pixKeyType}): ${fmt(pixCents)} (US$ 1 = ${fmtRate(rate)})`,
           {
             withdrawalId: wid,
           },
         );
         return wid;
       });
+      if (speed === 'instant') {
+        try {
+          await sendPayout(id, null);
+        } catch (err) {
+          // The request stands (money is held); it shows up for the admin to resend or refuse, with the error.
+          if (!(err instanceof GatewayError) && !(err instanceof AppError)) throw err;
+        }
+      }
       return toWithdrawal((await pool.query<WithdrawalRow>(`select ${W_COLS} from withdrawals w where w.id = $1`, [id])).rows[0]!);
     },
 
@@ -403,43 +494,12 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
     },
 
     async approve(adminId, id) {
-      if (!gateway) throw disabled();
-      const w = await inTransaction(pool, async (c) => {
-        const { rows } = await c.query<WithdrawalRow>(`select ${W_COLS} from withdrawals w where w.id = $1 for update`, [id]);
-        const row = rows[0];
-        if (!row) throw new AppError(404, ErrorCode.NotFound, 'Saque não encontrado.');
-        // 'approved' without a gateway id = an earlier send failed; sending again is safe (same Idempotency-Key).
-        if (!(row.status === 'requested' || (row.status === 'approved' && !row.provider_id))) {
-          throw new AppError(409, ErrorCode.Conflict, 'Este saque já foi processado.');
-        }
-        if (row.status === 'requested') {
-          await c.query(`update withdrawals set status = 'approved', reviewed_by = $2, updated_at = now() where id = $1`, [id, adminId]);
-          await audit(c, adminId, 'withdrawal.approve', { withdrawalId: id, userId: row.user_id, amountCents: Number(row.amount_cents) });
-        }
-        return row;
-      });
-
       try {
-        const payout = await gateway.createPayout({
-          externalId: w.id,
-          amountCents: Number(w.pix_amount_cents),
-          pixKey: w.pix_key,
-          pixKeyType: w.pix_key_type,
-          description: 'Saque',
-          postbackUrl: deps.postbackUrl,
-        });
-        await pool.query(
-          `update withdrawals set status = 'processing', provider_id = $2, provider_status = $3, last_error = null, updated_at = now()
-            where id = $1 and status = 'approved'`,
-          [id, payout.providerId, payout.status],
-        );
-        await service.applyPayoutState(payout);
+        await sendPayout(id, adminId);
       } catch (err) {
-        await pool.query('update withdrawals set last_error = $2, updated_at = now() where id = $1', [
-          id,
-          err instanceof Error ? err.message.slice(0, 300) : 'erro',
-        ]);
-        if (err instanceof GatewayError) throw new AppError(502, ErrorCode.Unavailable, `A Novus recusou o envio: ${err.message}`);
+        if (err instanceof GatewayError && gateway) {
+          throw new AppError(502, ErrorCode.Unavailable, `A ${gateway.label} recusou o envio: ${err.message}`);
+        }
         throw err;
       }
       return adminWithdrawal(pool, id);
@@ -452,6 +512,14 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
         if (!row) throw new AppError(404, ErrorCode.NotFound, 'Saque não encontrado.');
         if (!(row.status === 'requested' || (row.status === 'approved' && !row.provider_id))) {
           throw new AppError(409, ErrorCode.Conflict, 'Este saque já foi enviado ao banco e não pode mais ser recusado.');
+        }
+        // A send that has not reported back yet may still reach the bank: refusing now could pay twice.
+        const inFlight = await c.query(
+          `select 1 from withdrawals where id = $1 and send_started_at > now() - ${SEND_GRACE} and last_error is null`,
+          [id],
+        );
+        if (inFlight.rowCount) {
+          throw new AppError(409, ErrorCode.Conflict, 'O envio deste saque está em andamento. Aguarde alguns minutos e atualize.');
         }
         await c.query(`update withdrawals set status = 'rejected', note = $2, reviewed_by = $3, updated_at = now() where id = $1`, [
           id,
@@ -471,11 +539,15 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
 
     async refreshWithdrawal(id) {
       const w = await adminWithdrawal(pool, id);
-      const { rows } = await pool.query<{ provider_id: string | null }>('select provider_id from withdrawals where id = $1', [id]);
+      const { rows } = await pool.query<{ provider: string | null; provider_id: string | null }>(
+        'select provider, provider_id from withdrawals where id = $1',
+        [id],
+      );
       const providerId = rows[0]?.provider_id;
-      if (gateway && providerId) {
+      const g = holder(rows[0]?.provider ?? null);
+      if (g && providerId) {
         try {
-          await service.applyPayoutState(await gateway.getPayout(providerId));
+          await service.applyPayoutState(await g.getPayout(providerId), g.name);
         } catch (err) {
           if (err instanceof GatewayError) throw new AppError(502, ErrorCode.Unavailable, err.message);
           throw err;
@@ -485,17 +557,19 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
       return w;
     },
 
-    async applyChargeState(state) {
+    async applyChargeState(state, provider = gateway?.name) {
       await inTransaction(pool, async (c) => {
         const { rows } = await c.query<DepositRow>(
-          `select ${DEPOSIT_COLS} from deposits where provider_id = $1 or ($2::text ~ '^[0-9a-f-]{36}$' and id = $2::uuid) for update`,
-          [state.providerId, state.externalId ?? ''],
+          `select ${DEPOSIT_COLS} from deposits
+            where (provider = $3 and provider_id = $1) or ($2::text ~ '^[0-9a-f-]{36}$' and id = $2::uuid) for update`,
+          [state.providerId, state.externalId ?? '', provider ?? null],
         );
         const d = rows[0];
         if (!d) return;
         await c.query('update deposits set provider_status = $2, updated_at = now() where id = $1', [d.id, state.status]);
         const s = state.status;
-        if (d.status === 'pending' && s === 'paid') {
+        // A charge closed here as expired can still be paid at the bank: that money is the user's.
+        if ((d.status === 'pending' || d.status === 'expired') && s === 'paid') {
           // Credit what was actually paid (the gateway keeps underpayments pending until accepted).
           const paid = state.amountCents && state.amountCents > 0 ? state.amountCents : Number(d.amount_cents);
           const rate = Number(d.fx_rate);
@@ -506,7 +580,7 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
           }
         } else if (d.status === 'pending' && (s === 'canceled' || s === 'cancelled' || s === 'expired')) {
           await c.query(`update deposits set status = 'expired' where id = $1`, [d.id]);
-        } else if (d.status === 'pending' && (s === 'failed' || s === 'refused')) {
+        } else if (d.status === 'pending' && (s === 'failed' || s === 'refused' || s === 'rejected')) {
           await c.query(`update deposits set status = 'failed' where id = $1`, [d.id]);
         } else if (d.status === 'paid' && (s === 'refunded' || s === 'chargedback' || s === 'chargeback')) {
           // Money went back to the payer: take it back from the balance, as far as there is balance left.
@@ -534,12 +608,12 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
       });
     },
 
-    async applyPayoutState(state) {
+    async applyPayoutState(state, provider = gateway?.name) {
       await inTransaction(pool, async (c) => {
         const { rows } = await c.query<WithdrawalRow>(
           `select ${W_COLS} from withdrawals w
-            where w.provider_id = $1 or ($2::text ~ '^[0-9a-f-]{36}$' and w.id = $2::uuid) for update`,
-          [state.providerId, state.externalId ?? ''],
+            where (w.provider = $3 and w.provider_id = $1) or ($2::text ~ '^[0-9a-f-]{36}$' and w.id = $2::uuid) for update`,
+          [state.providerId, state.externalId ?? '', provider ?? null],
         );
         const w = rows[0];
         if (!w) return;
@@ -551,27 +625,91 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
         const inFlight = w.status === 'processing' || w.status === 'approved';
         if (inFlight && s === 'completed') {
           await c.query(`update withdrawals set status = 'completed', completed_at = now() where id = $1`, [w.id]);
-        } else if (inFlight && (s === 'failed' || s === 'canceled' || s === 'cancelled')) {
+        } else if (inFlight && (s === 'failed' || s === 'canceled' || s === 'cancelled' || s === 'rejected')) {
           await c.query(`update withdrawals set status = 'failed' where id = $1`, [w.id]);
           await moveReal(c, w.user_id, Number(w.amount_cents), 'withdrawal_return', 'Saque não concluído pelo banco; valor devolvido.', {
             withdrawalId: w.id,
           });
         } else if ((w.status === 'completed' || inFlight) && s === 'refunded') {
           // The bank returns reais; give back the dollars they correspond to at the withdrawal's rate.
+          // Give back the share of the original request (fee included) that the returned reais represent.
           const usd = Number(w.amount_cents);
-          const back = state.refundedAmountCents != null ? Math.min(brlToUsdCents(state.refundedAmountCents, Number(w.fx_rate)), usd) : usd;
+          const sent = Number(w.pix_amount_cents);
+          const back =
+            state.refundedAmountCents != null && sent > 0 ? Math.min(Math.round((usd * state.refundedAmountCents) / sent), usd) : usd;
           await c.query(`update withdrawals set status = 'returned' where id = $1`, [w.id]);
           await moveReal(c, w.user_id, back, 'withdrawal_return', 'Saque devolvido pelo banco de destino.', { withdrawalId: w.id });
         }
       });
     },
 
-    async handleWebhook(rawBody, signature) {
-      if (!deps.webhookSecrets.some((s) => verifySignature(rawBody, signature, s))) return false;
-      const body: unknown = JSON.parse(rawBody.toString('utf8'));
-      if (isPayoutPayload(body)) await service.applyPayoutState(parsePayoutState(body));
-      else await service.applyChargeState(parseChargeState(body));
+    async handleWebhook(provider, rawBody, headers) {
+      const g = holder(provider);
+      if (!g) return false;
+      const event = g.parseWebhook(rawBody, headers);
+      if (!event) return false;
+      if (event.kind === 'charge') await service.applyChargeState(event.state, g.name);
+      else if (event.kind === 'payout') await service.applyPayoutState(event.state, g.name);
+      else if (event.kind === 'charge-ref') {
+        // Only a charge we created is looked up, so a stray id costs no gateway call.
+        const known = await pool.query('select 1 from deposits where provider = $1 and provider_id = $2', [g.name, event.providerId]);
+        if (known.rowCount) await service.applyChargeState(await g.getCharge(event.providerId), g.name);
+      }
       return true;
+    },
+
+    async syncOpen() {
+      let deposits = 0;
+      let withdrawals = 0;
+      for (const g of gateways) {
+        const ws = await pool.query<{ provider_id: string }>(
+          `select provider_id from withdrawals
+            where status = 'processing' and provider = $1 and provider_id is not null
+            order by updated_at limit 50`,
+          [g.name],
+        );
+        for (const w of ws.rows) {
+          let error: string | null = null;
+          try {
+            await service.applyPayoutState(await g.getPayout(w.provider_id), g.name);
+          } catch (err) {
+            if (!(err instanceof GatewayError)) throw err;
+            error = err.message.slice(0, 300);
+          }
+          // Touch the row so the next round starts with the others.
+          await pool.query(
+            'update withdrawals set last_error = coalesce($3, last_error), updated_at = now() where provider = $1 and provider_id = $2',
+            [g.name, w.provider_id, error],
+          );
+        }
+        // Recent unpaid charges, least recently checked first; the first half minute is left to the client's polling.
+        const ds = await pool.query<{ id: string; provider_id: string; overdue: boolean }>(
+          `select id, provider_id, coalesce(expires_at, created_at + interval '1 day') < now() - interval '1 hour' as overdue
+             from deposits
+            where status = 'pending' and provider = $1 and provider_id is not null
+              and created_at < now() - interval '30 seconds' and created_at > now() - interval '7 days'
+            order by updated_at limit 50`,
+          [g.name],
+        );
+        for (const d of ds.rows) {
+          let overdue = false;
+          try {
+            const state = await g.getCharge(d.provider_id);
+            await service.applyChargeState(state, g.name);
+            overdue = d.overdue && state.status === 'pending';
+          } catch (err) {
+            if (!(err instanceof GatewayError)) throw err;
+          }
+          // Past its expiry and still unpaid: close it. A late payment is still credited (paid is accepted after expired).
+          await pool.query(
+            `update deposits set status = case when $2 and status = 'pending' then 'expired' else status end, updated_at = now() where id = $1`,
+            [d.id, overdue],
+          );
+        }
+        deposits += ds.rowCount ?? 0;
+        withdrawals += ws.rowCount ?? 0;
+      }
+      return { deposits, withdrawals };
     },
   };
   return service;

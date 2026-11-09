@@ -77,6 +77,7 @@ export const unusedPayments: PaymentService = {
   reject: notUsed('payments.reject'),
   refreshWithdrawal: notUsed('payments.refreshWithdrawal'),
   handleWebhook: notUsed('payments.handleWebhook'),
+  syncOpen: notUsed('payments.syncOpen'),
   applyChargeState: notUsed('payments.applyChargeState'),
   applyPayoutState: notUsed('payments.applyPayoutState'),
 };

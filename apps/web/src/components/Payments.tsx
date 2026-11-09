@@ -1,6 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import QRCode from 'qrcode';
-import { PIX_KEY_TYPES, type DepositView, type PaymentsInfo, type PixKeyType } from '@traderoom/shared';
+import {
+  PIX_KEY_TYPES,
+  withdrawalFeeCents,
+  type DepositView,
+  type PaymentsInfo,
+  type PixKeyType,
+  type WithdrawalSpeed,
+} from '@traderoom/shared';
 import { api, ApiError } from '../lib/api';
 import {
   brlToUsdCents,
@@ -300,16 +307,22 @@ const KEY_PLACEHOLDER: Record<PixKeyType, string> = {
   RANDOM: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
 };
 
-/** Pix withdrawal request from the real account; an admin reviews it before the money leaves. */
+const pctText = (p: number) => p.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+
+/**
+ * Pix withdrawal request from the real account. Standard: lower fee, an admin reviews it (up to 3 business days).
+ * Automatic: higher fee, sent at once.
+ */
 export function WithdrawDialog({ open, onClose }: { open: boolean; onClose(): void }) {
   const { accounts, refreshWallet } = useSessionData();
   const { info, error: infoError } = usePaymentsInfo(open);
   const [amount, setAmount] = useState('');
   const [keyType, setKeyType] = useState<PixKeyType>('CPF');
   const [key, setKey] = useState('');
+  const [speed, setSpeed] = useState<WithdrawalSpeed>('standard');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ usd: number; brl: number } | null>(null);
+  const [done, setDone] = useState<{ usd: number; fee: number; brl: number; speed: WithdrawalSpeed; sent: boolean } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -317,10 +330,17 @@ export function WithdrawDialog({ open, onClose }: { open: boolean; onClose(): vo
     setError(null);
     setAmount('');
     setKey('');
+    setSpeed('standard');
   }, [open]);
 
   const realBalance = accounts.status === 'ready' ? (accounts.data.find((a) => a.account === 'real')?.balanceCents ?? 0) : null;
   const cents = parseMoneyToCents(amount);
+  // Same rule as the server: the fee comes out of the amount asked, the Pix carries the rest.
+  const instantPct = info?.instantWithdrawFeePct ?? null;
+  const chosen: WithdrawalSpeed = speed === 'instant' && instantPct !== null ? 'instant' : 'standard';
+  const feePct = info ? (chosen === 'instant' ? (instantPct ?? 0) : info.withdrawFeePct) : 0;
+  const fee = cents !== null && info ? withdrawalFeeCents(cents, feePct) : null;
+  const net = cents !== null && fee !== null ? cents - fee : null;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -330,8 +350,14 @@ export function WithdrawDialog({ open, onClose }: { open: boolean; onClose(): vo
     setBusy(true);
     setError(null);
     try {
-      const w = await api.createWithdrawal({ amountCents: cents, pixKeyType: keyType, pixKey: key });
-      setDone({ usd: w.amountCents, brl: w.pixAmountCents });
+      const w = await api.createWithdrawal({ amountCents: cents, pixKeyType: keyType, pixKey: key, speed: chosen });
+      setDone({
+        usd: w.amountCents,
+        fee: w.feeCents,
+        brl: w.pixAmountCents,
+        speed: w.speed,
+        sent: w.status !== 'requested' && w.status !== 'approved',
+      });
       void refreshWallet();
     } catch (err) {
       setError(errMsg(err, 'Não foi possível pedir o saque.'));
@@ -368,10 +394,52 @@ export function WithdrawDialog({ open, onClose }: { open: boolean; onClose(): vo
               </Button>
             )}
           </div>
+          {instantPct !== null && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Tipo de saque</span>
+              <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Tipo de saque">
+                {(
+                  [
+                    ['standard', 'Normal', `Taxa ${pctText(info.withdrawFeePct)}%`, 'Até 3 dias úteis'],
+                    ['instant', 'Automático', `Taxa ${pctText(instantPct)}%`, 'Enviado na hora'],
+                  ] as const
+                ).map(([value, title, feeLine, timeLine]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={chosen === value}
+                    data-testid={`speed-${value}`}
+                    onClick={() => setSpeed(value)}
+                    className={cx(
+                      'rounded-control border px-3 py-2 text-left',
+                      chosen === value ? 'border-brand bg-brand/10' : 'border-border hover:border-muted',
+                    )}
+                  >
+                    <div className={cx('text-sm font-semibold', chosen === value && 'text-brand')}>{title}</div>
+                    <div className="text-xs text-muted">{feeLine}</div>
+                    <div className="text-xs text-muted">{timeLine}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {feePct > 0 && (
+            <div className="flex flex-col gap-0.5 text-sm" data-testid="withdraw-fee">
+              <div className="flex justify-between">
+                <span className="text-muted">Taxa de saque ({pctText(feePct)}%)</span>
+                <span className="tabular">{fee === null ? '—' : `− ${formatMoney(fee)}`}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted">Valor enviado</span>
+                <span className="tabular font-medium">{net === null ? '—' : formatMoney(net)}</span>
+              </div>
+            </div>
+          )}
           <ConversionBox
             rate={info.withdrawRate}
             label="Você recebe via Pix"
-            value={cents !== null && info.withdrawRate ? formatBrl(usdToBrlCents(cents, info.withdrawRate)) : '—'}
+            value={net !== null && info.withdrawRate ? formatBrl(usdToBrlCents(net, info.withdrawRate)) : '—'}
           />
           <div className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Tipo de chave Pix</span>
@@ -401,7 +469,9 @@ export function WithdrawDialog({ open, onClose }: { open: boolean; onClose(): vo
             autoComplete="off"
           />
           <p className="text-xs text-muted">
-            O valor sai do saldo agora e o saque passa por análise antes do envio. Use uma chave em seu nome.
+            {chosen === 'instant'
+              ? 'O valor sai do saldo agora e o Pix é enviado na hora, sem análise. Use uma chave em seu nome.'
+              : 'O valor sai do saldo agora e o saque passa por análise; você recebe em até 3 dias úteis. Use uma chave em seu nome.'}
           </p>
           {error && <FormMessage tone="error">{error}</FormMessage>}
           <div className="flex justify-end gap-2">
@@ -418,8 +488,13 @@ export function WithdrawDialog({ open, onClose }: { open: boolean; onClose(): vo
       {done !== null && (
         <>
           <FormMessage tone="success">
-            Pedido de saque de {formatMoney(done.usd)} ({formatBrl(done.brl)} via Pix) enviado. Ele está em análise e você acompanha o
-            andamento na Carteira.
+            Pedido de saque de {formatMoney(done.usd)}
+            {done.fee > 0 ? ` (taxa de ${formatMoney(done.fee)})` : ''}: você recebe {formatBrl(done.brl)} via Pix.{' '}
+            {done.speed === 'instant' && done.sent
+              ? 'O Pix já foi enviado; você acompanha o andamento na Carteira.'
+              : done.speed === 'instant'
+                ? 'Estamos concluindo o envio; você acompanha o andamento na Carteira.'
+                : 'Ele está em análise (até 3 dias úteis) e você acompanha o andamento na Carteira.'}
           </FormMessage>
           <div className="flex justify-end">
             <Button onClick={onClose}>Fechar</Button>
@@ -472,7 +547,7 @@ export function PaymentsHistory() {
         ...data.withdrawals.map((w) => ({
           id: w.id,
           at: w.createdAt,
-          kind: `Saque Pix (${PIX_KEY_LABEL[w.pixKeyType]})`,
+          kind: `Saque Pix${w.speed === 'instant' ? ' automático' : ''} (${PIX_KEY_LABEL[w.pixKeyType]})`,
           cents: -w.amountCents,
           brl: w.pixAmountCents,
           status: w.status,

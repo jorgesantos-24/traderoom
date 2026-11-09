@@ -6,6 +6,8 @@
 #   export RESEND_API_KEY=re_...           # optional; stored in Secret Manager, never on disk
 #   export NOVUS_API_KEY=...               # Pix deposits/withdrawals (Novus private key); Secret Manager, never on disk
 #   export NOVUS_WEBHOOK_SECRET=whsec_...  # optional: secret of a global webhook made in the Novus dashboard
+#   export EAGLE_CLIENT_ID=... EAGLE_PUBLIC_KEY=... EAGLE_SECRET_KEY=...  # EaglePay (Integrações → API e Webhooks); Secret Manager
+#   # With EaglePay keys set, new deposits/withdrawals go to EaglePay; Novus still finishes what it already holds.
 #   export MAIL_FROM='Traderoom <nao-responda@example.com>'
 #   export FIREBASE_STORAGE_BUCKET=my-project.firebasestorage.app   # optional: KYC photos in Firebase Storage
 #   # Firebase project: `source infra/firebase.env` sets all of the above for traderoom-48951.
@@ -107,7 +109,7 @@ provision() {
     unset current
   fi
   local name var
-  for pair in traderoom-novus-api-key:NOVUS_API_KEY traderoom-novus-webhook-secret:NOVUS_WEBHOOK_SECRET; do
+  for pair in traderoom-novus-api-key:NOVUS_API_KEY traderoom-novus-webhook-secret:NOVUS_WEBHOOK_SECRET     traderoom-eagle-client-id:EAGLE_CLIENT_ID traderoom-eagle-public-key:EAGLE_PUBLIC_KEY traderoom-eagle-secret-key:EAGLE_SECRET_KEY; do
     name=${pair%%:*} var=${pair#*:}
     [[ -n ${!var:-} ]] || continue
     exists g secrets describe "$name" || g secrets create "$name" --replication-policy user-managed --locations "$REGION"
@@ -121,7 +123,7 @@ provision() {
   for role in roles/logging.logWriter roles/monitoring.metricWriter; do
     g projects add-iam-policy-binding "$GCP_PROJECT" --member "serviceAccount:$SA" --role "$role" --condition None >/dev/null
   done
-  for s in traderoom-db-password traderoom-resend-api-key traderoom-novus-api-key traderoom-novus-webhook-secret; do
+  for s in traderoom-db-password traderoom-resend-api-key traderoom-novus-api-key traderoom-novus-webhook-secret     traderoom-eagle-client-id traderoom-eagle-public-key traderoom-eagle-secret-key; do
     if exists g secrets describe "$s"; then
       g secrets add-iam-policy-binding "$s" --member "serviceAccount:$SA" --role roles/secretmanager.secretAccessor >/dev/null
     fi
@@ -213,7 +215,7 @@ setup() {
   cp -r infra/systemd infra/sysctl infra/redis infra/Caddyfile infra/vm/*.sh "$stage/"
   # No contact e-mail: the certificate is issued without one (ACME allows it).
   [[ -n $ACME_EMAIL ]] || sed -i '/^\temail {\$TRADEROOM_ACME_EMAIL}$/d' "$stage/Caddyfile"
-  # Non-secret settings. Secrets (DATABASE_URL, RESEND_API_KEY, NOVUS_*) are built at boot by fetch-secrets.sh.
+  # Non-secret settings. Secrets (DATABASE_URL, RESEND_API_KEY, NOVUS_*, EAGLE_*) are built at boot by fetch-secrets.sh.
   cat >"$stage/traderoom.env" <<EOF
 GCP_PROJECT=$GCP_PROJECT
 TRADEROOM_DOMAIN=$TRADEROOM_DOMAIN
@@ -246,8 +248,8 @@ BINANCE_BACKUP_WS_URL=wss://stream.binance.com:443/stream
 FEED_STALE_MS=2000
 ORDER_ENTRY_DELAY_MS=500
 HEALTH_FEED_MAX_AGE_MS=5000
-# Novus posts payment status changes to https://$TRADEROOM_DOMAIN/api/webhooks/novus
-NOVUS_POSTBACKS=true
+# The Pix gateway posts payment status changes to https://$TRADEROOM_DOMAIN/api/webhooks/<eagle|novus>
+PAYMENT_POSTBACKS=true
 SNAPSHOT_RETENTION_DAYS=7
 EOF
 

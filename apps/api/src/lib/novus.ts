@@ -4,65 +4,18 @@
  * Per-transaction postbacks are signed with HMAC-SHA256(raw body, private key) in X-Webhook-Signature (hex).
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { PixKeyType } from '@traderoom/shared';
+import {
+  GatewayError,
+  header,
+  type ChargeState,
+  type Headers,
+  type PaymentGateway,
+  type PayoutState,
+  type WebhookEvent,
+} from './gateway.js';
 
-export interface ChargeRequest {
-  /** Our deposit id: sent as external_id and as the Idempotency-Key. */
-  externalId: string;
-  amountCents: number;
-  payer: { name: string; cpf: string; email: string };
-  postbackUrl: string | null;
-}
-
-export interface ChargeCreated {
-  providerId: string;
-  pixCode: string | null;
-  expiresAt: string | null;
-  status: string;
-}
-
-export interface ChargeState {
-  providerId: string;
-  externalId: string | null;
-  status: string;
-  /** Paid amount when the gateway reports one. */
-  amountCents: number | null;
-}
-
-export interface PayoutRequest {
-  /** Our withdrawal id: sent as external_id and as the Idempotency-Key. */
-  externalId: string;
-  amountCents: number;
-  pixKey: string;
-  pixKeyType: PixKeyType;
-  description: string;
-  postbackUrl: string | null;
-}
-
-export interface PayoutState {
-  providerId: string;
-  externalId: string | null;
-  status: string;
-  amountCents: number | null;
-  refundedAmountCents: number | null;
-}
-
-export interface PaymentGateway {
-  createPixCharge(req: ChargeRequest): Promise<ChargeCreated>;
-  getCharge(providerId: string): Promise<ChargeState>;
-  createPayout(req: PayoutRequest): Promise<PayoutState>;
-  getPayout(providerId: string): Promise<PayoutState>;
-}
-
-export class GatewayError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-    this.name = 'GatewayError';
-  }
-}
+export { GatewayError } from './gateway.js';
+export type { ChargeCreated, ChargeRequest, ChargeState, PaymentGateway, PayoutRequest, PayoutState } from './gateway.js';
 
 type Json = Record<string, unknown>;
 const obj = (v: unknown): Json => (typeof v === 'object' && v !== null ? (v as Json) : {});
@@ -116,8 +69,23 @@ export function verifySignature(rawBody: Buffer, signatureHex: string | undefine
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/**
+ * Reads a Novus notification. Postbacks are signed with the private key; a global webhook with its whsec_ secret.
+ * Novus payloads carry the full state, so it is applied as is.
+ */
+export function novusWebhookParser(secrets: string[]): (rawBody: Buffer, headers: Headers) => WebhookEvent | null {
+  return (rawBody, headers) => {
+    const sig = header(headers, 'x-webhook-signature');
+    if (!secrets.some((s) => verifySignature(rawBody, sig, s))) return null;
+    const body: unknown = JSON.parse(rawBody.toString('utf8'));
+    return isPayoutPayload(body) ? { kind: 'payout', state: parsePayoutState(body) } : { kind: 'charge', state: parseChargeState(body) };
+  };
+}
+
 export interface NovusOptions {
   apiKey: string;
+  /** Secret (whsec_...) of a global webhook, besides the private key that signs postbacks. */
+  webhookSecret?: string;
   baseUrl: string;
   timeoutMs?: number;
   fetch?: typeof fetch;
@@ -160,6 +128,10 @@ export function createNovusGateway(opts: NovusOptions): PaymentGateway {
   }
 
   return {
+    name: 'novus',
+    label: 'Novus',
+    parseWebhook: novusWebhookParser([opts.apiKey, opts.webhookSecret].filter((x): x is string => Boolean(x))),
+
     async createPixCharge(req) {
       const body = await call(
         'POST',

@@ -15,9 +15,8 @@ import { createAdminService } from './services/admin.js';
 import { createOrderService, redisDueScheduler, redisPriceReader } from './services/orders.js';
 import { createWalletService } from './services/wallet.js';
 import { awesomeApi, binanceUsdtBrl, createFxService, fixedFx, openErApi } from './lib/fx.js';
-import { createNovusGateway } from './lib/novus.js';
+import { paymentSetup } from './lib/payment-setup.js';
 import { createPaymentService } from './services/payments.js';
-import { WEBHOOK_PATH } from './routes/payments.js';
 import { createKycService } from './services/kyc.js';
 import { createFirebaseKycStore } from './lib/kyc-storage.js';
 import { createOtcOverrideService } from './services/otc-override.js';
@@ -45,6 +44,15 @@ const fx = config.FX_FIXED_RATE
       spreadPct: config.FX_SPREAD_PCT,
       onError: (err) => logFxError(err),
     });
+// Pix gateway(s): EaglePay and/or Novus, see PAYMENT_PROVIDER.
+const payments = createPaymentService({
+  pool,
+  ...paymentSetup(config),
+  requireKyc: (userId) => kyc.requireApproved(userId),
+  fx,
+  withdrawFeePct: config.WITHDRAW_FEE_PCT,
+  instantWithdrawFeePct: config.WITHDRAW_INSTANT_FEE_PCT ?? null,
+});
 
 const app = await buildApp(
   {
@@ -95,14 +103,7 @@ const app = await buildApp(
     assets,
     limits,
     admin: createAdminService({ pool, onAssetsChanged: () => assets.invalidate() }),
-    payments: createPaymentService({
-      pool,
-      gateway: config.NOVUS_API_KEY ? createNovusGateway({ apiKey: config.NOVUS_API_KEY, baseUrl: config.NOVUS_API_URL }) : null,
-      webhookSecrets: [config.NOVUS_API_KEY, config.NOVUS_WEBHOOK_SECRET].filter((s): s is string => Boolean(s)),
-      postbackUrl: config.NOVUS_POSTBACKS ? `${config.PUBLIC_ORIGIN}${WEBHOOK_PATH}` : null,
-      requireKyc: (userId) => kyc.requireApproved(userId),
-      fx,
-    }),
+    payments,
     kyc,
     otcOverride: createOtcOverrideService({ pool, redis }),
     metrics,
@@ -125,11 +126,32 @@ logFxError = (err) => app.log.warn({ err }, 'dollar quote source failed; trying 
 pool.on('error', (err) => app.log.error({ err }, 'postgres pool error'));
 redis.on('error', (err) => app.log.error({ err }, 'redis error'));
 
+// EaglePay sends no withdrawal webhook, and a charge webhook can be lost: check open transactions now and then.
+let syncing = false;
+const paymentSync =
+  config.PAYMENT_SYNC_MS > 0
+    ? setInterval(() => {
+        if (syncing) return;
+        syncing = true;
+        payments
+          .syncOpen()
+          .then((n) => {
+            if (n.deposits || n.withdrawals) app.log.debug(n, 'payment sync');
+          })
+          .catch((err: unknown) => app.log.error({ err }, 'payment sync failed'))
+          .finally(() => {
+            syncing = false;
+          });
+      }, config.PAYMENT_SYNC_MS)
+    : null;
+paymentSync?.unref();
+
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   app.log.info({ signal }, 'shutting down');
+  if (paymentSync) clearInterval(paymentSync);
   try {
     await app.close();
     await Promise.allSettled([pool.end(), redis.quit()]);

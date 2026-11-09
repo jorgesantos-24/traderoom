@@ -37,6 +37,9 @@ db_password=$(secret traderoom-db-password)
 resend_key=$(secret traderoom-resend-api-key optional)
 novus_key=$(secret traderoom-novus-api-key optional)
 novus_whsec=$(secret traderoom-novus-webhook-secret optional)
+eagle_client=$(secret traderoom-eagle-client-id optional)
+eagle_public=$(secret traderoom-eagle-public-key optional)
+eagle_secret=$(secret traderoom-eagle-secret-key optional)
 
 install -d -m 0750 -o root -g traderoom "$OUT_DIR"
 tmp=$(mktemp "$OUT_DIR/.secrets.XXXXXX")
@@ -49,6 +52,9 @@ tmp=$(mktemp "$OUT_DIR/.secrets.XXXXXX")
   if [[ -n $resend_key ]]; then echo "RESEND_API_KEY=\"$resend_key\""; fi
   if [[ -n $novus_key ]]; then echo "NOVUS_API_KEY=\"$novus_key\""; fi
   if [[ -n $novus_whsec ]]; then echo "NOVUS_WEBHOOK_SECRET=\"$novus_whsec\""; fi
+  if [[ -n $eagle_client ]]; then echo "EAGLE_CLIENT_ID=\"$eagle_client\""; fi
+  if [[ -n $eagle_public ]]; then echo "EAGLE_PUBLIC_KEY=\"$eagle_public\""; fi
+  if [[ -n $eagle_secret ]]; then echo "EAGLE_SECRET_KEY=\"$eagle_secret\""; fi
 } >"$tmp"
 chown root:traderoom "$tmp"
 chmod 0640 "$tmp"

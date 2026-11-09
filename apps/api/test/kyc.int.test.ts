@@ -126,7 +126,6 @@ describe('KYC service', () => {
     const pay = createPaymentService({
       pool,
       gateway,
-      webhookSecrets: [],
       postbackUrl: null,
       fx: fixedFx(5),
       requireKyc: (u) => kyc.requireApproved(u),

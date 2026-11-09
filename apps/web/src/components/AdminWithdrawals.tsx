@@ -42,7 +42,9 @@ export function WithdrawalsTab({ onNotice }: { onNotice(m: string): void }) {
   return (
     <Card>
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
-        <p className="text-sm text-muted">O valor já saiu do saldo do cliente. Aprovar envia o Pix pela Novus; recusar devolve o valor.</p>
+        <p className="text-sm text-muted">
+          O valor já saiu do saldo do cliente. Aprovar envia o Pix pelo gateway de pagamento; recusar devolve o valor.
+        </p>
         <div className="flex gap-1">
           {(['open', 'all'] as const).map((f) => (
             <button
@@ -113,9 +115,14 @@ export function WithdrawalsTab({ onNotice }: { onNotice(m: string): void }) {
                     <td className="tabular whitespace-nowrap px-4 py-2 text-right font-semibold">
                       {formatBrl(w.pixAmountCents)}
                       <div className="text-xs font-normal text-muted">{formatMoney(w.amountCents)}</div>
+                      {w.feeCents > 0 && <div className="text-xs font-normal text-muted">taxa {formatMoney(w.feeCents)}</div>}
                     </td>
                     <td className="px-4 py-2">
                       <div>{WITHDRAWAL_STATUS_LABEL[w.status]}</div>
+                      <div className="text-xs text-muted">{w.speed === 'instant' ? 'Automático' : 'Normal'}</div>
+                      {w.status === 'processing' && w.providerStatus === 'awaiting' && (
+                        <div className="text-xs text-muted">Em análise no gateway (pode levar algumas horas)</div>
+                      )}
                       {w.lastError && w.status === 'approved' && <div className="text-xs text-down">{w.lastError}</div>}
                       {w.note && <div className="text-xs text-muted">{w.note}</div>}
                     </td>
@@ -151,9 +158,10 @@ export function WithdrawalsTab({ onNotice }: { onNotice(m: string): void }) {
         {confirm && (
           <>
             <p className="text-sm">
-              Enviar <strong>{formatBrl(confirm.pixAmountCents)}</strong> ({formatMoney(confirm.amountCents)};{' '}
+              Enviar <strong>{formatBrl(confirm.pixAmountCents)}</strong> ({formatMoney(confirm.amountCents - confirm.feeCents)}
+              {confirm.feeCents > 0 ? ` de ${formatMoney(confirm.amountCents)}, taxa ${formatMoney(confirm.feeCents)}` : ''};{' '}
               {formatFxRate(confirm.fxRate)}) por Pix para a chave {PIX_KEY_LABEL[confirm.pixKeyType]}{' '}
-              <strong className="break-all">{confirm.pixKey}</strong> ({confirm.userName})? O dinheiro sai do saldo da empresa na Novus e
+              <strong className="break-all">{confirm.pixKey}</strong> ({confirm.userName})? O dinheiro sai do saldo da empresa no gateway e
               não dá para desfazer.
             </p>
             <div className="flex justify-end gap-2">

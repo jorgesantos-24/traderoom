@@ -4,6 +4,9 @@ import { PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT } from './orders.js';
 
 export type DepositStatus = 'pending' | 'paid' | 'expired' | 'failed' | 'reversed';
 export type WithdrawalStatus = 'requested' | 'approved' | 'processing' | 'completed' | 'rejected' | 'failed' | 'returned';
+/** standard: lower fee, reviewed by an admin, up to 3 business days. instant: higher fee, sent right away. */
+export const WITHDRAWAL_SPEEDS = ['standard', 'instant'] as const;
+export type WithdrawalSpeed = (typeof WITHDRAWAL_SPEEDS)[number];
 export const PIX_KEY_TYPES = ['CPF', 'CNPJ', 'EMAIL', 'PHONE', 'RANDOM'] as const;
 export type PixKeyType = (typeof PIX_KEY_TYPES)[number];
 
@@ -55,6 +58,15 @@ export function normalizePixKey(type: PixKeyType, key: string): string | null {
   }
 }
 
+/**
+ * Broker fee kept on a withdrawal, in USD cents: `pct` percent of what the client asks for, rounded to the cent.
+ * The client is debited the full amount; the Pix carries the rest.
+ */
+export function withdrawalFeeCents(amountCents: number, pct: number): number {
+  if (pct <= 0) return 0;
+  return Math.min(amountCents, Math.round((amountCents * Math.round(pct * 100)) / 10_000));
+}
+
 const cents = (what: string) =>
   z.number(`Informe o valor ${what}.`).int('O valor deve ser em centavos inteiros.').positive('O valor deve ser positivo.');
 
@@ -70,9 +82,11 @@ export const CreateWithdrawalInput = z.object({
   /** Dollars (USD cents) taken from the balance; the Pix is sent in reais. */
   amountCents: cents('do saque'),
   pixKeyType: z.enum(PIX_KEY_TYPES, 'Tipo de chave Pix inválido.'),
+  speed: z.enum(WITHDRAWAL_SPEEDS, 'Tipo de saque inválido.').default('standard'),
   pixKey: z.string('Informe a chave Pix.').trim().min(1, 'Informe a chave Pix.').max(100, 'Chave Pix muito longa.'),
 });
-export type CreateWithdrawalInput = z.infer<typeof CreateWithdrawalInput>;
+/** speed may be left out (standard). */
+export type CreateWithdrawalInput = z.input<typeof CreateWithdrawalInput>;
 
 export const PaymentIdParams = z.object({ id: z.uuid('Identificador inválido.') });
 
@@ -100,6 +114,10 @@ export interface PaymentsInfo {
   depositMaxCents: number;
   /** USD cents. */
   withdrawMinCents: number;
+  /** Broker fee on a standard withdrawal (admin review, up to 3 business days), in percent of the amount asked. */
+  withdrawFeePct: number;
+  /** Broker fee on an instant withdrawal (sent right away); null when instant withdrawals are off. */
+  instantWithdrawFeePct: number | null;
   /** BRL per US$ 1 for deposits right now; null when no quote is available (deposits are then paused). */
   depositRate: number | null;
   /** BRL per US$ 1 for withdrawals right now; null when no quote is available. */
@@ -124,12 +142,15 @@ export interface DepositView {
 
 export interface WithdrawalView {
   id: string;
-  /** USD cents taken from the balance. */
+  /** USD cents taken from the balance (what the client asked for, fee included). */
   amountCents: number;
+  /** USD cents kept by the broker; the Pix carries amountCents - feeCents. */
+  feeCents: number;
   /** BRL cents sent by Pix. */
   pixAmountCents: number;
   /** BRL per US$ 1 used for this withdrawal. */
   fxRate: number;
+  speed: WithdrawalSpeed;
   pixKeyType: PixKeyType;
   pixKey: string;
   status: WithdrawalStatus;

@@ -18,7 +18,7 @@ Cloud SQL traderoom-48951-instance (Postgres 18, criado pelo Firebase SQL Connec
    └─ banco "traderoom"   ← todos os dados (saldos, ordens, usuários, auditoria)
 
 Firebase Storage traderoom-48951.firebasestorage.app ← fotos do KYC (privado)
-Secret Manager ← senha do banco, chave Novus, chave Resend
+Secret Manager ← senha do banco, chaves EaglePay (e Novus), chave Resend
 ```
 
 - **Tudo na mesma região (São Paulo)**: VM e banco ficam na mesma zona, com ~1 ms entre eles.
@@ -32,16 +32,16 @@ Secret Manager ← senha do banco, chave Novus, chave Resend
 Valores aproximados em US$. Confira na calculadora do Google antes de ligar
 (https://cloud.google.com/products/calculator). A região de São Paulo custa mais que a dos EUA.
 
-| Peça | Configuração | Estimativa/mês |
-|---|---|---|
-| VM | e2-small (2 vCPU compartilhadas, 2 GB) + disco 20 GB | ~US$ 20 |
-| IP fixo | 1 IP externo em uso | ~US$ 4 |
-| Cloud SQL | **db-f1-micro** (atual, teste grátis até 05/02/2027) | US$ 0 no teste, depois ~US$ 12 |
-| Cloud SQL | **db-g1-small** (recomendado para lançar) | ~US$ 35–40 |
-| Cloud SQL | disco 10 GB SSD + backups 7 dias + logs de recuperação | ~US$ 3–5 |
-| Storage (KYC) | poucos GB de fotos | ~US$ 0–1 |
-| Secret Manager, logs, monitoramento | uso baixo | ~US$ 0–2 |
-| Tráfego de saída | depende do número de clientes (preços ao vivo) | ~US$ 0,12–0,19 por GB |
+| Peça                                | Configuração                                           | Estimativa/mês                 |
+| ----------------------------------- | ------------------------------------------------------ | ------------------------------ |
+| VM                                  | e2-small (2 vCPU compartilhadas, 2 GB) + disco 20 GB   | ~US$ 20                        |
+| IP fixo                             | 1 IP externo em uso                                    | ~US$ 4                         |
+| Cloud SQL                           | **db-f1-micro** (atual, teste grátis até 05/02/2027)   | US$ 0 no teste, depois ~US$ 12 |
+| Cloud SQL                           | **db-g1-small** (recomendado para lançar)              | ~US$ 35–40                     |
+| Cloud SQL                           | disco 10 GB SSD + backups 7 dias + logs de recuperação | ~US$ 3–5                       |
+| Storage (KYC)                       | poucos GB de fotos                                     | ~US$ 0–1                       |
+| Secret Manager, logs, monitoramento | uso baixo                                              | ~US$ 0–2                       |
+| Tráfego de saída                    | depende do número de clientes (preços ao vivo)         | ~US$ 0,12–0,19 por GB          |
 
 **Total para começar: ~US$ 65–75/mês** com db-g1-small, mais o tráfego.
 Ficar no db-f1-micro durante o teste grátis: ~US$ 25–30/mês, mas só para poucos clientes.
@@ -60,7 +60,8 @@ Recomendo definir um alerta de orçamento em Faturamento → Orçamentos e alert
 ### 1. Antes (uma vez)
 
 - [ ] Domínio comprado e acesso ao DNS dele.
-- [ ] Chave da Novus de **produção** e (opcional) chave do Resend para e-mails.
+- [ ] Chaves da EaglePay de **produção** (Painel → Integrações → API e Webhooks: Client ID, Public Key, Secret Key)
+      e (opcional) chave do Resend para e-mails.
 - [ ] Alerta de orçamento no Faturamento do Google Cloud.
 - [ ] Rodar no seu PC: `npm ci && npm run typecheck && npm test` (o `release` repete isso).
 
@@ -71,7 +72,8 @@ No Git Bash, na raiz do projeto:
 ```sh
 source infra/firebase.env
 export TRADEROOM_DOMAIN=seudominio.com ACME_EMAIL=voce@seudominio.com
-export NOVUS_API_KEY='...'        # vai direto para o Secret Manager
+export EAGLE_CLIENT_ID='...' EAGLE_PUBLIC_KEY='...' EAGLE_SECRET_KEY='...'   # vão direto para o Secret Manager
+export NOVUS_API_KEY='...'        # opcional: só enquanto houver transações abertas na Novus
 export RESEND_API_KEY='...'       # opcional
 export MAIL_FROM='Kyden <nao-responda@seudominio.com>'
 # Para já sair do db-f1-micro (encerra o teste grátis do SQL Connect):

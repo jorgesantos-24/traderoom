@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { isValidCnpj, isValidCpf, normalizePixKey } from '@traderoom/shared';
+import { isValidCnpj, isValidCpf, normalizePixKey, withdrawalFeeCents } from '@traderoom/shared';
 import { isPayoutPayload, parseChargeState, parsePayoutState, verifySignature } from '../src/lib/novus.js';
 
 describe('Pix keys and documents', () => {
@@ -48,5 +48,14 @@ describe('Novus payloads', () => {
     expect(isPayoutPayload(env)).toBe(true);
     expect(isPayoutPayload({ id: 'a', status: 'paid', amount: 1, event: 'invoice.paid' })).toBe(false);
     expect(parsePayoutState(env)).toMatchObject({ providerId: 'p', status: 'completed', amountCents: 15000 });
+  });
+});
+
+describe('withdrawal fee', () => {
+  it('is a percent of the amount asked, rounded to the cent', () => {
+    expect(withdrawalFeeCents(10_000, 2)).toBe(200);
+    expect(withdrawalFeeCents(1_234, 2)).toBe(25);
+    expect(withdrawalFeeCents(10_000, 2.5)).toBe(250);
+    expect(withdrawalFeeCents(10_000, 0)).toBe(0);
   });
 });

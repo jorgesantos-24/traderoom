@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+const optionalSecret = z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().min(1).optional());
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -27,8 +29,29 @@ const EnvSchema = z.object({
     (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
     z.string().trim().min(1).optional(),
   ),
-  /** Send the gateway a postback URL (PUBLIC_ORIGIN + /api/webhooks/novus). Off in dev, where the gateway cannot reach us. */
-  NOVUS_POSTBACKS: z.stringbool().default(false),
+  /** Old name of PAYMENT_POSTBACKS, still read. */
+  NOVUS_POSTBACKS: z.stringbool().optional(),
+  /** EaglePay (Painel → Integrações → API e Webhooks): Client ID, Public Key (Pix charges), Secret Key (withdrawals, webhook signature). */
+  EAGLE_CLIENT_ID: optionalSecret,
+  EAGLE_PUBLIC_KEY: optionalSecret,
+  EAGLE_SECRET_KEY: optionalSecret,
+  EAGLE_API_URL: z.url().default('https://api.eaglepagamentos.com.br'),
+  /**
+   * Gateway for new deposits and withdrawals. Unset: EaglePay when its three keys are set, else Novus when its key is set.
+   * Any other configured gateway keeps serving the transactions it already holds.
+   */
+  PAYMENT_PROVIDER: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.enum(['eagle', 'novus']).optional()),
+  /** Send the gateway a postback URL (PUBLIC_ORIGIN + /api/webhooks/<gateway>). Off in dev, where the gateway cannot reach us. */
+  PAYMENT_POSTBACKS: z.stringbool().optional(),
+  /** How often open deposits/withdrawals are checked with the gateway (EaglePay has no withdrawal webhook). 0 = never. */
+  PAYMENT_SYNC_MS: z.coerce.number().int().min(0).default(60_000),
+  /** Broker fee kept on each withdrawal, in percent of the amount the client asks for (100 asked → 2 kept, 98 sent). */
+  WITHDRAW_FEE_PCT: z.coerce.number().min(0).max(50).default(2),
+  /** Fee on an instant withdrawal (no admin review, sent to the gateway right away). Empty = instant withdrawals off. */
+  WITHDRAW_INSTANT_FEE_PCT: z.preprocess(
+    (v) => (v === undefined ? 7 : typeof v === 'string' && v.trim() === '' ? undefined : v),
+    z.coerce.number().min(0).max(50).optional(),
+  ),
   /** Platform margin on the dollar quote, in percent per side (deposit pays more, withdrawal gets less). */
   FX_SPREAD_PCT: z.coerce.number().min(0).max(20).default(0),
   /** Fixed BRL per USD instead of the live quote (development/tests without internet). */
