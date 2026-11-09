@@ -7,8 +7,11 @@ export const OTC_OVERRIDE_KEY = 'otc:override';
 export const OTC_OVERRIDE_MIN_LEAD_MS = 6000;
 /** O alvo fica parado desde close-hold: 3 snapshots de 1 s, com folga para um ser pulado. */
 export const OTC_OVERRIDE_HOLD_MS = 3000;
-/** Tempo de volta ao preço base depois do fechamento. */
+/** Tempo de volta ao preço base depois do fechamento. Padrão de quem não escolhe outro. */
 export const OTC_OVERRIDE_RELEASE_MS = 2000;
+/** Piso e teto do tempo de volta escolhido por override. */
+export const OTC_OVERRIDE_RELEASE_MIN_MS = 500;
+export const OTC_OVERRIDE_RELEASE_MAX_MS = 600_000;
 export const OTC_OVERRIDE_RAMP_DEFAULT_MS = 25_000;
 // 25 s, not 8: the drift-to-noise ratio of the bridge is (1/SIGMA_FACTOR)·√(dt/T). At 8 s it is 2.5
 // and almost no tick goes against the direction, so the ramp looks drawn. At 25 s it is ~1.4 and the
@@ -109,11 +112,14 @@ export const OtcOverrideWire = z.object({
       ticks: z.number().int().positive(),
       /** assets.max_override_pct: the target never sits further than this from the real price. */
       maxOverridePct: z.number().positive(),
+      /** Admin chose to ignore max_override_pct: the ws skips the clamp and keeps the booked body. */
+      ignoreBand: z.boolean().optional(),
     })
     .optional(),
   closeMs: z.number().int(),
   rampStartMs: z.number().int(),
   holdMs: z.number().int(),
+  /** Tempo de volta ao preço real. Curva suave, terminando exatamente no real. */
   releaseMs: z.number().int(),
 });
 export type OtcOverrideWire = z.infer<typeof OtcOverrideWire>;
@@ -150,6 +156,22 @@ export const OtcOverrideInput = z
     /** Immediate mode. Ignored with `schedule`. */
     targetPrice: z.number('Informe o preço alvo.').positive('Informe o preço alvo.').finite('Preço alvo inválido.').optional(),
     rampMs: z.number().int().min(500).max(60_000).default(OTC_OVERRIDE_RAMP_DEFAULT_MS),
+    /**
+     * Quanto tempo o preço leva para voltar ao real depois do fechamento. Valores altos espalham a
+     * volta pela vela seguinte em vez de dar um talo. Vale nos dois modos, mas só suaviza em ativo de
+     * mercado: o OTC volta sempre em ~2 s, e um valor alto ali só segura o slot.
+     */
+    releaseMs: z
+      .number('Informe o tempo de volta.')
+      .int('Tempo de volta inválido.')
+      .min(OTC_OVERRIDE_RELEASE_MIN_MS, `A volta mínima é ${OTC_OVERRIDE_RELEASE_MIN_MS / 1000} s.`)
+      .max(OTC_OVERRIDE_RELEASE_MAX_MS, `A volta máxima é ${OTC_OVERRIDE_RELEASE_MAX_MS / 60_000} min.`)
+      .default(OTC_OVERRIDE_RELEASE_MS),
+    /**
+     * Aceita alvo fora da banda max_override_pct. O admin assume o risco de um alvo longe do preço
+     * real. Imediato: a API não recusa o alvo. Agendado: o ws não encolhe o corpo (sem clamp).
+     */
+    ignoreBand: z.boolean().default(false),
     /** Aplica no candle seguinte mesmo que ainda haja tempo. */
     nextCandle: z.boolean().default(false),
     /** Scheduled mode (market assets, 1m): a future candle, a color and a body size. */

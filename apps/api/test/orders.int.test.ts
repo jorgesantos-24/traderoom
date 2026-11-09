@@ -34,6 +34,8 @@ let redis: Redis;
 let assetId: number;
 let clock = Date.now();
 let svc: OrderService;
+/** otc_overrides.created_by */
+let creator: string;
 
 function service(): OrderService {
   return createOrderService({
@@ -46,8 +48,8 @@ function service(): OrderService {
   });
 }
 
-async function setPrice(p: string, rt = clock): Promise<void> {
-  const rec: PriceRecord = { p, ts: rt, rt, src: 'binance' };
+async function setPrice(p: string, rt = clock, extra: { ov?: string; realPrice?: string } = {}): Promise<void> {
+  const rec: PriceRecord = { p, ts: rt, rt, src: 'binance', ...extra };
   await redis.set(RedisKeys.price(SYMBOL), JSON.stringify(rec), 'PX', 60_000);
 }
 
@@ -89,8 +91,26 @@ async function ledgerOf(userId: string): Promise<Array<{ kind: string; delta: nu
   return rows.map((r) => ({ kind: r.kind, delta: Number(r.delta_cents), after: Number(r.balance_after), note: r.note }));
 }
 
-async function snapshot(price: string, at: number): Promise<void> {
-  await pool.query('insert into price_snapshots (asset_id, price, captured_at) values ($1, $2, $3)', [assetId, price, new Date(at)]);
+async function snapshot(price: string, at: number, realPrice: string | null = null): Promise<void> {
+  await pool.query('insert into price_snapshots (asset_id, price, real_price, captured_at) values ($1, $2, $3, $4)', [
+    assetId,
+    price,
+    realPrice,
+    new Date(at),
+  ]);
+}
+
+/**
+ * An otc_overrides row only so orders.override_id has a target. Inactive: the unique index allows one
+ * active override in the whole table, and settlement never looks at it anyway.
+ */
+async function overrideRow(target: string, closeMs: number): Promise<string> {
+  const { rows } = await pool.query<{ id: string }>(
+    `insert into otc_overrides (asset_id, kind, interval_sec, target_price, base_price, candle_open_ms, candle_close_ms, ramp_ms, created_by, active)
+     values ($1, 'market', 60, $2, '100.00000000', $3, $4, 25000, $5, false) returning id::text as id`,
+    [assetId, target, closeMs - 60_000, closeMs, creator],
+  );
+  return rows[0]?.id ?? '';
 }
 
 const input = (o: Partial<CreateOrderInput> = {}): CreateOrderInput => ({
@@ -115,6 +135,7 @@ beforeAll(async () => {
     [SYMBOL, `${SYMBOL.toLowerCase()}@bookTicker`],
   );
   assetId = rows[0]?.id ?? 0;
+  creator = await newUser();
   svc = service();
 });
 
@@ -122,6 +143,8 @@ afterAll(async () => {
   const users = `select id from users where email like '%@${DOMAIN}'`;
   await pool.query(`delete from ledger where user_id in (${users})`);
   await pool.query(`delete from orders where user_id in (${users})`);
+  // Before the users: otc_overrides.created_by points at one of them.
+  await pool.query('delete from otc_overrides where asset_id = $1', [assetId]);
   await pool.query(`delete from users where email like $1`, [`%@${DOMAIN}`]);
   await pool.query('delete from price_snapshots where asset_id = $1', [assetId]);
   await pool.query('delete from assets where id = $1', [assetId]);
@@ -468,6 +491,83 @@ describe('settlement', () => {
     expect(await settleOrder(pool, order.id, Date.now())).toEqual({ kind: 'not_due' });
     expect(await orderRow(order.id)).toBe('open');
     expect(await settleOrder(pool, randomUUID(), Date.now())).toEqual({ kind: 'missing' });
+  });
+});
+
+/**
+ * A manipulação vale para todo mundo: o fechamento é o preço da tela, não o real. Quem entrou antes
+ * do override, quem entrou no meio da rampa e quem apostou contra o mercado real são todos decididos
+ * pelo valor mostrado.
+ */
+describe('settlement on a manipulated candle', () => {
+  /**
+   * `shownOpen` é o preço que a tela mostra na abertura da ordem (já com `ov`), `close` é o valor
+   * mostrado no vencimento e `real` é o que a Binance fez de verdade.
+   * `beforeOv`: a ordem é aberta no preço natural, antes de o override existir.
+   */
+  async function manipulated(o: Partial<CreateOrderInput>, shownOpen: string, close: string, real: string, beforeOv = false) {
+    await pool.query('delete from price_snapshots where asset_id = $1', [assetId]);
+    const realNow = Date.now();
+    clock = longAgo(realNow);
+    await setPrice('100.00000000');
+    const user = await newUser(10_000);
+    const { order } = await svc.create(user, input(o), key());
+    const expires = Date.parse(order.expiresAt);
+    const ov = await overrideRow(close, expires);
+    if (!beforeOv) {
+      await setPrice(shownOpen, clock, { ov, realPrice: real });
+      const { rows } = await pool.query<{ id: string }>(
+        `update orders set open_price = $2, override_id = $3 where id = $1 returning id`,
+        [order.id, shownOpen, ov],
+      );
+      expect(rows[0]?.id).toBe(order.id);
+    }
+    clock = realNow;
+    await snapshot(close, expires - 500, real);
+    return { user, order, expires, now: realNow, ov };
+  }
+
+  it('call wins on the shown close even when the real price fell (red candle painted green)', async () => {
+    const { user, order, now, ov } = await manipulated({ direction: 'call' }, '100.50000000', '101.00000000', '99.50000000');
+    expect(await settleOrder(pool, order.id, now)).toMatchObject({ kind: 'settled', status: 'won', creditCents: 1870 });
+    const { rows } = await pool.query<{ close_price: string; override_id: string }>(
+      'select close_price::text, override_id::text from orders where id = $1',
+      [order.id],
+    );
+    expect(rows[0]).toEqual({ close_price: '101.00000000', override_id: ov });
+    expect(await balance(user)).toBe(10_000 - 1000 + 1870);
+  });
+
+  it('an order opened before the override is also decided by the screen', async () => {
+    const { order, now } = await manipulated({ direction: 'call' }, '100.00000000', '101.00000000', '99.50000000', true);
+    const { rows } = await pool.query<{ override_id: string | null }>('select override_id::text from orders where id = $1', [order.id]);
+    expect(rows[0]?.override_id).toBeNull();
+    expect(await settleOrder(pool, order.id, now)).toMatchObject({ status: 'won' });
+  });
+
+  it('put loses on the shown close even when the real price would have won it', async () => {
+    const { order, now } = await manipulated({ direction: 'put' }, '100.50000000', '101.00000000', '99.50000000');
+    expect(await settleOrder(pool, order.id, now)).toMatchObject({ status: 'lost', creditCents: 0 });
+  });
+
+  it('the same rule downwards: green real candle painted red', async () => {
+    const { order, now } = await manipulated({ direction: 'put' }, '100.50000000', '99.00000000', '100.70000000');
+    expect(await settleOrder(pool, order.id, now)).toMatchObject({ status: 'won', creditCents: 1870 });
+    const { rows } = await pool.query<{ close_price: string }>('select close_price::text from orders where id = $1', [order.id]);
+    expect(rows[0]?.close_price).toBe('99.00000000');
+  });
+
+  it('the close is still the shown price when the release already started', async () => {
+    // 1,5 s de release: no vencimento o preço já voltou parte do caminho, e é isso que a tela mostra.
+    const { order, expires, now, ov } = await manipulated({ direction: 'call' }, '100.50000000', '101.00000000', '99.50000000');
+    await pool.query('delete from price_snapshots where asset_id = $1', [assetId]);
+    await snapshot('100.80000000', expires - 200, '99.50000000');
+    expect(await settleOrder(pool, order.id, now)).toMatchObject({ status: 'won' });
+    const { rows } = await pool.query<{ close_price: string; override_id: string }>(
+      'select close_price::text, override_id::text from orders where id = $1',
+      [order.id],
+    );
+    expect(rows[0]).toEqual({ close_price: '100.80000000', override_id: ov });
   });
 });
 

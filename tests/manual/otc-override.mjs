@@ -1,10 +1,17 @@
-// Manual end-to-end check of the OTC price override (no UI, no admin routes).
+// Manual end-to-end check of the price override (no UI, no admin routes).
 //
-//   node tests/manual/otc-override.mjs [--symbol BTCOTC] [--up|--down] [--target 75900.00] [--early] [--ws-log ws.log]
+//   node tests/manual/otc-override.mjs [--symbol BTCOTC] [--up|--down] [--target 75900.00] [--pct 0.2]
+//        [--release 45000] [--unlimited] [--no-jitter] [--early] [--ws-log ws.log]
+//     --no-jitter: manda jitter: false no wire (hold cravado no alvo) e compara a, b, d e g exatamente.
+//       Sem ele, o hold oscila dentro da banda do OverridePath e esses critérios aceitam a banda.
+//     --release: tempo de volta ao preço real, em ms (500..600000). O padrão é o de 2 s.
+//     --unlimited / --pct: alvo maior. Sem a API o limite max_override_pct não é aplicado aqui; --unlimited
+//       só serve para o alvo padrão crescer (1%), e --pct define o tamanho à mão.
 //     --early: writes the override right after the candle opens (~50 s before the ramp) instead of just before it.
 //   node tests/manual/otc-override.mjs --watch [--symbol BTCOTC] [--up|--down|--target X]
 //   node tests/manual/otc-override.mjs --clean
 //
+// OTC e mercado: em ativo de mercado a rampa ocupa o resto do candle e o alvo pode passar da banda.
 // Needs: docker deps, migrations, `npm run build -w @traderoom/shared` and `npm run dev:ws` running.
 // The settlement worker is started here (and stopped at the end) if it is not already up.
 // Exit code 0 only if every criterion passes.
@@ -18,8 +25,11 @@ import { Redis } from 'ioredis';
 import {
   OTC_OVERRIDE_HOLD_MS as HOLD_MS,
   OTC_OVERRIDE_KEY as OVERRIDE_KEY,
+  OTC_OVERRIDE_LANDING_MS as LANDING_MS,
   OTC_OVERRIDE_MIN_LEAD_MS as MIN_LEAD_MS,
   OTC_OVERRIDE_RAMP_DEFAULT_MS as RAMP_MS,
+  OTC_OVERRIDE_RELEASE_MAX_MS as RELEASE_MAX_MS,
+  OTC_OVERRIDE_RELEASE_MIN_MS as RELEASE_MIN_MS,
   OTC_OVERRIDE_RELEASE_MS as RELEASE_MS,
   otcOverrideRampStartMs,
   RedisKeys,
@@ -38,6 +48,18 @@ const BACK_MAX_PCT = 0.1;
 const HOLD_SNAPSHOTS_MIN = 3;
 /** The override is written this long before the ramp, so `base` is the price the ramp starts from. */
 const WRITE_BEFORE_RAMP_MS = 1500;
+/** Release check on k itself: k_eff = (p − from) / (real − from), the k the tick used (clock-free). */
+const RELEASE_K_TOL = 0.08;
+/** k_eff may never go back more than this between two ticks. */
+const RELEASE_K_BACK = 0.01;
+/** Skip ticks where |real − from| is under this share of the distance: near the root k_eff blows up. */
+const RELEASE_K_ROOT_FRAC = 0.05;
+/** OTC: the exponential must have converged, k_eff at the last release tick at least this. */
+const OTC_RELEASE_K_MIN = 0.85;
+/** OTC: at the end of the release the price sits within this share of the distance from the shadow. */
+const OTC_RELEASE_END_FRAC = 0.1;
+/** A gap between two release ticks longer than this is a feed stall (reported, not failed). */
+const RELEASE_STALL_MS = 2000;
 const EMAIL_PREFIX = 'otc-override-';
 const EMAIL_DOMAIN = '@teste.local';
 // argon2id of "otc-override-test", same parameters as apps/api/src/lib/password.ts.
@@ -56,20 +78,40 @@ function loadDotEnv() {
 }
 
 function parseArgs(argv) {
-  const a = { symbol: 'BTCOTC', dir: 'up', target: null, watch: false, clean: false, early: false, wsLog: null };
+  const a = {
+    symbol: 'BTCOTC',
+    dir: 'up',
+    target: null,
+    pct: null,
+    unlimited: false,
+    releaseMs: RELEASE_MS,
+    watch: false,
+    clean: false,
+    early: false,
+    jitter: true,
+    wsLog: null,
+  };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     if (k === '--symbol') a.symbol = String(argv[++i] ?? '').toUpperCase();
     else if (k === '--up') a.dir = 'up';
     else if (k === '--down') a.dir = 'down';
     else if (k === '--target') a.target = argv[++i];
+    else if (k === '--pct') a.pct = Number(argv[++i]);
+    else if (k === '--unlimited') a.unlimited = true;
+    else if (k === '--release') a.releaseMs = Number(argv[++i]);
     else if (k === '--watch') a.watch = true;
     else if (k === '--clean') a.clean = true;
     else if (k === '--early') a.early = true;
+    else if (k === '--no-jitter') a.jitter = false;
     else if (k === '--ws-log') a.wsLog = argv[++i];
     else die(`argumento desconhecido: ${k}`);
   }
   if (a.target !== null && !(Number(a.target) > 0)) die(`--target inválido: ${a.target}`);
+  if (a.pct !== null && !(a.pct > 0 && a.pct < 50)) die(`--pct inválido: ${a.pct}`);
+  if (!Number.isInteger(a.releaseMs) || a.releaseMs < RELEASE_MIN_MS || a.releaseMs > RELEASE_MAX_MS) {
+    die(`--release inválido: use ${RELEASE_MIN_MS}..${RELEASE_MAX_MS} ms`);
+  }
   return a;
 }
 
@@ -129,11 +171,16 @@ async function ensureWorker() {
 // ---------- shared steps ----------
 
 async function loadAsset(db, symbol) {
-  const { rows } = await db.query(`select id, symbol, kind, enabled, payout_pct, otc_decimals from assets where symbol = $1`, [symbol]);
+  const { rows } = await db.query(
+    `select id, symbol, kind, enabled, payout_pct, coalesce(otc_decimals, price_decimals) as decimals, max_override_pct
+       from assets where symbol = $1`,
+    [symbol],
+  );
   const a = rows[0];
   if (!a) die(`ativo ${symbol} não existe em assets`);
-  if (a.kind !== 'otc') die(`ativo ${symbol} não é OTC (kind=${a.kind})`);
+  if (a.kind !== 'otc' && a.kind !== 'market') die(`ativo ${symbol} não aceita override (kind=${a.kind})`);
   if (!a.enabled) die(`ativo ${symbol} está desabilitado`);
+  if (a.decimals === null || a.decimals === undefined) die(`ativo ${symbol} não tem casas decimais configuradas`);
   return a;
 }
 
@@ -141,16 +188,22 @@ async function readPx(redis, symbol) {
   const raw = await redis.get(RedisKeys.price(symbol));
   if (!raw) return null;
   const r = JSON.parse(raw);
-  return { p: String(r.p), ts: Number(r.ts) };
+  return {
+    p: String(r.p),
+    ts: Number(r.ts),
+    // rt = tick.recvMs: when the relay received the tick, the clock PriceOverride.apply runs on.
+    rt: r.rt === undefined || r.rt === null ? null : Number(r.rt),
+    realPrice: r.realPrice ? String(r.realPrice) : null,
+  };
 }
 
 /**
- * Candle with at least MIN_LEAD_MS left (else the next one).
- * - 'near-ramp': waits until just before the ramp, so base is the price the ramp starts from.
+ * Candle with at least MIN_LEAD_MS left (else the next one), and the ramp length for this run.
+ * - OTC: 'near-ramp' waits until just before the ramp, so base is the price the ramp starts from.
+ * - Market: the ramp spans the rest of the candle, so it is written right away.
  * - 'early': waits for the next candle to open and writes right after the turnover (~50 s of lead).
- * - 'now': writes immediately.
  */
-async function pickCandle(mode) {
+async function pickCandle(mode, market) {
   let now = Date.now();
   if (mode === 'early') {
     const next = (Math.floor(now / CANDLE_MS) + 1) * CANDLE_MS;
@@ -158,7 +211,8 @@ async function pickCandle(mode) {
     await sleep(next - now + 100);
     now = Date.now();
     const open = Math.floor(now / CANDLE_MS) * CANDLE_MS;
-    return { openMs: open, closeMs: open + CANDLE_MS };
+    const closeMs = open + CANDLE_MS;
+    return { openMs: open, closeMs, rampMs: rampFor(closeMs, now, market) };
   }
   let open = Math.floor(now / CANDLE_MS) * CANDLE_MS;
   if (open + CANDLE_MS - now < MIN_LEAD_MS) {
@@ -169,31 +223,46 @@ async function pickCandle(mode) {
     open = Math.floor(now / CANDLE_MS) * CANDLE_MS;
   }
   const closeMs = open + CANDLE_MS;
+  if (market) return { openMs: open, closeMs, rampMs: rampFor(closeMs, now, market) };
   const writeAt = otcOverrideRampStartMs(0, closeMs, RAMP_MS) - WRITE_BEFORE_RAMP_MS;
   if (mode === 'near-ramp' && writeAt > now) {
     console.log(`aguardando ${writeAt - now} ms para gravar o override logo antes da rampa`);
     await sleep(writeAt - now);
   }
-  return { openMs: open, closeMs };
+  return { openMs: open, closeMs, rampMs: RAMP_MS };
 }
 
-function pickTarget(args, base, decimals) {
+/** Market ramps over whatever is left of the candle; OTC uses the fixed 25 s. */
+function rampFor(closeMs, nowMs, market) {
+  if (!market) return RAMP_MS;
+  return Math.min(60_000, Math.max(500, closeMs - nowMs - HOLD_MS - LANDING_MS));
+}
+
+function pickTarget(args, base, decimals, market) {
   if (args.target !== null) return Number(args.target).toFixed(decimals);
-  return (Number(base) * (args.dir === 'down' ? 0.998 : 1.002)).toFixed(decimals);
+  const pct = args.pct ?? (args.unlimited && market ? 1 : 0.2);
+  const factor = args.dir === 'down' ? 1 - pct / 100 : 1 + pct / 100;
+  return (Number(base) * factor).toFixed(decimals);
 }
 
-async function writeOverride(redis, symbol, target, base, closeMs) {
+async function writeOverride(redis, symbol, target, base, closeMs, rampMs, releaseMs, kind, jitter = true) {
   const now = Date.now();
   const payload = {
+    // An id makes the ws mark ticks with `ov`, and only marked ticks carry realPrice in px. Not numeric,
+    // so an order opened through the API meanwhile is recorded as natural (orders.ts filters /^\d+$/).
+    id: `manual-${now}`,
+    ...(kind === 'market' ? { kind: 'market' } : {}),
+    // Absent means jitter on, as in the API's wire.
+    ...(jitter ? {} : { jitter: false }),
     symbol,
     targetPrice: target,
     basePrice: base,
     closeMs,
-    rampStartMs: otcOverrideRampStartMs(now, closeMs, RAMP_MS),
+    rampStartMs: otcOverrideRampStartMs(now, closeMs, rampMs),
     holdMs: HOLD_MS,
-    releaseMs: RELEASE_MS,
+    releaseMs,
   };
-  const ttl = closeMs + RELEASE_MS - now + 10_000;
+  const ttl = closeMs + releaseMs - now + 10_000;
   await redis.set(OVERRIDE_KEY, JSON.stringify(payload), 'PX', ttl);
   console.log(`override gravado (TTL ${ttl} ms): ${JSON.stringify(payload)}`);
   return { ...payload, ttlMs: ttl, writtenAtMs: now };
@@ -248,26 +317,57 @@ async function clean(db, redis) {
 
 async function watch(db, redis, args) {
   const asset = await loadAsset(db, args.symbol);
+  const market = asset.kind === 'market';
   const px = await readPx(redis, asset.symbol);
   if (!px) die(`sem preço em px:${asset.symbol}; o ws (npm run dev:ws) está rodando?`);
-  const { closeMs } = await pickCandle(args.early ? 'early' : 'now');
-  const target = pickTarget(args, px.p, asset.otc_decimals);
-  const ov = await writeOverride(redis, asset.symbol, target, px.p, closeMs);
+  const { closeMs, rampMs } = await pickCandle(args.early ? 'early' : 'now', market);
+  const target = pickTarget(args, px.p, asset.decimals, market);
+  const ov = await writeOverride(redis, asset.symbol, target, px.p, closeMs, rampMs, args.releaseMs, asset.kind, args.jitter);
   await waitWsApplied(args.wsLog, closeMs);
   console.log(`abra /traderoom, ${asset.symbol}, intervalo 1m. Candle fecha em ${iso(closeMs)} em ${target}.`);
-  const end = Date.now() + 90_000;
+  const end = Date.now() + 90_000 + args.releaseMs;
   while (Date.now() < end) {
     const now = Date.now();
     const cur = await readPx(redis, asset.symbol);
-    const dist = cur ? (Number(cur.p) - Number(target)).toFixed(asset.otc_decimals) : '-';
+    const dist = cur ? (Number(cur.p) - Number(target)).toFixed(asset.decimals) : '-';
     console.log(`${iso(now)}  px=${cur?.p ?? '-'}  alvo-dist=${dist}  fase=${phaseAt(now, ov)}`);
     await sleep(POLL_MS - (Date.now() - now));
   }
 }
 
+/**
+ * The feed must be ticking: 20 reads of px:<symbol>, 250 ms apart. Counts new ticks (distinct ts), not
+ * distinct prices: on a 1-cent grid a quiet market alternates between two prices and is still alive.
+ * Needs at least 3 distinct ts and the last one no older than 3 s; prints the mean spacing and, for the
+ * record, how many distinct prices showed up (a low number means the market is flat, not the feed dead).
+ */
+async function assertFeedAlive(redis, symbol) {
+  const stamps = new Set();
+  const prices = new Set();
+  let lastTs = null;
+  for (let i = 0; i < 20; i++) {
+    const px = await readPx(redis, symbol);
+    if (px) {
+      stamps.add(px.ts);
+      prices.add(px.p);
+      lastTs = px.ts;
+    }
+    if (i < 19) await sleep(250);
+  }
+  const ts = [...stamps].sort((a, b) => a - b);
+  const meanGapMs = ts.length > 1 ? (ts.at(-1) - ts[0]) / (ts.length - 1) : null;
+  const ageMs = lastTs === null ? null : Date.now() - lastTs;
+  const gapText = meanGapMs === null ? '-' : `${Math.round(meanGapMs)} ms`;
+  const summary = `${ts.length} tick(s) novo(s) em 20 leituras de 250 ms, espaçamento médio ${gapText}, último tick há ${ageMs ?? '-'} ms, ${prices.size} preço(s) distinto(s)`;
+  if (ts.length < 3 || ageMs === null || ageMs > 3000) die(`feed de ${symbol} parado: ${summary} (mínimo 3 ticks, último ≤ 3000 ms)`);
+  console.log(`feed de ${symbol} vivo: ${summary}`);
+}
+
 async function run(db, redis, args) {
   const asset = await loadAsset(db, args.symbol);
-  const d = asset.otc_decimals;
+  await assertFeedAlive(redis, asset.symbol);
+  const d = asset.decimals;
+  const market = asset.kind === 'market';
   const { rows: cols } = await db.query(
     `select table_name, column_name from information_schema.columns
       where table_schema = 'public' and table_name in ('orders', 'accounts')`,
@@ -276,15 +376,29 @@ async function run(db, redis, args) {
   const hasAccountKind = cols.some((c) => c.table_name === 'accounts' && c.column_name === 'kind');
   if (!(await readPx(redis, asset.symbol))) die(`sem preço em px:${asset.symbol}; o ws (npm run dev:ws) está rodando?`);
 
-  const { openMs, closeMs } = await pickCandle(args.early ? 'early' : 'near-ramp');
+  const { openMs, closeMs, rampMs } = await pickCandle(args.early ? 'early' : 'near-ramp', market);
   const px = await readPx(redis, asset.symbol);
   if (!px) die(`sem preço em px:${asset.symbol}; o ws (npm run dev:ws) está rodando?`);
   const base = px.p;
-  const target = pickTarget(args, base, d);
+  const target = pickTarget(args, base, d, market);
   const up = Number(target) > Number(base);
   if (Number(target) === Number(base)) die('alvo igual ao preço atual; a ordem empataria');
-  console.log(`ativo ${asset.symbol} id=${asset.id} decimals=${d} payout=${asset.payout_pct}%`);
-  console.log(`candle ${iso(openMs)} → ${iso(closeMs)}; base=${base} alvo=${target} (${up ? 'call' : 'put'})`);
+  const gap = Math.abs(Number(target) - Number(base));
+  // Hold band of the OverridePath: 10% of the body on the price grid, floor of 2 ticks.
+  const tick = 10 ** -d;
+  const band = Math.max(2, Math.round((0.1 * gap) / tick)) * tick;
+  const within = (a, b) =>
+    a !== null && a !== undefined && b !== null && b !== undefined && Math.abs(Number(a) - Number(b)) <= band + tick / 2;
+  /** Jitter on: the close lands inside the band; off: exactly on the target. */
+  const onTarget = (a, b) => (args.jitter ? within(a, b) : same(a, b, d));
+  const eqLabel = args.jitter ? `≈ alvo (±${band.toFixed(d)})` : '== alvo';
+  console.log(`ativo ${asset.symbol} id=${asset.id} kind=${asset.kind} decimals=${d} payout=${asset.payout_pct}%`);
+  console.log(`candle ${iso(openMs)} → ${iso(closeMs)}; base=${base} alvo=${target} (${up ? 'call' : 'put'}) rampa=${rampMs} ms`);
+  if (market && asset.max_override_pct !== null) {
+    const devPct = (Math.abs(Number(target) - Number(base)) / Number(base)) * 100;
+    const limit = Number(asset.max_override_pct);
+    console.log(`desvio ${devPct.toFixed(3)}% vs limite ${limit.toFixed(3)}% (${devPct > limit ? 'ACIMA — a API recusaria sem ignoreBand' : 'dentro'})`);
+  }
 
   // User, account, order.
   const ts = Date.now();
@@ -292,7 +406,7 @@ async function run(db, redis, args) {
   const { rows: urows } = await db.query(`insert into users (email, password_hash, name, role) values ($1, $2, $3, 'user') returning id`, [
     email,
     PASSWORD_HASH,
-    `OTC override ${ts}`,
+    `Override ${ts}`,
   ]);
   const userId = urows[0].id;
   if (hasAccountKind) await db.query(`insert into accounts (user_id, kind, balance_cents) values ($1, 'real', $2)`, [userId, BALANCE_CENTS]);
@@ -310,9 +424,9 @@ async function run(db, redis, args) {
   const orderId = orows[0].id;
   // The API schedules every order here; without it only the 10 s DB sweep would find it.
   await redis.zadd(RedisKeys.ordersDue, closeMs, orderId);
-  console.log(`usuário ${email} (${userId}), ordem ${orderId}`);
+  console.log(`usuário ${email} (${userId}), ordem ${orderId} (override_id nulo: o script não passa pela API)`);
 
-  const ov = await writeOverride(redis, asset.symbol, target, base, closeMs);
+  const ov = await writeOverride(redis, asset.symbol, target, base, closeMs, rampMs, args.releaseMs, asset.kind, args.jitter);
   const wsLine = await waitWsApplied(args.wsLog, closeMs);
   if (args.wsLog && !wsLine) die('o ws não registrou "otc override applied" em 3 s; abortando');
 
@@ -322,15 +436,30 @@ async function run(db, redis, args) {
   let afterRelease = null; // first tick with ts >= closeMs + releaseMs
   let pttlAtClose = null;
   let keyGoneEarlyAt = null;
-  const releaseEnd = closeMs + RELEASE_MS;
+  const releaseEnd = closeMs + ov.releaseMs;
   const giveUp = releaseEnd + 5000;
+  /** Release samples: distance from the target, to prove the return is gradual. */
+  const releaseDist = [];
+  /** Release ticks (distinct px.rt): price shown, real price and the relay's receive time. */
+  const releaseTicks = [];
+  /** Smallest |price - target| seen from rampStartMs to closeMs: proves the override acted. */
+  let minDistInHold = Infinity;
+  let prevRt = null;
   while (!afterRelease && Date.now() < giveUp) {
     const now = Date.now();
     const cur = await readPx(redis, asset.symbol);
     if (cur) {
       if (cur.ts < ov.rampStartMs && (!atRamp || cur.ts > atRamp.ts)) atRamp = cur;
       if (cur.ts <= closeMs && (!atClose || cur.ts > atClose.ts)) atClose = cur;
+      if (cur.ts >= ov.rampStartMs && cur.ts <= closeMs) minDistInHold = Math.min(minDistInHold, Math.abs(Number(cur.p) - Number(target)));
       if (cur.ts >= releaseEnd) afterRelease = cur;
+      if (now > ov.closeMs && now < releaseEnd) releaseDist.push({ at: now, dist: Math.abs(Number(cur.p) - Number(target)) });
+      // Release ticks go in by the tick's own rt, inside (closeMs, releaseEnd), even when read after the
+      // window closed. Only a new tick counts; a sample with the same rt is ignored.
+      if (cur.rt !== null && cur.rt !== prevRt && cur.rt > ov.closeMs && cur.rt < releaseEnd) {
+        releaseTicks.push({ rt: cur.rt, p: Number(cur.p), real: cur.realPrice === null ? null : Number(cur.realPrice) });
+        prevRt = cur.rt;
+      }
     }
     const pttl = await redis.pttl(OVERRIDE_KEY);
     if (pttl < 0 && now < releaseEnd && keyGoneEarlyAt === null) keyGoneEarlyAt = now;
@@ -372,20 +501,73 @@ async function run(db, redis, args) {
       where asset_id = $1 and captured_at >= $2 and captured_at <= $3 order by captured_at`,
     [asset.id, new Date(closeMs - HOLD_MS), new Date(closeMs)],
   );
-  const holdOk = holdSnaps.length >= HOLD_SNAPSHOTS_MIN && holdSnaps.every((s) => same(s.price, target, d));
+  const holdOk = holdSnaps.length >= HOLD_SNAPSHOTS_MIN && holdSnaps.every((s) => onTarget(s.price, target));
+
+  // Smooth return: sample at 50% and 90% of the release, and the largest step seen.
+  const sampleAt = (frac) => {
+    if (releaseDist.length === 0) return null;
+    const want = ov.closeMs + ov.releaseMs * frac;
+    return releaseDist.reduce((best, s) => (Math.abs(s.at - want) < Math.abs(best.at - want) ? s : best));
+  };
+  const mid = sampleAt(0.5);
+  const late = sampleAt(0.9);
+  const reachedOk = minDistInHold <= gap * 0.01;
+  const midOk = reachedOk && mid !== null && mid.dist >= gap * 0.3;
+  const lateOk = reachedOk && late !== null && late.dist >= gap * 0.85;
+  // j: the k each release tick used, k_eff = (p − from) / (real − from), against smoothstep at its rt.
+  // The market cancels out and no clock difference matters. `from` is the hold's price at the close (the
+  // relay's releaseFrom); without it, the first release tick.
+  const kFromClose = atClose ? Number(atClose.p) : null;
+  const kFrom = kFromClose ?? releaseTicks[0]?.p ?? null;
+  const kFromSrc = kFromClose !== null ? 'preço em closeMs' : 'FALLBACK: 1ª amostra da volta (sem atClose)';
+  let kWorstDev = null;
+  let kWorstBack = 0;
+  let kValid = 0;
+  let kBiasSum = 0;
+  let prevK = null;
+  let lastK = null;
+  // From the close every release tick is checked; with the fallback the first one is `from` itself.
+  for (const s of kFromClose !== null ? releaseTicks : releaseTicks.slice(1)) {
+    if (kFrom === null || s.real === null || Math.abs(s.real - kFrom) < gap * RELEASE_K_ROOT_FRAC) continue;
+    const kEff = (s.p - kFrom) / (s.real - kFrom);
+    const tExp = Math.min(1, Math.max(0, (s.rt - ov.closeMs) / ov.releaseMs));
+    const kExp = tExp * tExp * (3 - 2 * tExp);
+    const dev = kEff - kExp;
+    kValid++;
+    kBiasSum += dev;
+    if (kWorstDev === null || Math.abs(dev) > Math.abs(kWorstDev.dev)) kWorstDev = { dev, kEff, kExp, at: s.rt };
+    if (prevK !== null) kWorstBack = Math.max(kWorstBack, prevK - kEff);
+    prevK = kEff;
+    lastK = { kEff, at: s.rt };
+  }
+  const gaps = releaseTicks.slice(1).map((s, i) => s.rt - releaseTicks[i].rt);
+  const stalls = gaps.filter((g) => g > RELEASE_STALL_MS).length;
+  const meanTickMs = gaps.length ? gaps.reduce((a, g) => a + g, 0) / gaps.length : null;
+  const stepOk = kValid > 5 && Math.abs(kWorstDev.dev) <= RELEASE_K_TOL && kWorstBack <= RELEASE_K_BACK;
+
+  // OTC: the generator eases exponentially (τ = release/3) to the shadow price, which px carries as
+  // realPrice. It is checked by convergence, not by the shape of the curve.
+  const releaseEndMs = ov.closeMs + ov.releaseMs;
+  const otcLast = [...releaseTicks].reverse().find((s) => s.rt < releaseEndMs && s.real !== null) ?? null;
+  const otcLastGap = otcLast ? Math.abs(otcLast.p - otcLast.real) : null;
+  const otcEndOk = reachedOk && otcLastGap !== null && otcLastGap <= gap * OTC_RELEASE_END_FRAC;
+  const otcInside = releaseTicks.filter((s) => s.rt > ov.closeMs && s.rt < releaseEndMs).length;
+  const otcKOk = kValid >= 1 && kWorstBack <= RELEASE_K_BACK && lastK !== null && lastK.kEff >= OTC_RELEASE_K_MIN;
 
   const backBase = afterRelease ? pctGap(afterRelease.p, base) : null;
+  /** OTC: the last release tick (it still has ov, so realPrice = the shadow) against its own shadow. */
+  const otcBackShadow = otcLast ? pctGap(otcLast.p, otcLast.real) : null;
   const backRamp = afterRelease ? pctGap(afterRelease.p, atRamp.p) : null;
   const results = [
-    ['a', 'preço em closeMs == alvo', same(atClose?.p, target, d), `${atClose?.p ?? '-'} vs ${target}`],
+    ['a', `preço em closeMs ${eqLabel}`, onTarget(atClose?.p, target), `${atClose?.p ?? '-'} vs ${target}`],
     [
       'b',
-      'close do candle (snapshots) == alvo',
-      same(c?.close, target, d),
+      `close do candle (snapshots) ${eqLabel}`,
+      onTarget(c?.close, target),
       c ? `${c.close} @ ${c.last_at.toISOString()} (bucket ${c.bucket.toISOString()}, ${c.n} snapshots)` : 'sem snapshots',
     ],
     ['c', "ordem status='won'", order?.status === 'won', `status=${order?.status}`],
-    ['d', 'close_price == alvo', same(order?.close_price, target, d), `close_price=${order?.close_price ?? '-'}`],
+    ['d', `close_price ${eqLabel}`, onTarget(order?.close_price, target), `close_price=${order?.close_price ?? '-'}`],
     [
       'e',
       'ledger com payout',
@@ -394,30 +576,87 @@ async function run(db, redis, args) {
     ],
     [
       'f',
-      `preço < ${String(BACK_MAX_PCT).replace('.', ',')}% do base em closeMs+release`,
-      backBase !== null && backBase < BACK_MAX_PCT,
-      afterRelease
-        ? `${afterRelease.p} @ ${iso(afterRelease.ts)}: ${backBase.toFixed(4)}% do base ${base}, ${backRamp.toFixed(4)}% do preço no início da rampa ${atRamp.p}`
-        : 'sem tick após o release',
+      market
+        ? `preço < ${String(BACK_MAX_PCT).replace('.', ',')}% do base em closeMs+release`
+        : `preço < ${String(BACK_MAX_PCT).replace('.', ',')}% da sombra (realPrice) no último tick da volta`,
+      market ? backBase !== null && backBase < BACK_MAX_PCT : otcBackShadow !== null && otcBackShadow < BACK_MAX_PCT,
+      market
+        ? afterRelease
+          ? `${afterRelease.p} @ ${iso(afterRelease.ts)}: ${backBase.toFixed(4)}% do base ${base}, ${backRamp.toFixed(4)}% do preço no início da rampa ${atRamp.p}`
+          : 'sem tick após o release'
+        : otcLast
+          ? `p=${otcLast.p.toFixed(d)} em t=${((otcLast.rt - ov.closeMs) / 1000).toFixed(2)} s: ${otcBackShadow.toFixed(4)}% da sombra realPrice=${otcLast.real.toFixed(d)} (base ${base}, ${backBase === null ? '-' : backBase.toFixed(4)}% dele após a volta)`
+          : 'sem tick com realPrice dentro da volta',
     ],
     [
       'g',
-      `≥ ${HOLD_SNAPSHOTS_MIN} snapshots no hold, todos == alvo`,
+      `≥ ${HOLD_SNAPSHOTS_MIN} snapshots no hold, todos ${eqLabel}`,
       holdOk,
       `${holdSnaps.length}: ${holdSnaps.map((s) => `${s.price}@${s.captured_at.toISOString()}`).join(', ') || 'NENHUM (símbolo stale?)'}`,
+    ],
+    market
+      ? [
+          'h',
+          `volta gradual: longe do alvo na metade (≥30% de ${gap.toFixed(d)})`,
+          midOk,
+          mid ? `${(mid.dist / gap * 100).toFixed(1)}% da distância percorrida em ${((mid.at - ov.closeMs) / 1000).toFixed(1)} s` : 'sem amostras',
+        ]
+      : ['h', 'volta gradual na metade', null, 'N/A: OTC usa exponencial; ver i e j'],
+    market
+      ? ['i', 'volta quase no fim em 90% do release', lateOk, late ? `distância ${late.dist.toFixed(d)} (${(late.dist / gap * 100).toFixed(1)}%)` : 'sem amostras']
+      : [
+          'i',
+          `no fim da volta, |p − sombra| ≤ ${OTC_RELEASE_END_FRAC * 100}% da distância (${(gap * OTC_RELEASE_END_FRAC).toFixed(d)})`,
+          otcEndOk,
+          otcLast
+            ? `último tick da volta em t=${((otcLast.rt - ov.closeMs) / 1000).toFixed(2)} s: p=${otcLast.p.toFixed(d)}, sombra=${otcLast.real.toFixed(d)}, |p − sombra|=${otcLastGap.toFixed(d)} (${((otcLastGap / gap) * 100).toFixed(1)}%)`
+            : 'sem tick com realPrice dentro da volta',
+        ],
+    market
+      ? [
+        'j',
+        `k da volta segue o smoothstep (|k_eff − k_exp| ≤ ${RELEASE_K_TOL}, recuo ≤ ${RELEASE_K_BACK})`,
+        stepOk,
+        kWorstDev
+          ? `pior desvio ${kWorstDev.dev >= 0 ? '+' : ''}${kWorstDev.dev.toFixed(4)} (k_eff ${kWorstDev.kEff.toFixed(4)} vs k_exp ${kWorstDev.kExp.toFixed(4)} em t=${((kWorstDev.at - ov.closeMs) / 1000).toFixed(1)} s), ` +
+            `from=${kFrom} (${kFromSrc}), recuo ${kWorstBack.toFixed(4)}, viés médio ${(kBiasSum / kValid >= 0 ? '+' : '')}${(kBiasSum / kValid).toFixed(4)}, ${kValid} amostras válidas de ${kFromClose !== null ? releaseTicks.length : Math.max(0, releaseTicks.length - 1)}; ` +
+            `stalls=${stalls} (rt > ${RELEASE_STALL_MS} ms), espaçamento médio ${meanTickMs === null ? '-' : Math.round(meanTickMs)} ms`
+          : `sem amostras válidas (${releaseTicks.length} ticks no release, ${releaseTicks.filter((s) => s.real !== null).length} com realPrice, from=${kFrom ?? '-'} (${kFromSrc}))`,
+      ]
+      : [
+          'j',
+          `exponencial converge: k_eff nunca recua > ${RELEASE_K_BACK} e chega a ≥ ${OTC_RELEASE_K_MIN} no último tick da volta`,
+          otcKOk,
+          lastK
+            ? `último k_eff ${lastK.kEff.toFixed(4)} em t=${((lastK.at - ov.closeMs) / 1000).toFixed(2)} s, recuo ${kWorstBack.toFixed(4)}, from=${kFrom} (${kFromSrc}), ` +
+              `${kValid} amostras válidas, ${otcInside} tick(s) dentro da volta de ${ov.releaseMs} ms; stalls=${stalls}, espaçamento médio ${meanTickMs === null ? '-' : Math.round(meanTickMs)} ms`
+            : `sem amostras válidas (${releaseTicks.length} ticks no release, ${otcInside} dentro da volta, from=${kFrom ?? '-'})`,
+        ],
+    [
+      'k',
+      'preço chegou ao alvo (o override agiu)',
+      reachedOk,
+      `menor distância ${Number.isFinite(minDistInHold) ? minDistInHold.toFixed(d) : 'sem amostras'} entre rampStartMs e closeMs (limite ${(gap * 0.01).toFixed(d)}, 1% de ${gap.toFixed(d)})`,
     ],
   ];
 
   console.log('\n================ RELATÓRIO ================');
-  console.log(`modo=${args.dir}${args.early ? ' --early' : ''} ativo=${asset.symbol} base=${base} alvo=${target} candle=${iso(openMs)}→${iso(closeMs)}`);
+  console.log(
+    `modo=${args.dir}${args.early ? ' --early' : ''}${args.unlimited ? ' --unlimited' : ''} ativo=${asset.symbol} (${asset.kind}) base=${base} alvo=${target} candle=${iso(openMs)}→${iso(closeMs)}`,
+  );
   console.log(`antecedência gravação→rampStartMs: ${((ov.rampStartMs - ov.writtenAtMs) / 1000).toFixed(1)} s`);
-  console.log(`hold=${HOLD_MS} ms release=${RELEASE_MS} ms rampa=${RAMP_MS} ms min_lead=${MIN_LEAD_MS} ms`);
+  console.log(`wire id=${ov.id} (os ticks marcados com esse ov trazem realPrice no px)`);
+  console.log(`hold=${HOLD_MS} ms release=${ov.releaseMs} ms rampa=${rampMs} ms min_lead=${MIN_LEAD_MS} ms`);
+  console.log(`modelo=${market ? 'smoothstep (mercado)' : 'exponencial (OTC)'}`);
+  console.log(
+    `jitter=${args.jitter ? 'ligado' : 'desligado'} banda=${args.jitter ? `±${band.toFixed(d)} (10% de ${gap.toFixed(d)}, piso 2 ticks; tolerância +${(tick / 2).toFixed(d + 1)})` : 'n/a (comparação exata)'}`,
+  );
   console.log(`ordem=${orderId} settled_at=${order?.settled_at?.toISOString?.() ?? '-'}`);
-  for (const [id, name, ok, detail] of results) console.log(`(${id}) ${ok ? 'PASS' : 'FAIL'}  ${name}  — ${detail}`);
+  for (const [id, name, ok, detail] of results) console.log(`(${id}) ${ok === null ? 'N/A ' : ok ? 'PASS' : 'FAIL'}  ${name}  — ${detail}`);
   console.log('--- diagnóstico ---');
   console.log(`ws aplicou o override: ${wsLine ? 'sim' : args.wsLog ? 'NÃO' : 'não verificado'}`);
   console.log(`TTL da chave em closeMs: ${pttlAtClose} ms; chave sumiu antes do release: ${keyGoneEarlyAt ? iso(keyGoneEarlyAt) : 'não'}`);
-  const failed = results.filter((r) => !r[2]).length;
+  const failed = results.filter((r) => r[2] === false).length;
   console.log(failed === 0 ? 'RESULTADO: PASS' : `RESULTADO: FAIL (${failed} critério(s))`);
   return failed === 0 ? 0 : 1;
 }

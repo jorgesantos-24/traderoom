@@ -344,7 +344,7 @@ describe('settlement on the forced close', () => {
 });
 
 describe('OTC: same disclosure and protection as market assets', () => {
-  it('orders opened before the override settle on the natural path; opened during it, on the shown price', async () => {
+  it('orders opened before the override and during it both settle on the shown price', async () => {
     clock = T0 + 15_000;
     await setPrice(OTC_A, '100.00');
     const v = await svc.apply(adminId, input({ assetId: ids.a, targetPrice: 100.6 }));
@@ -422,7 +422,8 @@ describe('OTC: same disclosure and protection as market assets', () => {
       ]);
       return r[0]?.close_price;
     };
-    expect(await closeOf(await open(null))).toBe(atExpiry?.real_price);
+    // The screen decides for everyone: real_price is diagnostics only.
+    expect(await closeOf(await open(null))).toBe(atExpiry?.price);
     expect(await closeOf(await open(v.id))).toBe(atExpiry?.price);
   });
 });
@@ -623,6 +624,48 @@ describe('market assets (1m close only)', () => {
     await expect(svc.apply(adminId, input({ assetId: ids.mkt, targetPrice: 49_960 }))).resolves.toMatchObject({ targetPrice: 49_960 });
   });
 
+  it('ignoreBand: the same target past the limit is accepted, and recorded', async () => {
+    clock = T0 + 20_000;
+    await setMarketPrice('50000.00');
+    await expectAppError(
+      svc.apply(adminId, input({ assetId: ids.mkt, targetPrice: 50_150, ignoreBand: false })),
+      400,
+      /Envie ignoreBand para passar/,
+    );
+    expect(await redis.get(KEY)).toBeNull();
+    const v = await svc.apply(adminId, input({ assetId: ids.mkt, targetPrice: 50_150, ignoreBand: true }));
+    expect(v.targetPrice).toBe(50_150);
+    expect(parseOtcOverride(await redis.get(KEY))?.targetPrice).toBe('50150.00');
+    const { rows } = await pool.query<{ ignore_band: boolean }>('select ignore_band from otc_overrides where id = $1', [v.id]);
+    expect(rows[0]).toEqual({ ignore_band: true });
+    const audit = await pool.query<{ payload: Record<string, unknown> }>(
+      `select payload from admin_audit where admin_id = $1 and action = 'otc.override' order by id desc limit 1`,
+      [adminId],
+    );
+    expect(audit.rows[0]?.payload).toMatchObject({ ignoreBand: true });
+  });
+
+  it('releaseMs goes to the row, the wire, the TTL and the public state; out of range is a 400', async () => {
+    clock = T0 + 20_000;
+    await setMarketPrice('50000.00');
+    expect(() => input({ assetId: ids.mkt, targetPrice: 50_010, releaseMs: 499 })).toThrow(/mínima/);
+    expect(() => input({ assetId: ids.mkt, targetPrice: 50_010, releaseMs: 600_001 })).toThrow(/máxima/);
+    const v = await svc.apply(adminId, input({ assetId: ids.mkt, targetPrice: 50_010, releaseMs: 45_000 }));
+    expect(v.releaseEndMs).toBe(T0 + MIN + 45_000);
+    expect(parseOtcOverride(await redis.get(KEY))?.releaseMs).toBe(45_000);
+    const { rows } = await pool.query<{ release_ms: number; ignore_band: boolean }>(
+      'select release_ms, ignore_band from otc_overrides where id = $1',
+      [v.id],
+    );
+    expect(rows[0]).toEqual({ release_ms: 45_000, ignore_band: false });
+    expect(await svc.publicState(MKT)).toEqual({ active: true, untilMs: T0 + MIN + 45_000, scheduledFor: null });
+    // The slot stays taken through the whole return, into the next candle.
+    clock = T0 + MIN + 30_000;
+    await expectAppError(svc.apply(adminId, input({ assetId: ids.mkt, targetPrice: 50_010 })), 409);
+    clock = T0 + MIN + 45_000;
+    expect((await svc.get()).override).toBeNull();
+  });
+
   it('an order opened on an overridden price records override_id; one on a natural price does not', async () => {
     clock = T0 + 20_000;
     await setMarketPrice('50000.00');
@@ -654,7 +697,7 @@ describe('market assets (1m close only)', () => {
     expect((await orders.create(user, body, randomUUID())).order.overrideId).toBeNull();
   });
 
-  it('opened before the override: settles on real_price; opened during it: on the shown price', async () => {
+  it('opened before the override and opened during it: both settle on the shown price', async () => {
     clock = T0 + 20_000;
     await setMarketPrice('50000.00');
     const v = await svc.apply(adminId, input({ assetId: ids.mkt, targetPrice: 50_040 }));
@@ -666,9 +709,10 @@ describe('market assets (1m close only)', () => {
     const before = await order(await client('Antes'), v.candleCloseMs, null);
     const during = await order(await client('Durante'), v.candleCloseMs, v.id);
 
+    // The real market would have lost this call; the screen showed 50040 and that is what counts.
     const a = await settled(before, v.candleCloseMs + 1500);
-    expect(a.r).toMatchObject({ kind: 'settled', status: 'lost' });
-    expect(a.row).toEqual({ status: 'lost', close_price: '49990.55000000' });
+    expect(a.r).toMatchObject({ kind: 'settled', status: 'won' });
+    expect(a.row).toEqual({ status: 'won', close_price: '50040.00000000' });
 
     const b = await settled(during, v.candleCloseMs + 1500);
     expect(b.r).toMatchObject({ kind: 'settled', status: 'won' });
@@ -763,6 +807,34 @@ describe('scheduled override (market, 1m)', () => {
     await expectAppError(svc.apply(adminId, sched()), 400, /Já existe um override ativo/);
     // An immediate one is still a 409, as before.
     await expectAppError(svc.apply(adminId, input({ assetId: ids.mkt, targetPrice: 50_010 })), 409);
+  });
+
+  it('ignoreBand and releaseMs reach the scheduled wire and row; without ignoreBand the wire has none', async () => {
+    const v = await svc.apply(adminId, input({ ...sched(), releaseMs: 45_000, ignoreBand: true }));
+    const wire = parseOtcOverride(await redis.get(KEY));
+    expect(wire?.releaseMs).toBe(45_000);
+    expect(wire?.schedule).toEqual({ openMs: OPEN, direction: 'up', ticks: 20, maxOverridePct: 0.1, ignoreBand: true });
+    const { rows } = await pool.query<{ release_ms: number; ignore_band: boolean }>(
+      'select release_ms, ignore_band from otc_overrides where id = $1',
+      [v.id],
+    );
+    expect(rows[0]).toEqual({ release_ms: 45_000, ignore_band: true });
+    expect(v.releaseEndMs).toBe(OPEN + MIN + 45_000);
+
+    // The ws keeps the whole body: 10 000 ticks of 0.01 is 0.2% of 50 000, twice the 0.1% limit.
+    await svc.release(adminId);
+    await svc.apply(adminId, input({ ...sched({ ticks: 10_000 }), ignoreBand: true }));
+    const big = parseOtcOverride(await redis.get(KEY));
+    if (!big) throw new Error('no wire');
+    const ov = new PriceOverride(big, clock, { decimals: 2, volPerSqrtS: null });
+    const t = { symbol: MKT, price: '50000.00', value: 50_000, ts: OPEN, recvMs: OPEN, provider: 'binance' as const };
+    ov.apply(t, OPEN, 50_000);
+    expect(ov.bodyTicks).toBe(10_000);
+    expect(ov.targetPrice).toBe(50_100);
+
+    await svc.release(adminId);
+    await svc.apply(adminId, sched());
+    expect(parseOtcOverride(await redis.get(KEY))?.schedule).not.toHaveProperty('ignoreBand');
   });
 
   it('cancelled before the open with the usual release: row ended, key gone, slot free', async () => {

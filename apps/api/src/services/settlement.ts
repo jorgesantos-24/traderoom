@@ -39,10 +39,9 @@ export async function settleOrder(pool: pg.Pool, orderId: string, nowMs: number)
       status: OrderStatus;
       opens_at: Date;
       expires_at: Date;
-      override_id: string | null;
     }>(
       `select user_id, account, asset_id, direction, stake_cents, payout_pct, open_price::text as open_price, status,
-              opens_at, expires_at, override_id::text as override_id
+              opens_at, expires_at
          from orders where id = $1 for update`,
       [orderId],
     );
@@ -60,10 +59,13 @@ export async function settleOrder(pool: pg.Pool, orderId: string, nowMs: number)
       return { kind: 'not_due' };
     }
 
-    // Latest snapshot at or before expiry, no older than the window. An order opened on a natural
-    // price settles on the real market price even if an override was showing another one at expiry;
-    // only an order opened on the override's price settles on the shown price.
-    const closeCol = o.override_id === null ? 'coalesce(real_price, price)' : 'price';
+    // Latest snapshot at or before expiry, no older than the window. The close is always the price
+    // the screen showed (`price_snapshots.price`), on OTC and market assets alike, whether the order
+    // was opened before an override or on its manipulated price: that is what the client saw. Call wins
+    // when its entry is below that close, put when it is above, and an equal close is a tie (stake
+    // refunded) — see decideOutcome. `price_snapshots.real_price` and `orders.override_id` never
+    // choose the column: they are kept for diagnostics and audit only.
+    const closeCol = 'price';
     const snap = await client.query<{ price: string }>(
       `select ${closeCol}::text as price from price_snapshots
         where asset_id = $1 and captured_at <= $2 and captured_at >= $2 - make_interval(secs => $3)

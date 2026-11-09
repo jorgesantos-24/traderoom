@@ -6,7 +6,6 @@ import {
   OTC_OVERRIDE_HOLD_MS,
   OTC_OVERRIDE_LANDING_MS,
   OTC_OVERRIDE_MIN_LEAD_MS,
-  OTC_OVERRIDE_RELEASE_MS,
   OTC_OVERRIDE_SCHEDULE_HORIZON_MS,
   otcOverridePhase,
   otcOverrideRampStartMs,
@@ -64,6 +63,8 @@ interface Row {
   candle_open_ms: string;
   candle_close_ms: string;
   ramp_ms: number;
+  release_ms: number;
+  ignore_band: boolean;
   created_by: string;
   created_at: Date;
 }
@@ -82,7 +83,7 @@ const ROW_SELECT = `
   select o.id::text as id, o.kind, o.asset_id, a.symbol, a.display, coalesce(a.otc_decimals, a.price_decimals) as decimals, o.interval_sec,
          o.target_price::text as target_price, o.base_price::text as base_price, o.direction, o.body_ticks,
          o.candle_open_ms::text as candle_open_ms, o.candle_close_ms::text as candle_close_ms,
-         o.ramp_ms, o.created_by::text as created_by, o.created_at
+         o.ramp_ms, o.release_ms, o.ignore_band, o.created_by::text as created_by, o.created_at
     from otc_overrides o join assets a on a.id = o.asset_id`;
 
 const rampStartOf = (createdMs: number, closeMs: number, rampMs: number) => otcOverrideRampStartMs(createdMs, closeMs, rampMs);
@@ -97,8 +98,7 @@ async function audit(c: pg.PoolClient, adminId: string, action: AuditAction, pay
 
 /** Overrides whose release is over are no longer active; this keeps the unique index free for the next one. */
 async function expireFinished(db: pg.Pool | pg.PoolClient, nowMs: number): Promise<void> {
-  await db.query(`update otc_overrides set active = false, ended_at = now() where active and candle_close_ms + $1 <= $2`, [
-    OTC_OVERRIDE_RELEASE_MS,
+  await db.query(`update otc_overrides set active = false, ended_at = now() where active and candle_close_ms + release_ms <= $1`, [
     nowMs,
   ]);
 }
@@ -140,7 +140,7 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
       candleCloseMs: closeMs,
       rampStartMs,
       holdStartMs: closeMs - OTC_OVERRIDE_HOLD_MS,
-      releaseEndMs: closeMs + OTC_OVERRIDE_RELEASE_MS,
+      releaseEndMs: closeMs + r.release_ms,
       remainingMs: closeMs - nowMs,
       phase: otcOverridePhase(nowMs, closeMs),
       createdBy: r.created_by,
@@ -167,6 +167,8 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
     base: string,
     s: OtcOverrideScheduleInput,
     nowMs: number,
+    releaseMs: number,
+    ignoreBand: boolean,
   ): Promise<{ wire: OtcOverrideWire; view: OtcOverrideView; ttlMs: number }> {
     if (s.atMs <= nowMs + OTC_OVERRIDE_MIN_LEAD_MS) {
       throw new AppError(
@@ -188,9 +190,9 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
     const rampMs = closeMs - openMs - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS;
     const { rows } = await c.query<{ id: string }>(
       `insert into otc_overrides (asset_id, kind, interval_sec, target_price, base_price, candle_open_ms, candle_close_ms, ramp_ms,
-                                  direction, body_ticks, created_by, created_at)
-       values ($1, 'market', 60, null, $2, $3, $4, $5, $6, $7, $8, $9) returning id::text as id`,
-      [asset.id, base, openMs, closeMs, rampMs, s.direction, s.ticks, adminId, new Date(nowMs)],
+                                  release_ms, ignore_band, direction, body_ticks, created_by, created_at)
+       values ($1, 'market', 60, null, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) returning id::text as id`,
+      [asset.id, base, openMs, closeMs, rampMs, releaseMs, ignoreBand, s.direction, s.ticks, adminId, new Date(nowMs)],
     );
     const inserted = rows[0];
     if (!inserted) throw new Error('otc override insert returned no row');
@@ -204,6 +206,8 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
       candleOpenMs: openMs,
       candleCloseMs: closeMs,
       rampStartMs: openMs,
+      releaseMs,
+      ignoreBand,
       schedule: { atMs: s.atMs, direction: s.direction, ticks: s.ticks },
     });
     const wire: OtcOverrideWire = {
@@ -215,12 +219,18 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
       closeMs,
       rampStartMs: openMs,
       holdMs: OTC_OVERRIDE_HOLD_MS,
-      releaseMs: OTC_OVERRIDE_RELEASE_MS,
-      schedule: { openMs, direction: s.direction, ticks: s.ticks, maxOverridePct: Number(asset.max_override_pct) },
+      releaseMs,
+      schedule: {
+        openMs,
+        direction: s.direction,
+        ticks: s.ticks,
+        maxOverridePct: Number(asset.max_override_pct),
+        ...(ignoreBand ? { ignoreBand: true } : {}),
+      },
     };
     const { rows: vrows } = await c.query<Row>(`${ROW_SELECT} where o.id = $1`, [inserted.id]);
     // TTL from closeMs, like the immediate mode: the key outlives the release.
-    return { wire, view: toView(vrows[0] as Row, base, nowMs), ttlMs: closeMs + OTC_OVERRIDE_RELEASE_MS - nowMs + 10_000 };
+    return { wire, view: toView(vrows[0] as Row, base, nowMs), ttlMs: closeMs + releaseMs - nowMs + 10_000 };
   }
 
   return {
@@ -285,12 +295,13 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
           if (base === null) {
             throw new AppError(409, ErrorCode.Conflict, `Sem cotação atual para ${asset.symbol}. O feed de preços está rodando?`);
           }
-          if (schedule) return applyScheduled(c, adminId, asset, base, schedule, nowMs);
+          if (schedule) return applyScheduled(c, adminId, asset, base, schedule, nowMs, input.releaseMs, input.ignoreBand);
           if (input.targetPrice === undefined) throw new AppError(400, ErrorCode.ValidationFailed, 'targetPrice: informe o preço alvo.');
           const target = Number(input.targetPrice.toFixed(decimals));
           if (!(target > 0))
             throw new AppError(400, ErrorCode.ValidationFailed, 'targetPrice: preço alvo inválido para as casas decimais do ativo.');
-          if (market) {
+          // ignoreBand: o admin assume o risco de um alvo longe do preço real.
+          if (market && !input.ignoreBand) {
             const maxPct = Number(asset.max_override_pct);
             const devPct = (Math.abs(target - Number(base)) / Number(base)) * 100;
             if (devPct > maxPct) {
@@ -298,7 +309,7 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
               throw new AppError(
                 400,
                 ErrorCode.ValidationFailed,
-                `targetPrice: desvio de ${pct(devPct)}% do preço atual (${base}); o limite de ${asset.symbol} é ${pct(maxPct)}%.`,
+                `targetPrice: desvio de ${pct(devPct)}% do preço atual (${base}); o limite de ${asset.symbol} é ${pct(maxPct)}%. Envie ignoreBand para passar.`,
               );
             }
           }
@@ -317,11 +328,26 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
           const rampMs = market ? Math.min(60_000, Math.max(500, leadMs - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS)) : input.rampMs;
           const rampStartMs = otcOverrideRampStartMs(nowMs, closeMs, rampMs);
           const targetText = target.toFixed(decimals);
+          const releaseMs = input.releaseMs;
 
           const { rows } = await c.query<{ id: string; created_at: Date }>(
-            `insert into otc_overrides (asset_id, kind, interval_sec, target_price, base_price, candle_open_ms, candle_close_ms, ramp_ms, created_by, created_at)
-             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id::text as id, created_at`,
-            [asset.id, asset.kind, stepMs / 1000, targetText, base, openMs, closeMs, rampMs, adminId, new Date(nowMs)],
+            `insert into otc_overrides (asset_id, kind, interval_sec, target_price, base_price, candle_open_ms, candle_close_ms, ramp_ms,
+                                        release_ms, ignore_band, created_by, created_at)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id::text as id, created_at`,
+            [
+              asset.id,
+              asset.kind,
+              stepMs / 1000,
+              targetText,
+              base,
+              openMs,
+              closeMs,
+              rampMs,
+              releaseMs,
+              input.ignoreBand,
+              adminId,
+              new Date(nowMs),
+            ],
           );
           const inserted = rows[0];
           if (!inserted) throw new Error('otc override insert returned no row');
@@ -336,6 +362,8 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
             candleOpenMs: openMs,
             candleCloseMs: closeMs,
             rampStartMs,
+            releaseMs,
+            ignoreBand: input.ignoreBand,
             nextCandle: input.nextCandle,
           });
 
@@ -348,10 +376,10 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
             closeMs,
             rampStartMs,
             holdMs: OTC_OVERRIDE_HOLD_MS,
-            releaseMs: OTC_OVERRIDE_RELEASE_MS,
+            releaseMs,
           };
           const { rows: vrows } = await c.query<Row>(`${ROW_SELECT} where o.id = $1`, [inserted.id]);
-          return { wire: w, view: toView(vrows[0] as Row, base, nowMs), ttlMs: closeMs + OTC_OVERRIDE_RELEASE_MS - nowMs + 10_000 };
+          return { wire: w, view: toView(vrows[0] as Row, base, nowMs), ttlMs: closeMs + releaseMs - nowMs + 10_000 };
         }));
       } catch (err) {
         if (isUniqueViolation(err)) {
@@ -398,19 +426,19 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
     },
 
     async publicState(symbol) {
-      const { rows } = await pool.query<{ scheduled_for: string | null; candle_close_ms: string }>(
+      const { rows } = await pool.query<{ scheduled_for: string | null; candle_close_ms: string; release_ms: number }>(
         `select case when o.direction is not null then o.candle_open_ms::text end as scheduled_for,
-                o.candle_close_ms::text as candle_close_ms
+                o.candle_close_ms::text as candle_close_ms, o.release_ms
            from otc_overrides o join assets a on a.id = o.asset_id
-          where o.active and a.symbol = $1 and o.candle_close_ms + $2 > $3`,
-        [symbol, OTC_OVERRIDE_RELEASE_MS, now()],
+          where o.active and a.symbol = $1 and o.candle_close_ms + o.release_ms > $2`,
+        [symbol, now()],
       );
       const r = rows[0];
       if (!r) return { active: false, untilMs: null, scheduledFor: null };
       // Active from creation, before the ramp moves anything. Never carries the target.
       return {
         active: true,
-        untilMs: Number(r.candle_close_ms) + OTC_OVERRIDE_RELEASE_MS,
+        untilMs: Number(r.candle_close_ms) + r.release_ms,
         scheduledFor: r.scheduled_for === null ? null : Number(r.scheduled_for),
       };
     },

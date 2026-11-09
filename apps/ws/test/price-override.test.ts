@@ -256,6 +256,89 @@ describe('PriceOverride with OverridePath', () => {
   });
 });
 
+describe('PriceOverride, smooth release (market)', () => {
+  const RELEASE = 45_000;
+  const END = CLOSE + RELEASE;
+  /** |target − real| with the flat market below: the whole way back. */
+  const DIST = 100;
+
+  const flat = (at: number): Tick => {
+    const p = (76_000).toFixed(8);
+    return { symbol: 'BTCUSDT', price: p, value: Number(p), ts: at - 15, recvMs: at - 3, provider: 'binance' };
+  };
+
+  /** One tick every 250 ms from START to `until` (plus `extra`), with the given market. */
+  function drive(ov: PriceOverride, until: number, market: (at: number) => Tick = flat, extra: number[] = []) {
+    const times = new Set(extra);
+    for (let t = START; t <= until; t += 250) times.add(t);
+    return [...times]
+      .sort((a, b) => a - b)
+      .map((t) => {
+        const r = market(t);
+        return { t, real: r, out: ov.apply(r, t) };
+      });
+  }
+
+  it('2 s after the close the price is still within 2 points of the target', () => {
+    const exact = new PriceOverride(wire({ jitter: false, releaseMs: RELEASE }), START);
+    const at = drive(exact, CLOSE + 2000).find((s) => s.t === CLOSE + 2000)!;
+    expect(Math.abs(at.out.value - 76_100)).toBeLessThanOrEqual(2);
+    expect(at.out.ov).toBe('7');
+    // With the hold wobble the close sits inside the band; 2 s later it has barely left it.
+    for (let k = 0; k < 50; k++) {
+      const ov = new PriceOverride(wire({ releaseMs: RELEASE }), START, opts(3000 + k));
+      const steps = drive(ov, CLOSE + 2000);
+      const close = steps.find((s) => s.t === CLOSE)!.out.value;
+      expect(Math.abs(steps.at(-1)!.out.value - close), `seed ${k}`).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it('falls monotonically, never more than 1.5% of the distance per tick, and crosses into the next candle', () => {
+    for (const jitter of [false, true]) {
+      for (let k = 0; k < (jitter ? 50 : 1); k++) {
+        const ov = new PriceOverride(wire({ jitter, releaseMs: RELEASE }), START, opts(4000 + k));
+        const steps = drive(ov, END + 1000);
+        const back = steps.filter((s) => s.t >= CLOSE && s.t < END);
+        const from = back[0]!.out.value;
+        const dist = from - 76_000;
+        expect(dist).toBeGreaterThan(DIST * 0.85);
+        for (let i = 1; i < back.length; i++) {
+          const step = back[i]!.out.value - back[i - 1]!.out.value;
+          expect(step, `jitter ${jitter}, seed ${k}, tick ${i}`).toBeLessThanOrEqual(1e-9);
+          expect(Math.abs(step), `jitter ${jitter}, seed ${k}, tick ${i}`).toBeLessThanOrEqual(dist * 0.015);
+        }
+        // Not bounded by the candle: 30 s into the next one it is still overridden, halfway down.
+        const next = steps.find((s) => s.t === CLOSE + 30_000)!;
+        expect(next.out.ov).toBe('7');
+        expect(next.out.value).toBeGreaterThan(76_000);
+        expect(next.out.value).toBeLessThan(from);
+      }
+    }
+  });
+
+  it('lands exactly on the real price at the end, even with the market moving, then hands the ticks back', () => {
+    const ov = new PriceOverride(wire({ releaseMs: RELEASE }), START, opts(5));
+    const steps = drive(ov, END + 2000, real, [END - 1, END]);
+    const last = steps.find((s) => s.t === END - 1)!;
+    expect(last.out.value).toBeCloseTo(last.real.value, 6);
+    const quarter = steps.find((s) => s.t === END - 250)!;
+    expect(Math.abs(quarter.out.value - quarter.real.value)).toBeLessThan(0.02);
+    expect(ov.done).toBe(true);
+    for (const s of steps.filter((x) => x.t >= END)) expect(s.out).toEqual(s.real);
+  });
+
+  it('an invalid releaseMs falls back to OTC_OVERRIDE_RELEASE_MS', () => {
+    for (const releaseMs of [0, -5, Number.NaN]) {
+      const ov = new PriceOverride(wire({ releaseMs }), START, opts(6));
+      drive(ov, CLOSE + OTC_OVERRIDE_RELEASE_MS - 250);
+      expect(ov.done, `releaseMs ${releaseMs}`).toBe(false);
+      const r = flat(CLOSE + OTC_OVERRIDE_RELEASE_MS);
+      expect(ov.apply(r, CLOSE + OTC_OVERRIDE_RELEASE_MS)).toEqual(r);
+      expect(ov.done).toBe(true);
+    }
+  });
+});
+
 describe('PriceOverride, scheduled mode (market, 1m)', () => {
   /** The booked candle: [OPEN, CLOSE), the ramp from the open. */
   const OPEN = START;
@@ -335,6 +418,21 @@ describe('PriceOverride, scheduled mode (market, 1m)', () => {
     drive(ov, FREEZE, CLOSE, 0, (t) => (t < FREEZE + 5000 ? 76_000 : 75_990));
     expect(ov.bodyTicks).toBe(279);
     expect(saved).toEqual(['76002.79']);
+  });
+
+  it('ignoreBand: no clamp, the booked body is kept whatever the market does', () => {
+    const saved: string[] = [];
+    // Same numbers as above: without ignoreBand this body is cut to 380 and then 279 ticks.
+    const ov = new PriceOverride(scheduled({ ticks: 500, maxOverridePct: 0.005, ignoreBand: true }), OPEN, {
+      ...opts(5),
+      onTarget: (p) => saved.push(p),
+    });
+    drive(ov, OPEN, OPEN, 76_000);
+    expect(ov.bodyTicks).toBe(500);
+    expect(ov.targetPrice).toBe(76_005);
+    drive(ov, OPEN + 250, CLOSE, 0, () => 75_999);
+    expect(ov.bodyTicks).toBe(500);
+    expect(saved).toEqual(['76005.00']);
   });
 
   it('with a body of a few ticks, the hold band stays under it: the close keeps the color on 200 seeds', () => {

@@ -6,6 +6,9 @@ import {
   OTC_OVERRIDE_MIN_LEAD_MS,
   OTC_OVERRIDE_MIN_TICKS,
   OTC_OVERRIDE_RAMP_DEFAULT_MS,
+  OTC_OVERRIDE_RELEASE_MAX_MS,
+  OTC_OVERRIDE_RELEASE_MIN_MS,
+  OTC_OVERRIDE_RELEASE_MS,
   OTC_OVERRIDE_SCHEDULE_HORIZON_MS,
   OTC_OVERRIDE_TICKS_STEP,
   type CandleInterval,
@@ -41,6 +44,11 @@ import { Link } from '../lib/router';
 import { useQuote } from '../lib/session-data';
 
 const CANDLES = 60;
+/** Volta padrão em mercado: 45 s é suave o bastante para não dar talo no gráfico. */
+const RELEASE_MARKET_SEC = 45;
+/** OTC: o gerador volta sempre em ~2 s; um tempo maior só seguraria o slot. */
+const RELEASE_OTC_SEC = OTC_OVERRIDE_RELEASE_MS / 1000;
+const RELEASE_PRESETS_SEC = [15, 45, 90] as const;
 const errMsg = (err: unknown, fallback: string) => (err instanceof ApiError ? err.message : fallback);
 
 /** Server-clock "now", re-rendering every `ms`. */
@@ -90,6 +98,10 @@ function OverrideScreen() {
   const [target, setTarget] = useState<number | null>(null);
   const [targetText, setTargetText] = useState('');
   const [nextCandle, setNextCandle] = useState(false);
+  /** Tempo de volta ao preço real, em segundos. */
+  const [releaseSec, setReleaseSec] = useState(RELEASE_MARKET_SEC);
+  /** Aceita alvo fora da banda max_override_pct. */
+  const [ignoreBand, setIgnoreBand] = useState(false);
   /** Market assets: set the current candle now, or book a future 1m candle. */
   const [mode, setMode] = useState<'now' | 'schedule'>('now');
   const [schedTime, setSchedTime] = useState('');
@@ -171,10 +183,16 @@ function OverrideScreen() {
     };
   }, [symbol, interval, bucket.openMs]);
 
+  // A new asset starts from its type's release: 45 s on market, 2 s on OTC.
+  useEffect(() => {
+    setReleaseSec(market ? RELEASE_MARKET_SEC : RELEASE_OTC_SEC);
+  }, [symbol, market]);
+
   // A new asset or interval starts a fresh edit.
   useEffect(() => {
     setTarget(null);
     setTargetText('');
+    setIgnoreBand(false);
     setActionError(null);
   }, [symbol, interval]);
 
@@ -188,6 +206,10 @@ function OverrideScreen() {
   const closeMs = useNext ? bucket.closeMs + stepMs : bucket.closeMs;
   // Market: the server ramps over the rest of the candle.
   const plan = rampPlan(now, closeMs, market ? 60_000 : undefined);
+
+  const releaseMs = Math.round(releaseSec * 1000);
+  const releaseOk =
+    Number.isFinite(releaseSec) && releaseMs >= OTC_OVERRIDE_RELEASE_MIN_MS && releaseMs <= OTC_OVERRIDE_RELEASE_MAX_MS;
 
   const scheduling = market && mode === 'schedule';
   // The time is read in the browser's zone and sent as an absolute epoch.
@@ -216,6 +238,7 @@ function OverrideScreen() {
   const distancePct = target !== null && price ? ((target - price) / price) * 100 : null;
   const maxPct = market ? (asset?.maxOverridePct ?? null) : null;
   const overLimit = maxPct !== null && distancePct !== null && Math.abs(distancePct) > maxPct;
+  const bandBlocked = overLimit && !ignoreBand;
   const speed = target !== null && price ? requiredSpeed(price, target, plan.rampMs) : null;
 
   const setTargetPrice = (p: number) => {
@@ -233,7 +256,7 @@ function OverrideScreen() {
   };
 
   const applySchedule = async () => {
-    if (!asset || atMs === null || direction === null || !ticksOk) return;
+    if (!asset || atMs === null || direction === null || !ticksOk || !releaseOk) return;
     setBusy('apply');
     setActionError(null);
     try {
@@ -241,6 +264,8 @@ function OverrideScreen() {
         assetId: asset.id,
         interval: '1m',
         rampMs: OTC_OVERRIDE_RAMP_DEFAULT_MS,
+        releaseMs,
+        ignoreBand,
         nextCandle: false,
         schedule: { atMs, direction, ticks },
       });
@@ -257,7 +282,7 @@ function OverrideScreen() {
 
   const apply = async () => {
     if (scheduling) return applySchedule();
-    if (!asset || target === null) return;
+    if (!asset || target === null || !releaseOk) return;
     setBusy('apply');
     setActionError(null);
     try {
@@ -266,6 +291,8 @@ function OverrideScreen() {
         interval,
         targetPrice: target,
         rampMs: OTC_OVERRIDE_RAMP_DEFAULT_MS,
+        releaseMs,
+        ignoreBand,
         nextCandle: useNext,
       });
       setOverride(v);
@@ -318,8 +345,8 @@ function OverrideScreen() {
 
   const fmt = (p: number | null) => (p === null ? '—' : formatPrice(p, decimals));
   const applyBlocked = scheduling
-    ? active || price === null || atMs === null || schedError !== null || direction === null || !ticksOk
-    : active || target === null || price === null || (tooLate && !nextCandle) || target === price;
+    ? active || price === null || atMs === null || schedError !== null || direction === null || !ticksOk || !releaseOk
+    : active || target === null || price === null || (tooLate && !nextCandle) || target === price || bandBlocked || !releaseOk;
 
   return (
     <div className="flex flex-col gap-4">
@@ -441,6 +468,7 @@ function OverrideScreen() {
               price={price}
               decimals={decimals}
               maxPct={maxPct}
+              ignoreBand={ignoreBand}
             />
           ) : (
             <div className="flex flex-col gap-4">
@@ -464,8 +492,8 @@ function OverrideScreen() {
                   {maxPct !== null && (
                     <>
                       <dt className="text-muted">Limite do ativo</dt>
-                      <dd className={cx('font-mono tabular-nums', overLimit && 'text-down')} data-testid="otc-max-pct">
-                        ±{maxPct.toFixed(3).replace('.', ',')}%{overLimit ? ' (acima do limite)' : ''}
+                      <dd className={cx('font-mono tabular-nums', overLimit && !ignoreBand && 'text-down')} data-testid="otc-max-pct">
+                        ±{maxPct.toFixed(3).replace('.', ',')}%{overLimit ? (ignoreBand ? ' (ignorado)' : ' (acima do limite)') : ''}
                       </dd>
                     </>
                   )}
@@ -495,6 +523,19 @@ function OverrideScreen() {
               )}
             </div>
           )}
+          {maxPct !== null && (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={ignoreBand}
+                onChange={(e) => setIgnoreBand(e.target.checked)}
+                className="size-4 accent-brand"
+                data-testid="otc-ignore-band"
+              />
+              {scheduling ? 'Ignorar o limite do ativo (não encolher o corpo)' : 'Ignorar o limite do ativo (alvo livre)'}
+            </label>
+          )}
+          <ReleaseField ids={ids} value={releaseSec} onChange={setReleaseSec} ok={releaseOk} otc={!market} />
           {actionError && <FormMessage tone="error">{actionError}</FormMessage>}
           <div className="flex gap-2">
             <Button onClick={() => void apply()} busy={busy === 'apply'} disabled={applyBlocked}>
@@ -510,6 +551,67 @@ function OverrideScreen() {
       )}
       {active && actionError && <FormMessage tone="error">{actionError}</FormMessage>}
       {pollError && <FormMessage tone="error">{pollError}</FormMessage>}
+    </div>
+  );
+}
+
+/** Tempo de volta ao preço real: presets + valor livre em segundos. */
+function ReleaseField({
+  ids,
+  value,
+  onChange,
+  ok,
+  otc,
+}: {
+  ids: string;
+  value: number;
+  onChange(v: number): void;
+  ok: boolean;
+  /** OTC: the generator always returns in ~2 s, the field only keeps the slot busy. */
+  otc: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={`${ids}-release`} className="text-sm font-medium">
+        Volta ao preço real
+      </label>
+      <div className="flex flex-wrap items-center gap-1">
+        {RELEASE_PRESETS_SEC.map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => onChange(s)}
+            className={cx(
+              'rounded-control border px-2.5 py-1 text-xs',
+              value === s ? 'border-brand text-brand' : 'border-border text-muted hover:text-text',
+            )}
+          >
+            {s} s
+          </button>
+        ))}
+        <input
+          id={`${ids}-release`}
+          type="number"
+          inputMode="decimal"
+          min={OTC_OVERRIDE_RELEASE_MIN_MS / 1000}
+          max={OTC_OVERRIDE_RELEASE_MAX_MS / 1000}
+          step={0.5}
+          value={Number.isFinite(value) ? value : ''}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="w-24 rounded-control border border-border bg-field px-3 py-2 text-center font-mono text-sm tabular-nums text-text focus:border-brand"
+          data-testid="otc-release"
+        />
+        <span className="text-sm text-muted">s</span>
+      </div>
+      {otc && (
+        <span className="max-w-96 text-xs text-muted" data-testid="otc-release-note">
+          OTC volta em 2 s; o tempo só importa em ativo de mercado
+        </span>
+      )}
+      <span className={cx('max-w-96 text-xs', ok ? 'text-muted' : 'text-down')}>
+        Depois do fechamento o preço volta ao real de forma amortecida, nesse tempo. Enquanto a volta corre, o slot fica
+        ocupado: não dá para aplicar outro override nem liberar sem cortar a descida.
+      </span>
     </div>
   );
 }
@@ -534,6 +636,14 @@ function ActivePanel({ override: o, now, onRelease, busy }: { override: OtcOverr
           {formatCountdown(Math.abs(remaining))}
           {phase === 'waiting' && <span className="ml-2 text-muted">rampa em {formatCountdown(o.rampStartMs - now)}</span>}
         </dd>
+        {phase === 'release' && (
+          <>
+            <dt className="text-muted">Volta ao real</dt>
+            <dd className="font-mono tabular-nums" data-testid="otc-release-left">
+              {formatCountdown(Math.max(0, o.releaseEndMs - now))}
+            </dd>
+          </>
+        )}
         {o.schedule && (
           <>
             <dt className="text-muted">Agendado</dt>
@@ -577,6 +687,7 @@ interface ScheduleFormProps {
   price: number | null;
   decimals: number;
   maxPct: number | null;
+  ignoreBand: boolean;
 }
 
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -663,7 +774,14 @@ function ScheduleForm(p: ScheduleFormProps) {
           </span>
         </div>
       </div>
-      <ProjectedCandle price={p.price} direction={p.direction} ticks={p.ticksOk ? p.ticks : null} decimals={p.decimals} maxPct={p.maxPct} />
+      <ProjectedCandle
+        price={p.price}
+        direction={p.direction}
+        ticks={p.ticksOk ? p.ticks : null}
+        decimals={p.decimals}
+        maxPct={p.maxPct}
+        ignoreBand={p.ignoreBand}
+      />
     </div>
   );
 }
@@ -675,12 +793,14 @@ function ProjectedCandle({
   ticks,
   decimals,
   maxPct,
+  ignoreBand,
 }: {
   price: number | null;
   direction: OverrideDirection | null;
   ticks: number | null;
   decimals: number;
   maxPct: number | null;
+  ignoreBand: boolean;
 }) {
   if (price === null || direction === null || ticks === null) {
     return (
@@ -690,7 +810,7 @@ function ProjectedCandle({
     );
   }
   const k = projectedCandle(price, direction, ticks, decimals);
-  const over = maxPct !== null && k.offsetPct > maxPct;
+  const over = maxPct !== null && k.offsetPct > maxPct && !ignoreBand;
   const up = direction === 'up';
   const H = 140;
   const top = 26;
