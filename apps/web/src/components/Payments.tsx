@@ -23,6 +23,7 @@ import {
   WITHDRAWAL_STATUS_LABEL,
 } from '../lib/format';
 import { navigate } from '../lib/router';
+import { useHideBalances } from '../lib/hide-balance';
 import { useSessionData } from '../lib/session-data';
 import { Dialog } from './Dialog';
 import { Button, cx, Field, FormMessage, LoadingState } from './ui';
@@ -333,6 +334,7 @@ export function WithdrawDialog({ open, onClose }: { open: boolean; onClose(): vo
     setSpeed('standard');
   }, [open]);
 
+  const hide = useHideBalances();
   const realBalance = accounts.status === 'ready' ? (accounts.data.find((a) => a.account === 'real')?.balanceCents ?? 0) : null;
   const cents = parseMoneyToCents(amount);
   // Same rule as the server: the fee comes out of the amount asked, the Pix carries the rest.
@@ -377,7 +379,7 @@ export function WithdrawDialog({ open, onClose }: { open: boolean; onClose(): vo
         <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-4" noValidate>
           <div className="rounded-control border border-border bg-field px-3 py-2">
             <div className="text-xs text-muted">Disponível na conta real</div>
-            <div className="tabular text-lg font-bold text-up">{realBalance === null ? '—' : formatMoney(realBalance)}</div>
+            <div className="tabular text-lg font-bold text-up">{realBalance === null ? '—' : hide.money(realBalance)}</div>
           </div>
           <div className="flex items-end gap-2">
             <Field

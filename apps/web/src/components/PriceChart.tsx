@@ -34,10 +34,10 @@ import { ErrorState, LoadingState } from './ui';
 
 const COLORS = {
   grid: 'rgba(255,255,255,0.035)',
-  border: '#2a2c32',
-  text: '#d2d0d7',
-  up: '#44b53a',
-  down: '#ff4122',
+  border: '#1b2430',
+  text: '#aab4c0',
+  up: '#22c55e',
+  down: '#f04f4a',
   brand: '#00d8e8',
 };
 export const CANDLE_LIMIT = 500;

@@ -12,6 +12,7 @@ import { createCandleService } from './services/candles.js';
 import { createOtcCandleSource } from './services/otc-candles.js';
 import { createOrderLimitsRepo } from './services/order-limits.js';
 import { createAdminService } from './services/admin.js';
+import { createOrderStatsService } from './services/order-stats.js';
 import { createOrderService, redisDueScheduler, redisPriceReader } from './services/orders.js';
 import { createWalletService } from './services/wallet.js';
 import { awesomeApi, binanceUsdtBrl, createFxService, fixedFx, openErApi } from './lib/fx.js';
@@ -89,6 +90,7 @@ const app = await buildApp(
         otc: createOtcCandleSource(pool, assets),
         log,
       }),
+    orderStats: createOrderStatsService(pool),
     orders: createOrderService({
       pool,
       prices: redisPriceReader(redis),

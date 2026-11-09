@@ -11,6 +11,8 @@ import {
   type AssetsResponse,
   type CandleInterval,
   type CandlesResponse,
+  type OrderStats,
+  type StatsResult,
   type AccountKind,
   type AdminKycView,
   type KycFileKind,
@@ -175,6 +177,11 @@ export const api = {
     request<Page<LedgerEntryView>>('GET', `/api/ledger${qs({ account, cursor, limit })}`),
   orders: (q: { account: AccountKind; status?: OrderStatus; cursor?: string; limit?: number }) =>
     request<Page<OrderView>>('GET', `/api/orders${qs(q)}`),
+  /** Análises de operações: totals and daily P/L of settled orders opened in [from, to). */
+  orderStats: async (q: { account: AccountKind; result: StatsResult; from: string; to: string; tz: string }) =>
+    (await request<{ stats: OrderStats }>('GET', `/api/orders/stats${qs(q)}`)).stats,
+  orderHistory: (q: { account: AccountKind; result: StatsResult; from: string; to: string; cursor?: string; limit?: number }) =>
+    request<Page<OrderView>>('GET', `/api/orders/history${qs(q)}`),
 
   payments: () => request<{ info: PaymentsInfo; deposits: DepositView[]; withdrawals: WithdrawalView[] }>('GET', '/api/payments'),
   createDeposit: async (amountCents: number, cpf?: string) =>

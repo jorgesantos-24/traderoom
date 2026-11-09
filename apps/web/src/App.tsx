@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect } from 'react';
-import { ErrorState, LoadingState } from './components/ui';
+import { LoginSplash, SplashScreen } from './components/SplashScreen';
+import { ErrorState } from './components/ui';
+import { splashRequested } from './lib/splash';
 import { useAuth } from './lib/auth';
 import { navigate, useLocation } from './lib/router';
 import { SessionDataProvider } from './lib/session-data';
@@ -10,6 +12,7 @@ import { NotFoundPage } from './pages/NotFoundPage';
 const TraderoomPage = lazy(() => import('./pages/TraderoomPage').then((m) => ({ default: m.TraderoomPage })));
 const WalletPage = lazy(() => import('./pages/WalletPage').then((m) => ({ default: m.WalletPage })));
 const VerificationPage = lazy(() => import('./pages/VerificationPage').then((m) => ({ default: m.VerificationPage })));
+const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage })));
 const AdminPage = lazy(() => import('./pages/AdminPage').then((m) => ({ default: m.AdminPage })));
 const AdminOtcOverridePage = lazy(() => import('./pages/AdminOtcOverride').then((m) => ({ default: m.AdminOtcOverridePage })));
 
@@ -17,6 +20,7 @@ const PUBLIC = { '/login': LoginPage, '/register': RegisterPage, '/forgot': Forg
 const PRIVATE = {
   '/traderoom': TraderoomPage,
   '/wallet': WalletPage,
+  '/analises': AnalyticsPage,
   '/admin': AdminPage,
   '/admin/otc-override': AdminOtcOverridePage,
   '/verification': VerificationPage,
@@ -29,6 +33,7 @@ const TITLES: Record<string, string> = {
   '/reset': 'Nova senha',
   '/traderoom': 'Negociar',
   '/wallet': 'Carteira',
+  '/analises': 'Análises de operações',
   '/admin': 'Admin',
   '/admin/otc-override': 'Intervenção OTC',
   '/verification': 'Verificação de conta',
@@ -42,13 +47,15 @@ function Redirect({ to }: { to: string }) {
 export function App() {
   const { state, retry } = useAuth();
   const { pathname, search } = useLocation();
+  // Read once per render; the welcome screen clears it when it fades out.
+  const splash = splashRequested();
 
   useEffect(() => {
     const t = TITLES[pathname];
     document.title = t ? `${t} · Kyden` : 'Kyden';
   }, [pathname]);
 
-  if (state.status === 'loading') return <LoadingState label="Carregando…" className="h-full" />;
+  if (state.status === 'loading') return <SplashScreen message="Carregando…" />;
   if (state.status === 'error') return <ErrorState message={state.message} onRetry={retry} className="h-full" />;
 
   // History is now a side panel; old links land on the trading screen.
@@ -71,9 +78,10 @@ export function App() {
     return (
       // Keyed by user so nothing from a previous session (feed, wallet) survives a re-login.
       <SessionDataProvider key={state.user.id}>
-        <Suspense fallback={<LoadingState label="Carregando…" className="h-full" />}>
+        <Suspense fallback={splash ? null : <SplashScreen message="Carregando…" />}>
           <Private />
         </Suspense>
+        {splash && <LoginSplash />}
       </SessionDataProvider>
     );
   }

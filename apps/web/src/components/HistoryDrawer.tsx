@@ -4,7 +4,7 @@ import { api } from '../lib/api';
 import { formatMoney, formatPrice, formatShortDate, formatSignedMoney, formatTime } from '../lib/format';
 import { netCents } from '../lib/orders';
 import { requestOpenAsset } from '../lib/open-asset';
-import { navigate, useLocation } from '../lib/router';
+import { Link, navigate, useLocation } from '../lib/router';
 import { useSessionData } from '../lib/session-data';
 import { usePaged } from '../lib/use-paged';
 import { CoinIcon } from './CoinIcon';
@@ -109,6 +109,16 @@ export function HistoryDrawer({ open, onClose }: { open: boolean; onClose(): voi
             ✕
           </button>
         </div>
+        {!selected && (
+          <Link
+            href="/analises"
+            onClick={onClose}
+            className="flex shrink-0 items-center justify-between border-b border-border bg-brand/[0.06] px-4 py-2.5 text-sm font-medium text-brand hover:bg-brand/10"
+          >
+            Ver análises: lucro, máximo, mínimo e taxa de acerto
+            <span aria-hidden="true">›</span>
+          </Link>
+        )}
         {openCount > 0 && (
           <>
             <div className={cx('flex min-h-0 flex-1 flex-col', selected && 'hidden')}>

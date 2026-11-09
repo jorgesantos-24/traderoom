@@ -12,6 +12,7 @@ import { authRoutes } from './routes/auth.js';
 import { healthRoutes } from './routes/health.js';
 import { marketRoutes } from './routes/market.js';
 import { metricsRoute, orderRoutes } from './routes/orders.js';
+import type { OrderStatsService } from './services/order-stats.js';
 import type { AdminService } from './services/admin.js';
 import type { AssetRepo } from './services/assets.js';
 import type { OrderLimitsRepo } from './services/order-limits.js';
@@ -36,6 +37,8 @@ export interface AppDeps {
   createMailer: (log: FastifyBaseLogger) => Mailer;
   createCandles: (log: FastifyBaseLogger) => CandleService;
   orders: OrderService;
+  /** Trade analytics; left out by tests that do not need it. */
+  orderStats?: OrderStatsService;
   wallet: WalletService;
   assets: AssetRepo;
   limits: OrderLimitsRepo;
@@ -119,7 +122,14 @@ export async function buildApp(deps: AppDeps, opts: AppOptions): Promise<Fastify
     app.addHook('onClose', async () => stopWarming());
   }
   marketRoutes(app, { candles });
-  orderRoutes(app, { orders: deps.orders, wallet: deps.wallet, assets: deps.assets, limits: deps.limits, metrics: deps.metrics });
+  orderRoutes(app, {
+    orders: deps.orders,
+    stats: deps.orderStats,
+    wallet: deps.wallet,
+    assets: deps.assets,
+    limits: deps.limits,
+    metrics: deps.metrics,
+  });
   adminRoutes(app, { admin: deps.admin, metrics: deps.metrics });
   otcOverrideRoutes(app, { otcOverride: deps.otcOverride, metrics: deps.metrics });
   paymentRoutes(app, { payments: deps.payments, metrics: deps.metrics });

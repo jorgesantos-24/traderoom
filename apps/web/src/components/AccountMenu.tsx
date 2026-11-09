@@ -4,6 +4,7 @@ import { ACCOUNT_KINDS, DEMO_START_CENTS, type AccountKind, type KycStatus, type
 import { api, ApiError } from '../lib/api';
 import { formatMoney, KYC_STATUS_LABEL } from '../lib/format';
 import { Link } from '../lib/router';
+import { useHideBalances } from '../lib/hide-balance';
 import { useSessionData } from '../lib/session-data';
 import { DepositDialog, WithdrawDialog } from './Payments';
 import { Spinner, cx } from './ui';
@@ -20,16 +21,6 @@ const KYC_TONE: Record<KycStatus, string> = {
   approved: 'bg-up/15 text-up',
   rejected: 'bg-down/15 text-down',
 };
-const HIDE_KEY = 'traderoom:hide-balance';
-const HIDDEN = '••••••';
-
-function readHidden(): boolean {
-  try {
-    return localStorage.getItem(HIDE_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
 
 /** Closes a popover on Escape or a click outside `ref`. */
 function useDismiss(open: boolean, ref: React.RefObject<HTMLElement | null>, close: () => void) {
@@ -87,23 +78,12 @@ const EYE_OFF = (
 export function AccountSwitcher() {
   const { account, setAccount, accounts, wallet, refreshWallet, refillDemo } = useSessionData();
   const [open, setOpen] = useState(false);
-  const [hidden, setHidden] = useState(readHidden);
+  const { hidden, toggle: toggleHidden, money } = useHideBalances();
   const [refilling, setRefilling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useDismiss(open, ref, close);
-
-  const toggleHidden = () => {
-    setHidden((h) => {
-      try {
-        localStorage.setItem(HIDE_KEY, h ? '0' : '1');
-      } catch {
-        // Not remembered in private mode.
-      }
-      return !h;
-    });
-  };
 
   const refill = async () => {
     setRefilling(true);
@@ -129,10 +109,20 @@ export function AccountSwitcher() {
   const list = accounts.status === 'ready' ? accounts.data : [];
   const demo = list.find((a) => a.account === 'demo');
   const canRefill = demo !== undefined && demo.balanceCents < DEMO_START_CENTS;
-  const money = (cents: number) => (hidden ? HIDDEN : formatMoney(cents));
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative flex items-center">
+      <button
+        type="button"
+        onClick={toggleHidden}
+        className="rounded-control p-1.5 text-muted hover:bg-field hover:text-text"
+        aria-label={hidden ? 'Mostrar saldos' : 'Ocultar saldos'}
+        aria-pressed={hidden}
+        title={hidden ? 'Mostrar saldos' : 'Ocultar saldos'}
+        data-testid="hide-balance"
+      >
+        <Icon className="size-[18px]">{hidden ? EYE_OFF : EYE}</Icon>
+      </button>
       <button
         type="button"
         aria-haspopup="true"
@@ -165,11 +155,14 @@ export function AccountSwitcher() {
             <button
               type="button"
               onClick={toggleHidden}
-              className="rounded p-1 hover:text-text"
-              aria-label={hidden ? 'Mostrar saldos' : 'Ocultar saldos'}
+              className={cx(
+                'flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-medium transition-colors',
+                hidden ? 'border-brand/40 bg-brand/10 text-brand' : 'border-border hover:border-muted hover:text-text',
+              )}
               aria-pressed={hidden}
             >
               <Icon className="size-4">{hidden ? EYE_OFF : EYE}</Icon>
+              {hidden ? 'Mostrar saldos' : 'Ocultar saldos'}
             </button>
           </div>
           {ACCOUNT_KINDS.map((kind) => {
@@ -454,6 +447,9 @@ export function ProfileMenu({
                 >
                   Histórico de operações
                 </MenuItem>
+                <MenuItem href="/analises" onClick={close} icon={<path d="M4 19V5m0 14h16M8 15l3-4 3 2 5-6" />}>
+                  Análises de operações
+                </MenuItem>
                 <MenuItem href="/wallet" onClick={close} icon={<path d="M7 4h10v16l-5-3-5 3V4zM10 9h4" />}>
                   Histórico de transações
                 </MenuItem>
@@ -496,7 +492,7 @@ export function DepositButton() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex h-10 items-center gap-2.5 rounded-control border border-[#3fbf5a] bg-[#3fbf5a]/[0.06] px-2.5 text-lg sm:h-11 text-[#4cd964] hover:bg-[#3fbf5a]/15 sm:px-6"
+        className="flex h-10 items-center gap-2.5 rounded-control bg-[linear-gradient(135deg,#34d672,#16a34a)] px-2.5 text-base font-bold text-bg shadow-[0_10px_28px_-12px_var(--color-up)] transition-[filter,transform] hover:brightness-110 active:scale-[0.98] sm:h-11 sm:px-5"
         data-testid="deposit-button"
       >
         <svg aria-hidden="true" viewBox="0 0 24 24" className="size-6" fill="currentColor">

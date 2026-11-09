@@ -6,7 +6,9 @@ import {
   IDEMPOTENCY_HEADER,
   IdempotencyKeySchema,
   ListLedgerQuery,
+  ListOrderHistoryQuery,
   ListOrdersQuery,
+  OrderStatsQuery,
   type Counter,
   type Registry,
 } from '@traderoom/shared';
@@ -14,6 +16,7 @@ import { AppError } from '../lib/errors.js';
 import { authOf } from '../plugins/security.js';
 import type { AssetRepo } from '../services/assets.js';
 import type { OrderLimitsRepo } from '../services/order-limits.js';
+import type { OrderStatsService } from '../services/order-stats.js';
 import type { OrderService } from '../services/orders.js';
 import type { WalletService } from '../services/wallet.js';
 
@@ -22,6 +25,7 @@ export const ORDERS_PER_MINUTE = 30;
 
 export interface OrderRouteDeps {
   orders: OrderService;
+  stats?: OrderStatsService | undefined;
   wallet: WalletService;
   assets: AssetRepo;
   limits: OrderLimitsRepo;
@@ -75,6 +79,20 @@ export function orderRoutes(app: FastifyInstance, deps: OrderRouteDeps): void {
     const q = ListOrdersQuery.parse(req.query);
     return reply.header('cache-control', 'no-store').send(await deps.orders.list(authOf(req).user.id, q));
   });
+
+  const stats = deps.stats;
+  if (stats) {
+    /** "Análises de operações": totals and daily P/L over a period. */
+    app.get('/api/orders/stats', { preHandler: app.requireAuth }, async (req, reply) => {
+      const q = OrderStatsQuery.parse(req.query);
+      return reply.header('cache-control', 'no-store').send({ stats: await stats.stats(authOf(req).user.id, q) });
+    });
+    /** Settled orders in the same period and filter, newest first. */
+    app.get('/api/orders/history', { preHandler: app.requireAuth }, async (req, reply) => {
+      const q = ListOrderHistoryQuery.parse(req.query);
+      return reply.header('cache-control', 'no-store').send(await stats.history(authOf(req).user.id, q));
+    });
+  }
 
   app.get('/api/wallet', { preHandler: app.requireAuth }, async (req, reply) => {
     const { account } = AccountQuery.parse(req.query);

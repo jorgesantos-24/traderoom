@@ -13,6 +13,14 @@ const ICONS: Record<string, ReactNode> = {
       <path d="M3 10h18M16 14.5h2" />
     </>
   ),
+  '/analises': (
+    <>
+      <path d="M4 20h16" />
+      <rect x="6" y="11" width="3" height="6" rx="1" />
+      <rect x="11" y="7" width="3" height="10" rx="1" />
+      <rect x="16" y="13" width="3" height="4" rx="1" />
+    </>
+  ),
   history: (
     <>
       <circle cx="12" cy="12" r="8" />
@@ -25,12 +33,15 @@ const ICONS: Record<string, ReactNode> = {
 const NAV = [
   { href: '/traderoom', label: 'Negociar' },
   { href: '/wallet', label: 'Carteira' },
+  { href: '/analises', label: 'Análises' },
 ];
 
 const navItemCls = (active: boolean) =>
   cx(
-    'flex flex-col items-center gap-1 rounded-control px-1 py-2.5 text-[11px] font-medium',
-    active ? 'bg-brand/10 text-brand' : 'text-muted hover:bg-field hover:text-text',
+    'relative flex flex-col items-center gap-1 rounded-control px-1 py-2.5 text-[11px] font-medium transition-colors',
+    active
+      ? 'bg-brand/10 text-brand before:absolute before:top-2.5 before:bottom-2.5 before:-left-1.5 before:w-[3px] before:rounded-r before:bg-brand before:shadow-[0_0_10px_var(--color-brand)]'
+      : 'text-muted hover:bg-field hover:text-text',
   );
 
 /** Bottom tab bar on phones. */
@@ -132,7 +143,7 @@ export function AppShell({
       >
         Pular para o conteúdo
       </a>
-      <header className="sticky top-0 z-30 border-b border-border bg-surface/95 backdrop-blur">
+      <header className="sticky top-0 z-30 border-b border-border bg-[linear-gradient(180deg,rgb(10_15_21/0.98),rgb(8_12_17/0.95))] backdrop-blur">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-2 py-1.5 sm:gap-x-4 sm:px-4 sm:py-2 md:flex-nowrap">
           <Link href="/traderoom" className="flex shrink-0 items-center" aria-label="Kyden — início">
             <img src="/brand/kyden-mark.png" alt="" className="size-8 rounded-md sm:hidden" />
@@ -153,7 +164,7 @@ export function AppShell({
       <div className="relative flex min-h-0 flex-1">
         <nav
           aria-label="Principal"
-          className="relative z-50 hidden w-[76px] shrink-0 flex-col items-stretch gap-1 border-r border-border bg-surface px-1.5 py-2 md:flex"
+          className="relative z-50 hidden w-[76px] shrink-0 flex-col items-stretch gap-1 border-r border-border bg-[#080c11] px-1.5 py-2 md:flex"
         >
           {navItems(navItemCls)}
         </nav>

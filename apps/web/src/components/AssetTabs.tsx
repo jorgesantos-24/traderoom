@@ -41,8 +41,10 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
             <div
               key={a.symbol}
               className={cx(
-                'group flex shrink-0 items-center rounded-control border',
-                selected ? 'border-brand/60 bg-brand/10' : 'border-border bg-field hover:border-muted',
+                'group flex shrink-0 items-center rounded-control border transition-colors',
+                selected
+                  ? 'border-brand/50 bg-[linear-gradient(180deg,rgb(0_216_232/0.16),rgb(0_216_232/0.04))] shadow-[0_6px_20px_-10px_rgb(0_216_232/0.7)]'
+                  : 'border-border bg-field/70 hover:border-muted/70 hover:bg-field',
               )}
             >
               <button

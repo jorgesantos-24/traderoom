@@ -41,11 +41,11 @@ export function Dialog({
         e.preventDefault();
         onClose();
       }}
-      className={`m-auto ${wide ? 'w-[min(900px,calc(100vw-2rem))]' : 'w-[min(440px,calc(100vw-2rem))]'} rounded-card border border-border bg-surface p-0 text-text backdrop:bg-bg/80`}
+      className={`m-auto ${wide ? 'w-[min(900px,calc(100vw-2rem))]' : 'w-[min(440px,calc(100vw-2rem))]'} panel rounded-card border border-border p-0 text-text shadow-[0_30px_80px_-20px_rgb(0_0_0/0.9)] backdrop:bg-bg/70 backdrop:backdrop-blur-sm`}
     >
       {open && (
-        <div className="flex flex-col gap-4 p-4 sm:p-5">
-          <h2 id={titleId} className="text-lg font-semibold">
+        <div className="flex flex-col gap-4 p-5 sm:p-6">
+          <h2 id={titleId} className="text-xl font-bold tracking-tight">
             {title}
           </h2>
           {children}

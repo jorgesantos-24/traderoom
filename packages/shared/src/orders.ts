@@ -179,3 +179,74 @@ export interface AssetsResponse {
   assets: AssetView[];
   limits: OrderLimitsView;
 }
+
+// ---- Trade analytics ("Análises de operações") ----
+
+/** Result filter: all settled orders, or only wins, losses or ties (void = stake returned). */
+export const STATS_RESULTS = ['all', 'won', 'lost', 'void'] as const;
+export type StatsResult = (typeof STATS_RESULTS)[number];
+
+/** Longest range one request may cover. */
+export const STATS_MAX_DAYS = 370;
+
+const isoInstant = z.iso.datetime({ offset: true, error: 'Data inválida.' });
+
+/** Settled orders opened in [from, to), grouped by day in the user's time zone. */
+export const OrderStatsQuery = z
+  .object({
+    account: AccountKindSchema.default('real'),
+    result: z.enum(STATS_RESULTS, 'Tipo inválido.').default('all'),
+    from: isoInstant,
+    to: isoInstant,
+    /** IANA zone used to cut days for the daily series, e.g. America/Sao_Paulo. */
+    tz: z
+      .string()
+      .max(64)
+      .regex(/^[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+){0,2}$|^UTC$/, 'Fuso horário inválido.')
+      .default('UTC'),
+  })
+  .refine((q) => Date.parse(q.from) < Date.parse(q.to), { message: 'A data final deve ser depois da inicial.', path: ['to'] })
+  .refine((q) => Date.parse(q.to) - Date.parse(q.from) <= STATS_MAX_DAYS * 86_400_000, {
+    message: `Escolha um período de até ${STATS_MAX_DAYS} dias.`,
+    path: ['from'],
+  });
+export type OrderStatsQuery = z.infer<typeof OrderStatsQuery>;
+
+export interface OrderStatsDay {
+  /** YYYY-MM-DD in the requested time zone. */
+  day: string;
+  netCents: number;
+  /** Running total since the start of the range. */
+  cumulativeCents: number;
+  orders: number;
+}
+
+export interface OrderStats {
+  total: number;
+  won: number;
+  lost: number;
+  void: number;
+  /** Net result: profit on wins minus stakes lost. */
+  profitCents: number;
+  /** Best and worst single order (net). Null with no orders. */
+  bestCents: number | null;
+  worstCents: number | null;
+  /** Wins over decided orders (wins + losses), 0..100. Null when nothing was decided. */
+  winRatePct: number | null;
+  /** Total staked, and the largest and smallest stake. */
+  volumeCents: number;
+  maxStakeCents: number | null;
+  minStakeCents: number | null;
+  daily: OrderStatsDay[];
+}
+
+/** Settled orders for the analytics table, same filters as the stats. */
+export const ListOrderHistoryQuery = z.object({
+  account: AccountKindSchema.default('real'),
+  result: z.enum(STATS_RESULTS, 'Tipo inválido.').default('all'),
+  from: isoInstant,
+  to: isoInstant,
+  cursor: z.string().max(200).optional(),
+  limit,
+});
+export type ListOrderHistoryQuery = z.infer<typeof ListOrderHistoryQuery>;

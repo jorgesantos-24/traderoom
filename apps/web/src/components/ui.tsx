@@ -6,11 +6,11 @@ type Variant = 'primary' | 'secondary' | 'ghost' | 'up' | 'down';
 
 const VARIANTS: Record<Variant, string> = {
   // Dark text on the bright fills keeps contrast above AA (≥ 4.5:1).
-  primary: 'bg-brand text-bg hover:bg-brand/90',
-  secondary: 'border border-border bg-surface text-text hover:border-muted',
+  primary: 'brand-gradient text-bg glow hover:brightness-110',
+  secondary: 'border border-border bg-field text-text hover:border-muted hover:bg-field/70',
   ghost: 'text-muted hover:text-text hover:bg-field',
-  up: 'bg-up text-bg hover:bg-up/90',
-  down: 'bg-down text-bg hover:bg-down/90',
+  up: 'bg-[linear-gradient(135deg,#34d672,#16a34a)] text-bg shadow-[0_10px_28px_-12px_var(--color-up)] hover:brightness-110',
+  down: 'bg-[linear-gradient(135deg,#ff6b5e,#dc2b2b)] text-bg shadow-[0_10px_28px_-12px_var(--color-down)] hover:brightness-110',
 };
 
 export function Button({
@@ -29,7 +29,8 @@ export function Button({
       aria-busy={busy || undefined}
       className={cx(
         'inline-flex items-center justify-center gap-2 rounded-control px-4 py-2 text-sm font-semibold',
-        'disabled:cursor-not-allowed disabled:opacity-45',
+        'transition-[filter,background-color,border-color,color,transform] duration-150 active:scale-[0.98]',
+        'disabled:cursor-not-allowed disabled:opacity-45 disabled:active:scale-100',
         VARIANTS[variant],
         className,
       )}
@@ -42,7 +43,7 @@ export function Button({
 
 export function Card({ className, children, ...rest }: { className?: string; children: ReactNode } & React.HTMLAttributes<HTMLElement>) {
   return (
-    <section {...rest} className={cx('rounded-card border border-border bg-surface', className)}>
+    <section {...rest} className={cx('panel rounded-card border border-border', className)}>
       {children}
     </section>
   );
@@ -95,8 +96,9 @@ export function Field({
   error,
   hint,
   className,
+  trailing,
   ...input
-}: InputHTMLAttributes<HTMLInputElement> & { label: string; error?: string | null; hint?: string }) {
+}: InputHTMLAttributes<HTMLInputElement> & { label: string; error?: string | null; hint?: string; trailing?: ReactNode }) {
   const id = useId();
   const describedBy = [error ? `${id}-err` : null, hint ? `${id}-hint` : null].filter(Boolean).join(' ') || undefined;
   return (
@@ -104,16 +106,21 @@ export function Field({
       <label htmlFor={id} className="text-sm font-medium text-text">
         {label}
       </label>
-      <input
-        id={id}
-        {...input}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={describedBy}
-        className={cx(
-          'rounded-control border bg-field px-3 py-2 text-base text-text sm:text-sm placeholder:text-muted',
-          error ? 'border-down' : 'border-border focus:border-brand',
-        )}
-      />
+      <div className="relative">
+        <input
+          id={id}
+          {...input}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={describedBy}
+          className={cx(
+            'w-full rounded-control border bg-field px-3 py-2.5 text-base text-text transition-[border-color,box-shadow] sm:text-sm',
+            'placeholder:text-muted/70 focus:outline-none focus:ring-3',
+            error ? 'border-down focus:ring-down/20' : 'border-border hover:border-muted/60 focus:border-brand focus:ring-brand/15',
+            trailing ? 'pr-11' : null,
+          )}
+        />
+        {trailing && <div className="absolute inset-y-0 right-1 flex items-center">{trailing}</div>}
+      </div>
       {hint && !error && (
         <p id={`${id}-hint`} className="text-xs text-muted">
           {hint}
@@ -129,9 +136,14 @@ export function Field({
 }
 
 export function FormMessage({ tone, children }: { tone: 'error' | 'info' | 'success'; children: ReactNode }) {
-  const color = tone === 'error' ? 'border-down/50 text-down' : tone === 'success' ? 'border-up/50 text-up' : 'border-border text-text';
+  const color =
+    tone === 'error'
+      ? 'border-down/40 bg-down/10 text-down'
+      : tone === 'success'
+        ? 'border-up/40 bg-up/10 text-up'
+        : 'border-brand/25 bg-brand/[0.07] text-text';
   return (
-    <div role={tone === 'error' ? 'alert' : 'status'} className={cx('rounded-control border bg-field px-3 py-2 text-sm', color)}>
+    <div role={tone === 'error' ? 'alert' : 'status'} className={cx('rounded-control border px-3 py-2.5 text-sm', color)}>
       {children}
     </div>
   );
