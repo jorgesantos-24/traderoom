@@ -205,7 +205,44 @@ export function AnalyticsPage() {
             <EmptyState title="Nenhuma operação encontrada" hint="Mude o período ou o tipo para ver outras operações." />
           )}
           {history.status === 'ready' && history.items.length > 0 && (
-            <div className="overflow-x-auto">
+            // Phones: one compact row per operation, every figure visible without side scrolling.
+            <ul className="sm:hidden">
+              {history.items.map((o) => {
+                const net = netCents(o);
+                return (
+                  <li key={o.id} className="flex items-center gap-3 border-b border-border/60 px-4 py-3 last:border-b-0">
+                    <CoinIcon symbol={o.symbol} className="size-7 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+                        {name(o.symbol)}
+                        <span className={cx('text-xs font-semibold', o.direction === 'call' ? 'text-up' : 'text-down')}>
+                          {o.direction === 'call' ? '▲' : '▼'}
+                        </span>
+                      </p>
+                      <p className="tabular text-xs text-muted">
+                        {formatShortDate(o.opensAt)} · {formatTime(o.opensAt).slice(0, 5)} → {formatTime(o.expiresAt).slice(0, 5)}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p
+                        className={cx(
+                          'tabular text-sm font-semibold',
+                          o.status === 'won' ? 'text-up' : o.status === 'lost' ? 'text-down' : 'text-muted',
+                        )}
+                      >
+                        {o.status === 'void' ? 'Empate' : formatSignedMoney(net)}
+                      </p>
+                      <p className="tabular text-xs text-muted">
+                        {formatMoney(o.stakeCents)} · {o.payoutPct}%
+                      </p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {history.status === 'ready' && history.items.length > 0 && (
+            <div className="hidden overflow-x-auto sm:block">
               <table className="w-full min-w-[560px] text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-xs text-muted">
@@ -341,9 +378,9 @@ function StatsView({ s, from, to }: { s: OrderStats; from: Date; to: Date }) {
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold">Lucro por dia</h2>
-            <p className="text-xs text-muted">Resultado de cada dia do período. Passe o mouse numa barra para ver os detalhes.</p>
+            <p className="text-xs text-muted">Resultado de cada dia do período. Toque ou passe o mouse numa barra para ver os detalhes.</p>
           </div>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid w-full grid-cols-3 gap-2 sm:w-auto">
             <Mini
               label="Acumulado"
               value={signed(s.daily.at(-1)?.cumulativeCents ?? (s.total ? 0 : null))}
@@ -590,9 +627,9 @@ function MinMax({ label, value, up = false }: { label: string; value: string; up
 
 function Mini({ label, value, tone }: { label: string; value: string; tone: string }): ReactNode {
   return (
-    <div className="rounded-control border border-border bg-field px-3 py-2">
+    <div className="min-w-0 rounded-control border border-border bg-field px-2.5 py-2 sm:px-3">
       <p className="text-[11px] text-muted">{label}</p>
-      <p className={cx('tabular text-sm font-bold', tone)}>{value}</p>
+      <p className={cx('tabular truncate text-xs font-bold sm:text-sm', tone)}>{value}</p>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import {
   FEED_STALE_MS,
   WS_DEAD_AFTER_MS,
   WS_HEARTBEAT_MS,
+  WS_MAX_ASSETS_PER_CONNECTION,
   WS_PATH,
   WsCloseCode,
   type ClientFrame,
@@ -90,6 +91,9 @@ export class PriceFeed {
   private lastFrameAt = 0;
   private lastPingAt = 0;
   private reconnectTimer: unknown = null;
+  private readonly pendingSub = new Set<string>();
+  private readonly pendingUnsub = new Set<string>();
+  private flushQueued = false;
   private checkTimer: unknown = null;
   private readonly refs = new Map<string, number>();
   private readonly quotes = new Map<string, Quote>();
@@ -148,7 +152,11 @@ export class PriceFeed {
     set.add(listener);
     const count = (this.refs.get(symbol) ?? 0) + 1;
     this.refs.set(symbol, count);
-    if (count === 1) this.sendFrame({ t: 'sub', assets: [symbol] });
+    if (count === 1) {
+      // Still subscribed on the server if an unsub for it is waiting: just cancel that.
+      if (!this.pendingUnsub.delete(symbol)) this.pendingSub.add(symbol);
+      this.queueFlush();
+    }
 
     let released = false;
     return () => {
@@ -164,8 +172,33 @@ export class PriceFeed {
       this.refs.delete(symbol);
       this.quotes.delete(symbol);
       this.receivedAt.delete(symbol);
-      this.sendFrame({ t: 'unsub', assets: [symbol] });
+      if (!this.pendingSub.delete(symbol)) this.pendingUnsub.add(symbol);
+      this.queueFlush();
     };
+  }
+
+  /**
+   * Sends the subscription changes of this tick as one sub and one unsub frame. A list that
+   * mounts many symbols at once (the asset picker) must not trip the gateway's per-second
+   * message limit, which closes the connection.
+   */
+  private queueFlush(): void {
+    if (this.flushQueued) return;
+    this.flushQueued = true;
+    queueMicrotask(() => {
+      this.flushQueued = false;
+      const sub = [...this.pendingSub];
+      const unsub = [...this.pendingUnsub];
+      this.pendingSub.clear();
+      this.pendingUnsub.clear();
+      // Not connected: `onopen` subscribes every referenced symbol anyway.
+      for (let i = 0; i < sub.length; i += WS_MAX_ASSETS_PER_CONNECTION) {
+        this.sendFrame({ t: 'sub', assets: sub.slice(i, i + WS_MAX_ASSETS_PER_CONNECTION) });
+      }
+      for (let i = 0; i < unsub.length; i += WS_MAX_ASSETS_PER_CONNECTION) {
+        this.sendFrame({ t: 'unsub', assets: unsub.slice(i, i + WS_MAX_ASSETS_PER_CONNECTION) });
+      }
+    });
   }
 
   private connect(status: FeedStatus): void {
@@ -188,6 +221,9 @@ export class PriceFeed {
       if (this.socket !== socket) return;
       this.lastFrameAt = this.o.now();
       this.setStatus('open');
+      // This covers every symbol in use, so queued changes from before the open are moot.
+      this.pendingSub.clear();
+      this.pendingUnsub.clear();
       const assets = [...this.refs.keys()];
       if (assets.length > 0) this.sendFrame({ t: 'sub', assets });
     };

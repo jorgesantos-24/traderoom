@@ -107,8 +107,11 @@ describe('backoff and url', () => {
   });
 });
 
+/** Lets queued subscription changes go out. */
+const flush = () => Promise.resolve();
+
 describe('PriceFeed', () => {
-  it('subscribes on open with every referenced symbol, once each', () => {
+  it('subscribes on open with every referenced symbol, once each', async () => {
     const offA = feed.subscribe('BTCUSDT', () => {});
     feed.subscribe('BTCUSDT', () => {});
     feed.subscribe('ETHUSDT', () => {});
@@ -118,21 +121,45 @@ describe('PriceFeed', () => {
     expect(feed.getStatus()).toBe('open');
     expect(last().sent).toEqual([{ t: 'sub', assets: ['BTCUSDT', 'ETHUSDT'] }]);
     offA();
+    await flush();
     expect(last().sent).toHaveLength(1);
     feed.subscribe('SOLUSDT', () => {});
+    await flush();
     expect(last().sent.at(-1)).toEqual({ t: 'sub', assets: ['SOLUSDT'] });
   });
 
-  it('unsubscribes when the last listener leaves', () => {
+  it('unsubscribes when the last listener leaves', async () => {
     feed.start();
     last().open();
     const off1 = feed.subscribe('BTCUSDT', () => {});
     const off2 = feed.subscribe('BTCUSDT', () => {});
     off1();
     off1();
+    await flush();
     expect(last().sent).toEqual([{ t: 'sub', assets: ['BTCUSDT'] }]);
     off2();
+    await flush();
     expect(last().sent.at(-1)).toEqual({ t: 'unsub', assets: ['BTCUSDT'] });
+  });
+
+  it('sends a burst of subscriptions as one frame (asset picker), under the rate limit', async () => {
+    feed.start();
+    last().open();
+    const symbols = Array.from({ length: 40 }, (_, i) => `S${i}USDT`);
+    const offs = symbols.map((s) => feed.subscribe(s, () => {}));
+    await flush();
+    expect(last().sent).toEqual([{ t: 'sub', assets: symbols }]);
+    offs.forEach((off) => off());
+    await flush();
+    expect(last().sent).toHaveLength(2);
+    expect(last().sent.at(-1)).toEqual({ t: 'unsub', assets: symbols });
+    // Released and taken again in the same tick: nothing to tell the server.
+    const off = feed.subscribe('BTCUSDT', () => {});
+    await flush();
+    off();
+    feed.subscribe('BTCUSDT', () => {});
+    await flush();
+    expect(last().sent).toHaveLength(3);
   });
 
   it('applies snapshot and ticks, dropping out-of-order seq', () => {

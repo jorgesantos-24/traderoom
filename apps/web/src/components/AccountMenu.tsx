@@ -269,6 +269,7 @@ export function ProfileMenu({
   onLogout(): void;
   leaving: boolean;
 }) {
+  const hideBalances = useHideBalances();
   const { account, accounts } = useSessionData();
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -366,7 +367,7 @@ export function ProfileMenu({
                       className={cx('rounded-control border bg-field px-3 py-2', kind === account ? 'border-brand' : 'border-border')}
                     >
                       <div className="text-[10px] font-semibold tracking-wide text-muted uppercase">Conta {KIND_LABEL[kind]}</div>
-                      <div className={cx('tabular text-sm font-bold', KIND_TONE[kind])}>{w ? formatMoney(w.balanceCents) : '—'}</div>
+                      <div className={cx('tabular text-sm font-bold', KIND_TONE[kind])}>{w ? hideBalances.money(w.balanceCents) : '—'}</div>
                     </div>
                   );
                 })}
