@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import {
+  candleExpiry,
   creditCents,
   ErrorCode,
   FEED_STALE_MS,
@@ -189,12 +190,14 @@ export function createOrderService(deps: OrderServiceDeps): OrderService {
       const asset = (await deps.assets.enabled()).byId.get(input.assetId);
       if (!asset) throw new AppError(404, ErrorCode.UnknownAsset, 'Ativo não encontrado.');
 
-      const entry = await entryPrice(asset.symbol, now());
+      // The candle (and so the expiry) is picked from when the request arrived, as the client sees it.
+      const arrivedAt = now();
+      const entry = await entryPrice(asset.symbol, arrivedAt);
       if (!entry) {
-        throw new AppError(409, ErrorCode.AssetStale, 'Cotação defasada para este ativo. Tente novamente em instantes.');
+        throw new AppError(409, ErrorCode.AssetStale, 'Não foi possível abrir a ordem agora. Tente novamente em instantes.');
       }
       const { price, at: openedAt } = entry;
-      const expiresAt = openedAt + input.durationSec * 1000;
+      const expiresAt = candleExpiry(arrivedAt, input.durationSec).closesAt;
 
       const client = await deps.pool.connect();
       let created: OrderView;

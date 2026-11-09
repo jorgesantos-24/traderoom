@@ -42,8 +42,8 @@ export function blockReason(p: {
   limits: OrderLimitsView;
 }): string | null {
   if (p.feedStatus !== 'open') return 'Sem conexão com as cotações. Reconectando…';
-  if (!p.quote || (p.quote.price === null && !p.quote.stale)) return 'Aguardando cotação…';
-  if (p.quote.stale) return 'Cotação defasada: novas ordens estão bloqueadas neste ativo.';
+  // No fresh price: wait quietly, no alarm for the client.
+  if (!p.quote || p.quote.price === null || p.quote.stale) return 'Aguardando cotação…';
   if (p.stakeCents === null) return 'Informe um valor válido.';
   if (p.stakeCents < p.limits.minStakeCents) return `Valor mínimo: ${formatMoney(p.limits.minStakeCents)}.`;
   if (p.stakeCents > p.limits.maxStakeCents) return `Valor máximo: ${formatMoney(p.limits.maxStakeCents)}.`;

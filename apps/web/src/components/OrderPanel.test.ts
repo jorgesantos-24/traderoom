@@ -14,8 +14,8 @@ describe('blockReason', () => {
   it('blocks while the feed is down or the asset is stale', () => {
     expect(blockReason({ ...ok, feedStatus: 'reconnecting' })).toMatch(/conexão/i);
     expect(blockReason({ ...ok, quote: null })).toMatch(/aguardando/i);
-    expect(blockReason({ ...ok, quote: { ...fresh, stale: true } })).toMatch(/defasada/i);
-    expect(blockReason({ ...ok, quote: { price: null, ts: 0, stale: true } })).toMatch(/defasada/i);
+    expect(blockReason({ ...ok, quote: { ...fresh, stale: true } })).toMatch(/aguardando/i);
+    expect(blockReason({ ...ok, quote: { price: null, ts: 0, stale: true } })).toMatch(/aguardando/i);
   });
 
   it('blocks on invalid stake and insufficient balance', () => {

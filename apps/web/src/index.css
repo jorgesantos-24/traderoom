@@ -162,6 +162,10 @@ input[type='number']::-webkit-outer-spin-button {
 .order-tag[data-direction='put'] {
   --tone: var(--color-down);
 }
+/* Late entry waiting for the next candle: yellow until that candle opens. */
+.order-tag[data-waiting] {
+  --tone: var(--color-warn);
+}
 .order-tag-label {
   padding: 0 6px;
   color: var(--tone);

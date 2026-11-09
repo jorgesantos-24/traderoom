@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import type { Redis } from 'ioredis';
-import { RedisKeys, Registry, type CreateOrderInput, type OrderView, type PriceRecord } from '@traderoom/shared';
+import { candleExpiry, RedisKeys, Registry, type CreateOrderInput, type OrderView, type PriceRecord } from '@traderoom/shared';
 import { loadConfig } from '../src/config.js';
 import { inTransaction, createPool } from '../src/lib/db.js';
 import { createRedis } from '../src/lib/redis.js';
@@ -102,6 +102,8 @@ const input = (o: Partial<CreateOrderInput> = {}): CreateOrderInput => ({
   ...o,
 });
 const key = () => `k-${randomUUID()}`;
+/** 1 s into a minute candle that started 2+ min before `now`: an order sent then expired 60+ s ago. */
+const longAgo = (now: number) => Math.floor((now - 130_000) / 60_000) * 60_000 + 1_000;
 
 beforeAll(async () => {
   pool = createPool(config);
@@ -144,7 +146,7 @@ describe('creating orders', () => {
       stakeCents: 1000,
       potentialPayoutCents: 1870,
     });
-    expect(Date.parse(order.expiresAt) - Date.parse(order.opensAt)).toBe(60_000);
+    expect(Date.parse(order.expiresAt)).toBe(candleExpiry(clock, 60).closesAt);
     expect(await balance(user)).toBe(9000);
     expect((await ledgerOf(user)).at(-1)).toEqual({ kind: 'stake', delta: -1000, after: 9000, note: null });
     expect(Number(await redis.zscore(QUEUE, order.id))).toBe(Date.parse(order.expiresAt));
@@ -276,7 +278,7 @@ describe('creating orders', () => {
       expect(order.openPrice).toBe('101.00000000');
       const opened = Date.parse(order.opensAt);
       expect(opened).toBeGreaterThanOrEqual(arrived + DELAY);
-      expect(Date.parse(order.expiresAt) - opened).toBe(60_000);
+      expect(Date.parse(order.expiresAt)).toBe(candleExpiry(arrived, 60).closesAt);
     });
 
     it('waits for a quiet asset to refresh, then opens', async () => {
@@ -331,7 +333,7 @@ describe('demo account', () => {
   it('stakes, settles and lists on the demo balance only', async () => {
     await pool.query('delete from price_snapshots where asset_id = $1', [assetId]);
     const realNow = Date.now();
-    clock = realNow - 70_000;
+    clock = longAgo(realNow);
     await setPrice('100.00000000');
     const user = await demoUser();
     const { order } = await svc.create(user, input({ account: 'demo', stakeCents: 2000 }), key());
@@ -375,12 +377,12 @@ describe('demo account', () => {
 });
 
 describe('settlement', () => {
-  /** Opens an order 70 s in the past, so it expired 10 s ago. */
+  /** Opens an order early in a 1 min candle more than 2 min ago, so it has already expired. */
   async function expiredOrder(o: Partial<CreateOrderInput> = {}, open = '100.00000000') {
     // Each case controls its own close price: earlier cases' snapshots would fall in the same window.
     await pool.query('delete from price_snapshots where asset_id = $1', [assetId]);
     const realNow = Date.now();
-    clock = realNow - 70_000;
+    clock = longAgo(realNow);
     await setPrice(open);
     const user = await newUser(10_000);
     const { order } = await svc.create(user, input(o), key());
@@ -473,7 +475,7 @@ describe('settlement worker', () => {
   it('settles due orders from the queue and recovers ones missing from Redis via the sweep', async () => {
     await pool.query('delete from price_snapshots where asset_id = $1', [assetId]);
     const realNow = Date.now();
-    clock = realNow - 70_000;
+    clock = longAgo(realNow);
     await setPrice('100.00000000');
     const user = await newUser(10_000);
     const a = (await svc.create(user, input(), key())).order;

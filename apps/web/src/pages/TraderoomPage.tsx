@@ -138,9 +138,7 @@ function Traderoom({ assets, limits }: { assets: AssetView[]; limits: OrderLimit
   const banner =
     feedStatus === 'reconnecting' || feedStatus === 'unauthorized'
       ? 'Conexão com as cotações perdida. Reconectando… Novas ordens estão bloqueadas.'
-      : quote?.stale
-        ? `Cotação de ${asset.display} defasada. Novas ordens neste ativo estão bloqueadas até o preço voltar.`
-        : null;
+      : null;
 
   return (
     <AppShell

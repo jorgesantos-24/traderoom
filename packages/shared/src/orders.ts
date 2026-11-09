@@ -250,3 +250,28 @@ export const ListOrderHistoryQuery = z.object({
   limit,
 });
 export type ListOrderHistoryQuery = z.infer<typeof ListOrderHistoryQuery>;
+
+// ---- Candle-aligned expiry ----
+
+/**
+ * Orders close at the end of a clock candle the size of their duration (1, 5, 15 or 30 min,
+ * aligned to UTC like the chart). Entering with this much time or less left in the candle
+ * is a late entry: the order runs through the next candle and closes at its end.
+ */
+export const LATE_ENTRY_MS = 50_000;
+
+export interface CandleExpiry {
+  /** End of the candle the entry falls in. */
+  candleEndsAt: number;
+  /** True when the entry is in the last LATE_ENTRY_MS of the candle (the yellow window). */
+  late: boolean;
+  /** When the order settles: this candle's end, or the next candle's end on a late entry. */
+  closesAt: number;
+}
+
+export function candleExpiry(atMs: number, durationSec: number): CandleExpiry {
+  const size = durationSec * 1000;
+  const candleEndsAt = Math.floor(atMs / size) * size + size;
+  const late = candleEndsAt - atMs <= LATE_ENTRY_MS;
+  return { candleEndsAt, late, closesAt: late ? candleEndsAt + size : candleEndsAt };
+}

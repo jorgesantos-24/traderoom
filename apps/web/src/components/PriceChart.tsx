@@ -38,9 +38,16 @@ const COLORS = {
   text: '#aab4c0',
   up: '#22c55e',
   down: '#f04f4a',
+  warn: '#f5a524',
   brand: '#00d8e8',
 };
 export const CANDLE_LIMIT = 500;
+
+/** Entry line colour: yellow while a late entry waits for its candle, then green (buy) or red (sell). */
+function lineColor(o: OrderView, waiting: boolean): string {
+  if (waiting) return COLORS.warn;
+  return o.direction === 'call' ? COLORS.up : COLORS.down;
+}
 
 /** Order tags on the chart use the trading terms traders know. */
 const TAG_LABEL = { call: 'Buy', put: 'Sell' } as const;
@@ -82,6 +89,7 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
   const orderTagsRef = useRef<HTMLDivElement>(null);
   const bubblesRef = useRef<HTMLDivElement>(null);
   const ordersRef = useRef(orders);
+  const linesRef = useRef(new Map<string, IPriceLine>());
   ordersRef.current = orders;
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -315,7 +323,15 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
             hide(el);
             continue;
           }
-          const time = formatCountdown(Math.max(0, parseServerTime(o.expiresAt) - serverNow));
+          const expires = parseServerTime(o.expiresAt);
+          // Late entry still in its first candle: yellow until the candle that counts opens.
+          const waiting = serverNow < expires - o.durationSec * 1000;
+          if ((el.dataset.waiting === '1') !== waiting) {
+            if (waiting) el.dataset.waiting = '1';
+            else delete el.dataset.waiting;
+            linesRef.current.get(o.id)?.applyOptions({ color: lineColor(o, waiting) });
+          }
+          const time = formatCountdown(Math.max(0, expires - serverNow));
           const timeEl = el.lastElementChild as HTMLElement;
           if (timeEl.textContent !== time) timeEl.textContent = time;
           placed.push({ el, y: py });
@@ -357,18 +373,21 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
   useEffect(() => {
     const series = seriesRef.current;
     if (!series) return;
+    const now = serverClock.serverNow();
     const lines: IPriceLine[] = orders.map((o) =>
       series.createPriceLine({
         price: Number(o.openPrice),
-        color: o.direction === 'call' ? COLORS.up : COLORS.down,
+        color: lineColor(o, now < parseServerTime(o.expiresAt) - o.durationSec * 1000),
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
         title: '',
       }),
     );
+    linesRef.current = new Map(orders.map((o, i) => [o.id, lines[i] as IPriceLine]));
     return () => {
       for (const l of lines) series.removePriceLine(l);
+      linesRef.current = new Map();
     };
   }, [orders]);
 
