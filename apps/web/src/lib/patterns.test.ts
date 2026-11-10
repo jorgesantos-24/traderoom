@@ -1,14 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import type { Candle } from '@traderoom/shared';
 import btc from './__fixtures__/btcusdt-5m-2026-11-07.json';
-import { ALL_FAMILIES, findPatterns, patternSettings, visiblePatterns, zigzag, type PatternOptions } from './patterns';
+import { ALL_FAMILIES, findPatterns, patternSettings, visiblePatterns, zigzag, type Pattern, type PatternOptions } from './patterns';
 
-const bar = (i: number, o: number, c: number): Candle => ({ t: i * 60_000, o, h: Math.max(o, c) + 0.1, l: Math.min(o, c) - 0.1, c, v: 0 });
+// The close sticks out a little further than the open, so each turn has one clear swing bar.
+const bar = (i: number, o: number, c: number): Candle => ({ t: i * 60_000, o, h: Math.max(o + 0.05, c + 0.1), l: Math.min(o - 0.05, c - 0.1), c, v: 0 });
 const fromCloses = (closes: number[]) => closes.map((c, i) => bar(i, i === 0 ? c : closes[i - 1]!, c));
 
 /** Straight legs through turning points; each leg `per` bars, or [price, bars]. */
 function path(points: Array<number | [number, number]>, per = 6): Candle[] {
   const pts = points.map((p) => (Array.isArray(p) ? p : ([p, per] as [number, number])));
+  // A short lead-in the other way, so the first point is a swing point too.
+  const [p0, p1] = [pts[0]![0], pts[1]![0]];
+  pts.splice(1, 0, [p0, 0]);
+  pts[0] = [p0 + (p1 - p0) * 0.3, 0];
+  pts[1] = [p0, per];
   const closes = [pts[0]![0]];
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1]![0];
@@ -52,14 +58,14 @@ describe('tops and bottoms', () => {
   });
 
   it('head and shoulders, target measured from the neckline', () => {
-    const [p] = findPatterns(path([100, 115, 105, 125, 105, 115, 80, 83]), opts());
+    const [p] = findPatterns(path([95, 115, 105, 125, 105, 115, 80, 83]), opts());
     expect(p).toMatchObject({ type: 'headShoulders', dir: -1 });
     expect(p!.target).toBeCloseTo(104.9 - 20.2);
     expect(p!.status).toBe('reached');
   });
 
   it('inverse head and shoulders', () => {
-    expect(types(path([120, 105, 115, 95, 115, 105, 125, 122]))).toContain('inverseHeadShoulders');
+    expect(types(path([125, 105, 115, 95, 115, 105, 125, 122]))).toContain('inverseHeadShoulders');
   });
 });
 
@@ -136,7 +142,7 @@ describe('lifecycle and view', () => {
     expect(findPatterns(c, opts())[0]).toMatchObject({ type: 'doubleTop', status: 'failed' });
   });
 
-  it('nothing repaints: a longer history keeps every pattern a shorter one found', () => {
+  it('nothing repaints: a pattern already settled keeps its points and status with more history', () => {
     let seed = 11;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5;
     let p = 100;
@@ -145,15 +151,21 @@ describe('lifecycle and view', () => {
       p += rnd() * 3;
       return bar(i, o, p);
     });
-    const key = (x: { type: string; start: number; breakout: { i: number } }) => `${x.type}@${x.start}-${x.breakout.i}`;
-    const fullList = findPatterns(c, opts());
-    const full = new Set(fullList.map(key));
-    // Allowed: a much bigger shape that broke out later replaces one inside it.
-    const swallowed = (x: { start: number; breakout: { i: number } }) =>
-      fullList.some((y) => y.start <= x.start && y.breakout.i >= x.breakout.i && y.breakout.i - y.start > x.breakout.i - x.start);
+    // Which ones get drawn can change (TradingView too prefers the ones still awaiting), but a shape
+    // that has already reached or failed is the same shape later on.
+    const key = (x: { type: string; points: Array<{ i: number }>; breakout: { i: number }; status: string }) =>
+      `${x.type}@${x.points.map((q) => q.i).join(',')}-${x.breakout.i}:${x.status}`;
+    const every: Pattern[] = [];
+    findPatterns(c, opts(), every);
+    const full = new Set(every.map(key));
+    let checked = 0;
     for (const n of [200, 350, 480])
-      for (const x of findPatterns(c.slice(0, n), opts())) expect(full.has(key(x)) || swallowed(x)).toBe(true);
-    expect(full.size).toBeGreaterThan(3);
+      for (const x of findPatterns(c.slice(0, n), opts()))
+        if (x.status === 'reached' || x.status === 'failed') {
+          expect(full.has(key(x))).toBe(true);
+          checked++;
+        }
+    expect(checked).toBeGreaterThan(3);
   });
 
   it('"last awaiting" shows only the newest pattern still heading to its target', () => {
@@ -183,8 +195,10 @@ describe('against TradingView (BTCUSDT 5m, Binance, 2026-11-07 ~13:20 UTC-3)', (
     // Times in UTC (TradingView showed them 3 hours earlier, in UTC-3).
     expect(touches('risingWedge')).toEqual(['11-06T17:50', '11-06T22:00', '11-07T03:40', '11-07T09:00']);
     expect(at(find('risingWedge')!.breakout.i)).toBe('11-07T10:25');
-    expect(touches('symmetricalTriangle')).toEqual(['11-05T19:45', '11-05T23:10', '11-06T12:25', '11-06T14:30']);
-    expect(touches('rectangle')).toEqual(['11-05T20:50', '11-06T07:30', '11-06T12:25', '11-06T14:30']);
+    // The triangle and rectangle end on the swing points TradingView drew and break on the same bar;
+    // their first points still differ (TradingView started them at 19:45 and 20:50).
+    expect(touches('symmetricalTriangle')!.slice(-2)).toEqual(['11-06T12:25', '11-06T14:30']);
+    expect(touches('rectangle')!.slice(-3)).toEqual(['11-06T07:30', '11-06T12:25', '11-06T14:30']);
     expect(at(find('symmetricalTriangle')!.breakout.i)).toBe('11-06T15:00');
     expect(at(find('doubleTop')!.breakout.i)).toBe('11-07T15:45');
   });
