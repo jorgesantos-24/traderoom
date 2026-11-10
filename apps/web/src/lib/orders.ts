@@ -11,12 +11,15 @@ export function liveResult(direction: Direction, openPrice: string, price: numbe
   return cmp > 0 === (direction === 'call') ? 'winning' : 'losing';
 }
 
-/** Server-side worker waits this long after expiry before settling (SETTLE_GRACE_MS in the API). */
-export const SETTLE_GRACE_MS = 1500;
+/**
+ * The API settles an order as soon as the price snapshot of its close is in Postgres (usually within
+ * ~100 ms of expiry; at most 1.5 s, SETTLE_GRACE_MS in the API).
+ */
+export const SETTLE_FIRST_CHECK_MS = 200;
 
 /** When to start asking the API whether an order has been settled. */
 export function settleCheckAt(order: Pick<OrderView, 'expiresAt'>): number {
-  return parseServerTime(order.expiresAt) + SETTLE_GRACE_MS + 500;
+  return parseServerTime(order.expiresAt) + SETTLE_FIRST_CHECK_MS;
 }
 
 export function msLeft(order: Pick<OrderView, 'expiresAt'>, serverNow: number): number {

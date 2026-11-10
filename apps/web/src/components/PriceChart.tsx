@@ -12,7 +12,7 @@ import {
   type Logical,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import { candleExpiry, LATE_ENTRY_MS, type Candle, type CandleInterval, type OrderView } from '@traderoom/shared';
+import { candleExpiry, type Candle, type CandleInterval, type OrderView } from '@traderoom/shared';
 import { ApiError } from '../lib/api';
 import { cachedCandles, loadCandles } from '../lib/candle-cache';
 import { MOTION_TAU_MS, seedCandle, stepCandle } from '../lib/candle-motion';
@@ -82,6 +82,8 @@ function lineColor(o: OrderView, waiting: boolean): string {
 
 /** Order tags on the chart use the trading terms traders know. */
 const TAG_LABEL = { call: 'Buy', put: 'Sell' } as const;
+/** How far the live price tag's arrow reaches past the price scale into the plot (px). */
+const TAG_TIP = 9;
 
 const toPoint = (c: Candle) => ({ time: (c.t / 1000) as UTCTimestamp, value: c.c });
 
@@ -122,6 +124,7 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
   const tagPriceRef = useRef<HTMLSpanElement>(null);
   const tagTimeRef = useRef<HTMLSpanElement>(null);
   const orderTagsRef = useRef<HTMLDivElement>(null);
+  const entryMarksRef = useRef<HTMLDivElement>(null);
   const bubblesRef = useRef<HTMLDivElement>(null);
   const ordersRef = useRef(orders);
   const linesRef = useRef(new Map<string, IPriceLine>());
@@ -352,6 +355,7 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
         hide(tagRef.current);
         hide(deadlineRef.current);
         for (const el of orderTagsRef.current?.children ?? []) hide(el as HTMLElement);
+        for (const el of entryMarksRef.current?.children ?? []) hide(el as HTMLElement);
         for (const el of bubblesRef.current?.children ?? []) hide(el as HTMLElement);
         return;
       }
@@ -380,8 +384,43 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
             tagTimeRef.current.style.color = shown.c >= shown.o ? COLORS.up : COLORS.down;
           }
         }
+        // Over the price scale: the body covers the scale, the arrow's tip reaches into the plot.
+        const width = `${chart.priceScale('right').width() + TAG_TIP}px`;
+        if (tag.style.width !== width) tag.style.width = width;
         tag.style.visibility = 'visible';
-        tag.style.transform = `translate(${plotWidth - tag.offsetWidth - 4}px, ${Math.round(y)}px) translateY(-50%)`;
+        tag.style.transform = `translate(${plotWidth - TAG_TIP}px, ${Math.round(y)}px) translateY(-50%)`;
+        // Entry price of each open order on the scale, green (buy) or red (sell). The live tag keeps
+        // its place; marks that would cover it (or each other) are pushed away, so all stay readable.
+        const height = chart.paneSize().height;
+        const tagH = tag.offsetHeight || 26;
+        const above: Array<{ el: HTMLElement; y: number }> = [];
+        const below: Array<{ el: HTMLElement; y: number }> = [];
+        for (const el of (entryMarksRef.current?.children ?? []) as HTMLCollectionOf<HTMLElement>) {
+          const price = Number(el.dataset.price);
+          const py = series.priceToCoordinate(price);
+          if (py === null || py < 0 || py > height) {
+            hide(el);
+            continue;
+          }
+          if (el.style.width !== width) el.style.width = width;
+          const text = formatPrice(price, precision);
+          if (el.textContent !== text) el.textContent = text;
+          // At the same height: a buy goes above the live tag, a sell below.
+          (py < y || (py === y && el.dataset.direction !== 'put') ? above : below).push({ el, y: py });
+        }
+        const place = (list: Array<{ el: HTMLElement; y: number }>, dir: 1 | -1) => {
+          list.sort((a, b) => dir * (a.y - b.y));
+          let edge = y + (dir * tagH) / 2;
+          for (const { el, y: want } of list) {
+            const h = el.offsetHeight || 22;
+            const center = dir === 1 ? Math.max(want, edge + 1 + h / 2) : Math.min(want, edge - 1 - h / 2);
+            edge = center + (dir * h) / 2;
+            el.style.visibility = 'visible';
+            el.style.transform = `translate(${plotWidth - TAG_TIP}px, ${Math.round(center)}px) translateY(-50%)`;
+          }
+        };
+        place(above, -1);
+        place(below, 1);
         // Small blinking dot on the current price, on the last candle (or the line's end).
         const dot = dotRef.current;
         const lx = chart.timeScale().logicalToCoordinate((candles.length - 1) as Logical);
@@ -394,12 +433,11 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
         hide(dotRef.current);
       }
 
-      // "HORA DE COMPRA 00:25": time left to enter the current candle for the picked duration.
+      // "HORA DE COMPRA 00:25": time left in the current candle of the picked duration, on its close.
       const deadlineEl = deadlineRef.current;
       if (deadlineEl) {
         const serverNow = serverClock.serverNow();
-        const { closesAt } = candleExpiry(serverNow, durationRef.current);
-        const deadline = closesAt - LATE_ENTRY_MS;
+        const deadline = candleExpiry(serverNow, durationRef.current).candleEndsAt;
         const lastIndex = candles.length - 1;
         const dx = logicalX(chart, lastIndex + (deadline - real.t) / stepRef.current);
         if (dx !== null && dx >= 0 && dx <= plotWidth) {
@@ -481,7 +519,7 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
         color: lineColor(o, now < parseServerTime(o.expiresAt) - o.durationSec * 1000),
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
+        axisLabelVisible: false,
         title: '',
       }),
     );
@@ -612,10 +650,15 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
           </div>
           <div
             ref={tagRef}
-            className="invisible absolute top-0 left-0 flex h-[26px] items-center bg-[#cfd0d2] pr-2 pl-3.5 leading-none text-[#3b4048] [clip-path:polygon(9px_0,100%_0,100%_100%,9px_100%,0_50%)]"
+            className="invisible absolute top-0 left-0 flex h-[26px] items-center justify-center bg-[#cfd0d2] pr-1 pl-[13px] leading-none whitespace-nowrap text-[#3b4048] [clip-path:polygon(9px_0,100%_0,100%_100%,9px_100%,0_50%)]"
           >
             <span ref={tagPriceRef} className="tabular text-[12px]" />
             <span ref={tagTimeRef} className="tabular text-[15px] font-bold" />
+          </div>
+          <div ref={entryMarksRef} data-testid="entry-marks">
+            {orders.map((o) => (
+              <div key={o.id} className="entry-mark" data-direction={o.direction} data-price={o.openPrice} />
+            ))}
           </div>
           <div ref={orderTagsRef} data-testid="order-tags">
             {orders.map((o) => (

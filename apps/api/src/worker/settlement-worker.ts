@@ -40,9 +40,10 @@ export interface SettlementWorkerOptions {
 }
 
 export const WORKER_DEFAULTS: SettlementWorkerOptions = {
-  tickMs: 250,
+  tickMs: 100,
   sweepMs: 10_000,
-  graceMs: SETTLE_GRACE_MS,
+  // No fixed wait: settleOrder waits for the close snapshot itself (at most SETTLE_GRACE_MS).
+  graceMs: 0,
   batchSize: 200,
   concurrency: 4,
   retryAfterMs: 5000,
@@ -168,7 +169,7 @@ export class SettlementWorker {
           where status = 'open' and expires_at <= now() - make_interval(secs => $1)
           order by expires_at
           limit 1000`,
-        [(this.opts.graceMs * 2) / 1000],
+        [(Math.max(this.opts.graceMs, SETTLE_GRACE_MS) * 2) / 1000],
       );
       await this.deps.queue.add(rows.map((r) => ({ id: r.id, score: Number(r.expires_ms) })));
       if (rows.length > 0) {

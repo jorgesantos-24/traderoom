@@ -4,8 +4,13 @@ import { creditCents, decideOutcome, type AccountKind, type Direction, type Orde
 /** A close price must come from a snapshot taken at most this long before expiry (spec: 3 s). */
 export const CLOSE_PRICE_WINDOW_MS = 3000;
 /**
- * Wait this long after expiry before settling, so the snapshot taken just before
- * expiry (written every 1 s by the relay) has landed in Postgres.
+ * The relay stamps a snapshot just before every whole second (SNAPSHOT_LEAD_MS = 50 ms). One this close
+ * to the expiry is the price on screen at 0: the order settles as soon as it is in Postgres.
+ */
+export const CLOSE_SNAPSHOT_MS = 250;
+/**
+ * Without that snapshot (late insert, stale feed), wait at most this long after expiry, then settle
+ * on the latest snapshot inside the window (or void without one).
  */
 export const SETTLE_GRACE_MS = 1500;
 
@@ -66,13 +71,22 @@ export async function settleOrder(pool: pg.Pool, orderId: string, nowMs: number)
     // refunded) — see decideOutcome. `price_snapshots.real_price` and `orders.override_id` never
     // choose the column: they are kept for diagnostics and audit only.
     const closeCol = 'price';
-    const snap = await client.query<{ price: string }>(
-      `select ${closeCol}::text as price from price_snapshots
+    const snap = await client.query<{ price: string; captured_at: Date }>(
+      `select ${closeCol}::text as price, captured_at from price_snapshots
         where asset_id = $1 and captured_at <= $2 and captured_at >= $2 - make_interval(secs => $3)
         order by captured_at desc limit 1`,
       [o.asset_id, o.expires_at, CLOSE_PRICE_WINDOW_MS / 1000],
     );
-    const closePrice = snap.rows[0]?.price ?? null;
+    const last = snap.rows[0];
+    if (
+      (!last || last.captured_at.getTime() < o.expires_at.getTime() - CLOSE_SNAPSHOT_MS) &&
+      nowMs < o.expires_at.getTime() + SETTLE_GRACE_MS
+    ) {
+      // The snapshot of the close is not in yet: try again on the next tick.
+      await client.query('rollback');
+      return { kind: 'not_due' };
+    }
+    const closePrice = last?.price ?? null;
     const status = closePrice === null ? 'void' : decideOutcome(o.direction, o.open_price, closePrice);
     const stake = Number(o.stake_cents);
     const credit = creditCents(status, stake, o.payout_pct);

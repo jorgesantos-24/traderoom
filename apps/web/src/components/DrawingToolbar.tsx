@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { EMOJIS, TOOL_LABEL, type Tool } from '../lib/drawings';
+import { TOOL_LABEL, type Tool } from '../lib/drawings';
 import type { DrawingState } from '../lib/use-drawings';
 import { cx } from './ui';
 
@@ -141,7 +141,6 @@ const GROUPS: Group[] = [
     tools: ['brush', 'highlighter', 'arrow', 'arrowUp', 'arrowDown', 'rect', 'ellipse'],
   },
   { id: 'text', title: 'Texto', tools: ['text'] },
-  { id: 'emoji', title: 'Emojis', tools: ['emoji'] },
   { id: 'ruler', title: 'Medir', tools: ['ruler'] },
   { id: 'zoom', title: 'Zoom', tools: ['zoom'] },
 ];
@@ -202,7 +201,7 @@ export function DrawingToolbar({ state, onClearAll }: { state: DrawingState; onC
         const current = picked[g.id] ?? g.tools[0]!;
         const active = g.tools.includes(state.tool);
         const shown = active ? state.tool : current;
-        const many = g.tools.length > 1 || g.id === 'emoji';
+        const many = g.tools.length > 1;
         return (
           <div key={g.id} className="group/tool relative">
             <button
@@ -213,7 +212,7 @@ export function DrawingToolbar({ state, onClearAll }: { state: DrawingState; onC
               onClick={() => choose(g, shown)}
               className={cx(btn, active && 'bg-brand/10 text-brand hover:text-brand')}
             >
-              {g.id === 'emoji' ? <span className="text-lg leading-none">{state.emoji}</span> : <Icon name={shown} />}
+              <Icon name={shown} />
             </button>
             {many && (
               <button
@@ -239,42 +238,22 @@ export function DrawingToolbar({ state, onClearAll }: { state: DrawingState; onC
                 className="absolute top-0 left-full z-40 ml-2 min-w-[210px] rounded-control border border-border bg-field py-1.5 shadow-2xl"
               >
                 <div className="px-3 pb-1 text-[10px] font-semibold tracking-wide text-muted uppercase">{g.title}</div>
-                {g.id === 'emoji' ? (
-                  <div className="grid grid-cols-4 gap-1 px-2 pb-1">
-                    {EMOJIS.map((e) => (
-                      <button
-                        key={e}
-                        type="button"
-                        role="menuitem"
-                        aria-label={`Emoji ${e}`}
-                        onClick={() => {
-                          state.setEmoji(e);
-                          choose(g, 'emoji');
-                        }}
-                        className={cx('rounded p-1.5 text-xl hover:bg-surface', state.emoji === e && 'bg-brand/10')}
-                      >
-                        {e}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  g.tools.map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={state.tool === t}
-                      onClick={() => choose(g, t)}
-                      className={cx(
-                        'flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-sm',
-                        state.tool === t ? 'text-brand' : 'text-text hover:bg-surface',
-                      )}
-                    >
-                      <Icon name={t} className="size-5" />
-                      {TOOL_LABEL[t]}
-                    </button>
-                  ))
-                )}
+                {g.tools.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={state.tool === t}
+                    onClick={() => choose(g, t)}
+                    className={cx(
+                      'flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-sm',
+                      state.tool === t ? 'text-brand' : 'text-text hover:bg-surface',
+                    )}
+                  >
+                    <Icon name={t} className="size-5" />
+                    {TOOL_LABEL[t]}
+                  </button>
+                ))}
               </div>
             )}
           </div>

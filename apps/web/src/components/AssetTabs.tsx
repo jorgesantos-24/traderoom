@@ -18,7 +18,6 @@ interface Props {
 }
 
 const CATEGORY: Record<AssetCategory, string> = { crypto: 'Cripto', forex: 'Moedas', stocks: 'Ações', synthetic: 'Sintéticos' };
-const TAB_LABEL: Record<AssetCategory, string> = { crypto: 'Cripto', forex: 'Moeda', stocks: 'Ação', synthetic: 'Sintético' };
 
 /** Header tabs with the charts the user has open, plus a "+" to open another one. */
 export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: Props) {
@@ -79,7 +78,6 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
                     {a.display}
                     {a.kind === 'otc' && a.category !== 'synthetic' && !/OTC/i.test(a.display) ? ' (OTC)' : ''}
                   </span>
-                  <span className="text-[11px] text-muted">{TAB_LABEL[a.category] && 'Binária'}</span>
                 </span>
               </button>
               {open.length > 1 && (

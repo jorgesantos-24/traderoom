@@ -7,7 +7,10 @@ import { netCents, settleCheckAt, upsertOrders } from './orders';
 import { useSessionData, type Loadable } from './session-data';
 import { playLossSound, playWinSound } from './sound';
 
-const POLL_MS = 1000;
+/** Asks for results this often in the first 2 s after an expiry (settled in ~0.1 s), then every second. */
+const POLL_MS = 150;
+const POLL_SLOW_MS = 1000;
+const POLL_FAST_FOR_MS = 2000;
 /** Result cards on screen at once; older ones drop off the stack. */
 const RESULTS_MAX = 5;
 
@@ -57,6 +60,7 @@ export function useTradeOrders(assets: readonly AssetView[]) {
   const [results, setResults] = useState<ResultToast[]>([]);
   const [attempt, setAttempt] = useState(0);
   const polling = useRef(false);
+  const lastPoll = useRef(0);
   const openRef = useRef<OrderView[]>([]);
   const displayRef = useRef(new Map<string, string>());
   displayRef.current = new Map(assets.map((a) => [a.symbol, a.display]));
@@ -100,8 +104,12 @@ export function useTradeOrders(assets: readonly AssetView[]) {
 
   useEffect(() => {
     const id = setInterval(() => {
-      const due = openRef.current.filter((o) => settleCheckAt(o) <= serverClock.serverNow());
+      const serverNow = serverClock.serverNow();
+      const due = openRef.current.filter((o) => settleCheckAt(o) <= serverNow);
       if (due.length === 0 || polling.current) return;
+      const fast = due.some((o) => serverNow - settleCheckAt(o) < POLL_FAST_FOR_MS);
+      if (Date.now() - lastPoll.current < (fast ? 0 : POLL_SLOW_MS)) return;
+      lastPoll.current = Date.now();
       polling.current = true;
       const polled = accountRef.current;
       api

@@ -45,7 +45,7 @@ describe('timing', () => {
     expect(progress(o, T0 + 30_000)).toBe(0.5);
     expect(progress(o, T0 - 1)).toBe(0);
     expect(progress(o, T0 + 90_000)).toBe(1);
-    expect(settleCheckAt(o)).toBe(T0 + 60_000 + 2000);
+    expect(settleCheckAt(o)).toBe(T0 + 60_000 + 200);
   });
 });
 

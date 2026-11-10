@@ -27,6 +27,7 @@ export interface RelayOptions {
   windowMs: number;
   /** How often staleness and failover are re-evaluated. */
   evaluateMs: number;
+  /** Snapshot period; snapshots are taken `SNAPSHOT_LEAD_MS` before each multiple of it. */
   snapshotMs: number;
   assetsReloadMs: number;
   /** Reconnect a provider socket that delivers nothing for this long. */
@@ -37,6 +38,12 @@ export interface RelayOptions {
   /** How often OTC prices move. */
   otcTickMs: number;
 }
+
+/**
+ * Snapshots land just before each whole second, so every expiry (always on a whole second) has one
+ * stamped right before it: the price on screen when the countdown hit 0, in Postgres a few ms after.
+ */
+export const SNAPSHOT_LEAD_MS = 50;
 
 /** Values fixed by the spec; only tests override them. */
 export const RELAY_DEFAULTS = {
@@ -139,6 +146,7 @@ export class Relay {
   private unwritten = new Map<string, Tick>();
   private priceWriteInFlight = false;
   private snapshotInFlight = false;
+  private snapshotTimer: NodeJS.Timeout | null = null;
   private reloadInFlight = false;
   private overrideInFlight = false;
   /** Last raw `otc:override` seen; only a change is re-applied. */
@@ -241,7 +249,7 @@ export class Relay {
     this.every(this.opts.otcTickMs, () => void this.pollOverride());
     this.every(this.opts.windowMs, () => this.flushWindow());
     this.every(this.opts.evaluateMs, () => this.evaluate());
-    this.every(this.opts.snapshotMs, () => this.snapshot());
+    this.scheduleSnapshot();
     this.every(this.opts.assetsReloadMs, () => void this.reloadAssets());
     this.deps.log.info({ assets: this.assetList.map((a) => a.symbol) }, 'relay started');
   }
@@ -251,6 +259,8 @@ export class Relay {
     this.started = false;
     for (const t of this.timers) clearInterval(t);
     this.timers.length = 0;
+    if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
+    this.snapshotTimer = null;
     this.priceOverrides.clear();
     this.bucketOpen.clear();
     await Promise.all([this.connections.binance.stop(), this.connections.binance_backup.stop()]);
@@ -288,6 +298,19 @@ export class Relay {
 
   seqCounter(): SeqCounter {
     return this.seq;
+  }
+
+  /** Next snapshot `SNAPSHOT_LEAD_MS` before the next multiple of `snapshotMs`, then the one after. */
+  private scheduleSnapshot(): void {
+    if (!this.started) return;
+    const p = this.opts.snapshotMs;
+    const now = this.now();
+    // Strictly after now, so a timer firing right on time does not snapshot twice.
+    const at = (Math.floor((now + SNAPSHOT_LEAD_MS) / p) + 1) * p - SNAPSHOT_LEAD_MS;
+    this.snapshotTimer = setTimeout(() => {
+      this.snapshot();
+      this.scheduleSnapshot();
+    }, at - now);
   }
 
   private every(ms: number, fn: () => void): void {

@@ -58,16 +58,17 @@ function setup(results: Record<string, SettleResult | Error>) {
 const won = (expiresAtMs: number): SettleResult => ({ kind: 'settled', status: 'won', creditCents: 1870, userId: 'u', expiresAtMs });
 
 describe('SettlementWorker.round', () => {
-  it('settles only orders past expiry + grace and removes them from the queue', async () => {
-    const s = setup({ a: won(NOW - 5000), b: won(NOW - 2000) });
+  it('tries every expired order right away, settles the ready ones and removes them from the queue', async () => {
+    // c: expired, but its close snapshot is not in yet (settleOrder says not_due), so it stays queued.
+    const s = setup({ a: won(NOW - 5000), b: won(NOW - 2000), c: { kind: 'not_due' } });
     await s.queue.add([
       { id: 'a', score: NOW - 5000 },
       { id: 'b', score: NOW - 2000 },
-      { id: 'c', score: NOW - 1000 }, // inside the 1.5 s grace
+      { id: 'c', score: NOW - 100 },
       { id: 'd', score: NOW + 60_000 },
     ]);
     expect(await s.worker.round()).toBe(2);
-    expect(s.seen.map(([id]) => id).sort()).toEqual(['a', 'b']);
+    expect(s.seen.map(([id]) => id).sort()).toEqual(['a', 'b', 'c']);
     expect(s.seen[0]?.[1]).toBe(NOW - WORKER_DEFAULTS.graceMs);
     expect([...s.queue.z.keys()].sort()).toEqual(['c', 'd']);
     expect(s.metrics.render()).toContain('settlements_total{status="won"} 2');

@@ -61,7 +61,7 @@ type Panel = 'portfolio' | 'support' | 'videos' | 'promo' | 'more';
 
 const PANEL_TITLE: Record<Panel, string> = {
   portfolio: 'Portfólio total',
-  support: 'Chats e suporte',
+  support: 'Suporte',
   videos: 'Vídeo Tutoriais',
   promo: 'Promoção',
   more: 'Mais',
@@ -198,7 +198,7 @@ export function AppShell({
               desempenho
             </span>
           </Link>
-          <SideButton label="Chats e suporte" icon="chat" active={panel === 'support'} onClick={() => togglePanel('support')} />
+          <SideButton label="Suporte" icon="chat" active={panel === 'support'} onClick={() => togglePanel('support')} />
           <SideButton label="Vídeo tutoriais" icon="videos" active={panel === 'videos'} onClick={() => togglePanel('videos')} />
           <SideButton label="Promoção" icon="promo" active={panel === 'promo'} onClick={() => togglePanel('promo')} />
           <SideButton label="Mais" icon="more" active={panel === 'more'} onClick={() => togglePanel('more')} />
@@ -446,16 +446,7 @@ function StatusFooter() {
   };
 
   return (
-    <footer className="hidden h-[36px] shrink-0 items-center gap-3 bg-bg pr-3 pl-[6px] text-[13px] md:flex">
-      <a
-        href={`mailto:${SUPPORT_EMAIL}`}
-        className="flex h-[24px] items-center gap-1.5 rounded-[3px] bg-[#c14331] px-2.5 text-[10px] font-bold text-white uppercase hover:brightness-110"
-      >
-        <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M4 4h12v9H8l-4 3V4zM9 16v1h7l4 3V9h-2" strokeLinejoin="round" />
-        </svg>
-        Suporte
-      </a>
+    <footer className="hidden h-[36px] shrink-0 items-center gap-3 bg-bg pr-3 pl-3 text-[13px] md:flex">
       <span className="flex items-center gap-1.5 text-[#c9ccd0]">
         <svg aria-hidden="true" viewBox="0 0 24 24" className="size-[15px]" fill="currentColor">
           <path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm.1 13.6a1.3 1.3 0 1 0 0 2.6 1.3 1.3 0 0 0 0-2.6zM12 6c-2 0-3.5 1.2-3.6 3.1h2.2c.1-.8.6-1.2 1.4-1.2.8 0 1.3.5 1.3 1.1 0 .6-.3.9-1.1 1.4-.9.6-1.3 1.2-1.2 2.4v.5h2.1v-.4c0-.7.3-1 1.1-1.5.9-.6 1.5-1.3 1.5-2.4C15.7 7.2 14.2 6 12 6z" />
@@ -464,7 +455,6 @@ function StatusFooter() {
           {SUPPORT_EMAIL}
         </a>
       </span>
-      <span className="text-[#767b82] uppercase">Todo dia, a toda hora</span>
       <div className="ml-auto flex items-center gap-5 text-[#9ea2a8]">
         <button
           type="button"

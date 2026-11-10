@@ -207,6 +207,30 @@ input[type='number']::-webkit-outer-spin-button {
   color: var(--color-bg);
 }
 
+/* Entry price of an open order on the price scale, over the live price tag: green buy, red sell. */
+.entry-mark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 4px 0 13px;
+  visibility: hidden;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: #fff;
+  background: var(--color-up);
+  clip-path: polygon(9px 0, 100% 0, 100% 100%, 9px 100%, 0 50%);
+}
+.entry-mark[data-direction='put'] {
+  background: var(--color-down);
+}
+
 /* Result bubble on the chart where an order expired: net result of that expiry, then fades. */
 .result-bubble {
   position: absolute;
