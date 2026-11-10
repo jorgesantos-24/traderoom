@@ -37,9 +37,19 @@ export function IndicatorsButton({ onClick }: { onClick(): void }) {
       title="Indicadores"
       aria-label="Indicadores"
       onClick={onClick}
-      className="flex size-8 items-center justify-center rounded-control font-serif text-[17px] text-muted italic hover:bg-field hover:text-text"
+      className="flex size-[34px] items-center justify-center rounded-[3px] border border-[#3a4049] bg-[#12171e]/80 text-[#d5d7da] hover:border-[#5a616b] hover:text-white"
     >
-      ƒ<span className="text-[11px] not-italic">x</span>
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        className="size-[18px]"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      >
+        <path d="M2 14c2.5 0 3-8 5.5-8S10 18 12.5 18 15 6 17.5 6 20 14 22 14" />
+      </svg>
     </button>
   );
 }

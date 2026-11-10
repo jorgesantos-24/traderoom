@@ -114,34 +114,31 @@ export function AccountSwitcher() {
     <div ref={ref} className="relative flex items-center">
       <button
         type="button"
-        onClick={toggleHidden}
-        className="rounded-control p-1.5 text-muted hover:bg-field hover:text-text"
-        aria-label={hidden ? 'Mostrar saldos' : 'Ocultar saldos'}
-        aria-pressed={hidden}
-        title={hidden ? 'Mostrar saldos' : 'Ocultar saldos'}
-        data-testid="hide-balance"
-      >
-        <Icon className="size-[18px]">{hidden ? EYE_OFF : EYE}</Icon>
-      </button>
-      <button
-        type="button"
         aria-haspopup="true"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-control px-2 py-1 text-left leading-tight hover:bg-field"
+        className="flex items-center gap-1 px-1 py-1 text-left leading-tight hover:brightness-110"
         data-testid="account-switcher"
       >
         <span>
-          <span className="block text-[10px] font-semibold tracking-wide text-muted uppercase" data-testid="account-kind">
+          <span
+            className={cx('block text-[9px] font-medium tracking-wide uppercase', account === 'demo' ? 'text-warn' : 'sr-only')}
+            data-testid="account-kind"
+          >
             {KIND_LABEL[account]}
           </span>
-          <span className={cx('tabular block text-base font-bold sm:text-lg', KIND_TONE[account])} data-testid="balance">
+          <span className={cx('tabular block text-base font-bold sm:text-[20px]', KIND_TONE[account])} data-testid="balance">
             {money(wallet.data.balanceCents)}
           </span>
         </span>
-        <Icon className={cx('size-4 text-muted transition-transform', open && 'rotate-180')}>
-          <path d="M6 9l6 6 6-6" />
-        </Icon>
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 10 6"
+          className={cx('h-[6px] w-[10px] transition-transform', KIND_TONE[account], open && 'rotate-180')}
+          fill="currentColor"
+        >
+          <path d="M0 0h10L5 6z" />
+        </svg>
       </button>
 
       {open && (
@@ -226,7 +223,7 @@ function Avatar({ name, size }: { name: string; size: 'sm' | 'lg' }) {
       aria-hidden="true"
       className={cx(
         'flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand/80 to-[#2962ff] font-bold text-bg',
-        size === 'sm' ? 'size-9 text-sm' : 'size-16 text-xl ring-2 ring-warn ring-offset-2 ring-offset-surface',
+        size === 'sm' ? 'size-9 text-sm md:size-[46px] md:text-base' : 'size-16 text-xl ring-2 ring-warn ring-offset-2 ring-offset-surface',
       )}
     >
       {initials(name)}
@@ -315,10 +312,13 @@ export function ProfileMenu({
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label="Abrir perfil"
-        className="rounded-full hover:opacity-90"
+        className="flex items-center gap-2 rounded-full hover:opacity-90"
         data-testid="profile-button"
       >
         <Avatar name={user.name} size="sm" />
+        <svg aria-hidden="true" viewBox="0 0 10 6" className="hidden h-[6px] w-[10px] text-[#91959c] sm:block" fill="currentColor">
+          <path d="M0 0h10L5 6z" />
+        </svg>
       </button>
 
       {/* Portal: the header's backdrop blur would otherwise trap this fixed panel inside it. */}
@@ -493,10 +493,10 @@ export function DepositButton() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex h-10 items-center gap-2.5 rounded-control bg-[linear-gradient(135deg,#34d672,#16a34a)] px-2.5 text-base font-bold text-bg shadow-[0_10px_28px_-12px_var(--color-up)] transition-[filter,transform] hover:brightness-110 active:scale-[0.98] sm:h-11 sm:px-5"
+        className="flex h-10 items-center gap-2.5 rounded-[3px] border border-up px-2.5 text-[20px] font-normal text-up transition-colors hover:bg-up/10 active:scale-[0.98] sm:h-[46px] sm:w-[132px] sm:justify-center sm:px-0"
         data-testid="deposit-button"
       >
-        <svg aria-hidden="true" viewBox="0 0 24 24" className="size-6" fill="currentColor">
+        <svg aria-hidden="true" viewBox="0 0 24 24" className="size-6 sm:hidden" fill="currentColor">
           <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4H17a1 1 0 0 1 1 1v2H6.5a.5.5 0 0 0 0 1H19a2 2 0 0 1 2 2v2h-4a3 3 0 0 0 0 6h4v1a2 2 0 0 1-2 2H6.5A2.5 2.5 0 0 1 4 18.5v-12z" />
           <path d="M17 14h4v2h-4a1 1 0 0 1 0-2z" />
         </svg>

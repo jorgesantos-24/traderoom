@@ -29,10 +29,67 @@ export function coinCode(symbol: string): string {
     .toLowerCase();
 }
 
+/** Currencies with a flag in public/flags. */
+const FLAGS = new Set([
+  'aed',
+  'ars',
+  'aud',
+  'bdt',
+  'bob',
+  'brl',
+  'cad',
+  'chf',
+  'clp',
+  'cop',
+  'dop',
+  'eur',
+  'gbp',
+  'hkd',
+  'idr',
+  'inr',
+  'jpy',
+  'mxn',
+  'myr',
+  'ngn',
+  'nok',
+  'nzd',
+  'pen',
+  'php',
+  'pln',
+  'sar',
+  'sek',
+  'sgd',
+  'thb',
+  'try',
+  'usd',
+  'vnd',
+  'zar',
+]);
+
+/** "EURUSDOTC" → ["eur", "usd"]; null when it is not a currency pair with both flags. */
+export function forexPair(symbol: string): [string, string] | null {
+  const m = /^([A-Z]{3})([A-Z]{3})OTC$/.exec(symbol);
+  if (!m) return null;
+  const base = (m[1] as string).toLowerCase();
+  const quote = (m[2] as string).toLowerCase();
+  return FLAGS.has(base) && FLAGS.has(quote) ? [base, quote] : null;
+}
+
 /** Round coin logo; falls back to the ticker's first letter when there is no icon. */
 export function CoinIcon({ symbol, className }: { symbol: string; className?: string }) {
   const code = coinCode(symbol);
   const [broken, setBroken] = useState(false);
+  const pair = forexPair(symbol);
+  if (pair) {
+    // Two flags, base top-left and quote bottom-right, as currency pairs usually show.
+    const flag = 'absolute size-[68%] rounded-full object-cover ring-1 ring-black/40';
+    return (
+      <span aria-hidden="true" className={cx('relative inline-block size-5 shrink-0', className)}>
+        <img src={`/flags/${pair[0]}.svg`} alt="" draggable={false} className={cx(flag, 'top-0 left-0')} />
+        <img src={`/flags/${pair[1]}.svg`} alt="" draggable={false} className={cx(flag, 'right-0 bottom-0')} />
+      </span>
+    );
+  }
   if (STOCKS.has(symbol)) {
     return (
       <img

@@ -536,7 +536,7 @@ function AssetRow({ asset, onSaved }: { asset: AdminAssetView; onSaved(a: AdminA
           {asset.display}
           {isOtc && (
             <span className="ml-2 rounded bg-warn/15 px-1.5 py-0.5 text-[10px] font-semibold text-warn">
-              {asset.category === 'synthetic' ? 'Sintético' : asset.category === 'stocks' ? 'Ação OTC' : 'OTC'}
+              {asset.category === 'synthetic' ? 'Sintético' : asset.category === 'stocks' ? 'Ação OTC' : asset.category === 'forex' ? 'Moeda OTC' : 'OTC'}
             </span>
           )}
           {asset.otcDriftPctHour !== 0 && (

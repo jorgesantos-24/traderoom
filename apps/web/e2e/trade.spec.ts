@@ -48,8 +48,7 @@ async function cleanup(userEmail: string): Promise<void> {
   await pool.query('delete from users where id = $1', [id]);
 }
 
-const brl = (cents: number) =>
-  (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'USD' }).replace(/ /g, ' ');
+const brl = (cents: number) => (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'USD' }).replace(/ /g, ' ');
 
 async function balanceText(page: Page): Promise<string> {
   return ((await page.getByTestId('balance').textContent()) ?? '').replace(/ /g, ' ');
@@ -90,10 +89,13 @@ test('register → login → order → settlement → updated balance', async ({
 
   // A new account has no money: ordering is blocked.
   await page.getByRole('button', { name: 'Abrir outro gráfico' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: /^BTC\/USD/ }).click();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: /^BTC\/USD/ })
+    .click();
   await expect(page.getByRole('tab', { name: /BTC\/USD/, selected: true })).toBeVisible();
   await expect(page.getByTestId('block-reason')).toHaveText('Saldo insuficiente para este valor.', { timeout: 30_000 });
-  await expect(page.getByRole('button', { name: /Comprar/ })).toBeDisabled();
+  await expect(page.getByRole('button', { name: /Acima/ })).toBeDisabled();
 
   // Credit, then reload: the balance comes from the API.
   await credit(email, CREDIT_CENTS);
@@ -101,13 +103,14 @@ test('register → login → order → settlement → updated balance', async ({
   await expect.poll(() => balanceText(page)).toBe(brl(CREDIT_CENTS));
 
   // Place a 1-minute US$ 10 call once the live price is in.
-  await page.getByRole('button', { name: '$ 10', exact: true }).click();
-  // The expiry list starts at 30 s; one "+" moves it to 1 min.
-  await page.getByRole('button', { name: 'Aumentar tempo' }).click();
-  await expect(page.locator('output').first()).toHaveText('1min');
+  await page.getByLabel('Invest').fill('10');
+  // Expiry options are 1, 5, 15 and 30 minutes; the first one is picked.
+  await expect(page.locator('output').first()).toHaveText('1 minuto');
   await expect(page.getByTestId('block-reason')).toHaveCount(0, { timeout: 30_000 });
-  await page.getByRole('button', { name: /Comprar/ }).click();
+  await page.getByRole('button', { name: /Acima/ }).click();
 
+  // Open positions sit under the "Portfólio total" bar.
+  await page.getByRole('button', { name: 'Exibir posições' }).click();
   const openOrder = page.getByTestId('open-order');
   await expect(openOrder).toHaveCount(1);
   await expect(page.getByTestId('order-announcer')).toContainText('aberta em BTC/USDT');
@@ -135,10 +138,9 @@ test('register → login → order → settlement → updated balance', async ({
   await expect.poll(() => balanceText(page)).toBe(brl(finalCents));
 
   // Wallet and history agree.
+  await page.getByRole('button', { name: 'Mais' }).click();
   await page.getByRole('link', { name: 'Carteira' }).click();
-  await expect
-    .poll(async () => ((await page.getByTestId('wallet-balance').textContent()) ?? '').replace(/ /g, ' '))
-    .toBe(brl(finalCents));
+  await expect.poll(async () => ((await page.getByTestId('wallet-balance').textContent()) ?? '').replace(/ /g, ' ')).toBe(brl(finalCents));
   // credit + stake, plus payout or refund unless the order lost.
   await expect(page.getByTestId('ledger-row')).toHaveCount(settled.status === 'lost' ? 2 : 3);
   await page.getByRole('button', { name: 'Histórico' }).click();

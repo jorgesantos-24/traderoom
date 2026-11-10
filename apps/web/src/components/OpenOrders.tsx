@@ -48,7 +48,7 @@ function OpenOrderRow({ order, display, now }: { order: OrderView; display: stri
         aria-valuemax={100}
         aria-valuenow={Math.round(pct * 100)}
       >
-        <div className="h-full bg-brand" style={{ width: `${pct * 100}%` }} />
+        <div className="h-full bg-up" style={{ width: `${pct * 100}%` }} />
       </div>
       <div className="grid grid-cols-3 gap-2 text-xs">
         <div>
@@ -71,20 +71,36 @@ function OpenOrderRow({ order, display, now }: { order: OrderView; display: stri
   );
 }
 
-export function OpenOrders({ open, assets, onRetry }: { open: Loadable<OrderView[]>; assets: readonly AssetView[]; onRetry(): void }) {
+export function OpenOrders({
+  open,
+  assets,
+  onRetry,
+  bare = false,
+}: {
+  open: Loadable<OrderView[]>;
+  assets: readonly AssetView[];
+  onRetry(): void;
+  /** Without the card and title: inside the portfolio bar or the side panel. */
+  bare?: boolean;
+}) {
   const now = useNow(250, serverNow);
   const display = new Map(assets.map((a) => [a.symbol, a.display]));
   const name = (s: string) => display.get(s) ?? s;
   return (
-    <Card className="flex flex-col" aria-labelledby="open-orders-title">
-      <h2 id="open-orders-title" className="border-b border-border px-4 py-3 text-base font-semibold">
-        Ordens abertas
-        {open.status === 'ready' && open.data.length > 0 && <span className="ml-2 text-sm text-muted">({open.data.length})</span>}
-      </h2>
+    <Card
+      className={cx('flex flex-col', bare && 'border-0 bg-transparent shadow-none')}
+      aria-labelledby={bare ? undefined : 'open-orders-title'}
+    >
+      {!bare && (
+        <h2 id="open-orders-title" className="border-b border-border px-4 py-3 text-base font-semibold">
+          Ordens abertas
+          {open.status === 'ready' && open.data.length > 0 && <span className="ml-2 text-sm text-muted">({open.data.length})</span>}
+        </h2>
+      )}
       {open.status === 'loading' && <LoadingState label="Carregando ordens…" />}
       {open.status === 'error' && <ErrorState message={open.message} onRetry={onRetry} />}
       {open.status === 'ready' && open.data.length === 0 && (
-        <EmptyState title="Nenhuma ordem aberta" hint="Escolha valor e duração e clique em Comprar ou Vender." />
+        <EmptyState title="Nenhuma ordem aberta" hint="Escolha o valor e a expiração e clique em ACIMA ou ABAIXO." />
       )}
       {open.status === 'ready' && open.data.length > 0 && (
         <ul>

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+  AreaSeries,
   CandlestickSeries,
   ColorType,
   createChart,
@@ -11,7 +12,7 @@ import {
   type Logical,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import type { Candle, CandleInterval, OrderView } from '@traderoom/shared';
+import { candleExpiry, LATE_ENTRY_MS, type Candle, type CandleInterval, type OrderView } from '@traderoom/shared';
 import { ApiError } from '../lib/api';
 import { cachedCandles, loadCandles } from '../lib/candle-cache';
 import { MOTION_TAU_MS, seedCandle, stepCandle } from '../lib/candle-motion';
@@ -30,17 +31,47 @@ import { IndicatorLegend, IndicatorSettings, IndicatorsButton, IndicatorsDialog 
 import { DrawingLayer } from './DrawingLayer';
 import { OverlayLayer } from './OverlayLayer';
 import { DrawingToolbar } from './DrawingToolbar';
-import { ErrorState, LoadingState } from './ui';
+import { cx, ErrorState, LoadingState } from './ui';
 
 const COLORS = {
-  grid: 'rgba(255,255,255,0.035)',
-  border: '#1b2430',
-  text: '#aab4c0',
-  up: '#22c55e',
-  down: '#f04f4a',
+  grid: 'rgba(255,255,255,0.1)',
+  border: '#242d3c',
+  text: '#c4c6c9',
+  up: '#00b535',
+  down: '#d74a37',
   warn: '#f5a524',
   brand: '#00d8e8',
 };
+
+export type ChartType = 'line' | 'candles';
+const CHART_TYPE_KEY = 'traderoom.chartType';
+/** Each chart opens showing this much history (minutes), as on the Kyden platform. */
+const SPAN_MIN = 180;
+
+function readStored<T extends string | number>(key: string, allowed: readonly T[], fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    const v = (typeof fallback === 'number' ? Number(raw) : raw) as T;
+    return raw !== null && allowed.includes(v) ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function store(key: string, value: string | number): void {
+  try {
+    localStorage.setItem(key, String(value));
+  } catch {
+    // Private mode: kept for this visit only.
+  }
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+/** "00:25": minutes and seconds left, as the Kyden purchase timer shows them. */
+export function purchaseCountdown(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  return `${pad2(Math.floor(total / 60))}:${pad2(total % 60)}`;
+}
 export const CANDLE_LIMIT = 500;
 
 /** Entry line colour: yellow while a late entry waits for its candle, then green (buy) or red (sell). */
@@ -51,6 +82,8 @@ function lineColor(o: OrderView, waiting: boolean): string {
 
 /** Order tags on the chart use the trading terms traders know. */
 const TAG_LABEL = { call: 'Buy', put: 'Sell' } as const;
+
+const toPoint = (c: Candle) => ({ time: (c.t / 1000) as UTCTimestamp, value: c.c });
 
 const toBar = (c: Candle) => ({
   time: (c.t / 1000) as UTCTimestamp,
@@ -68,13 +101,15 @@ interface Props {
   orders: readonly OrderView[];
   /** Recently settled orders (any symbol); this symbol's get a result bubble at their expiry. */
   results: readonly ResultToast[];
-  /** Shown above the drawing tools (the timeframe picker). */
+  /** Shown in the bottom-left tool column (the timeframe picker). */
   toolbarTop?: ReactNode;
+  /** Expiry picked in the order panel: draws the purchase deadline and the expiry line. */
+  durationSec?: number;
 }
 
 type LoadState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready' };
 
-export function PriceChart({ symbol, display, interval, orders, results, toolbarTop }: Props) {
+export function PriceChart({ symbol, display, interval, orders, results, toolbarTop, durationSec = 60 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const drawings = useDrawings(symbol);
@@ -93,6 +128,15 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
   ordersRef.current = orders;
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  /** Line view (default, as on the Kyden platform): close prices with a soft grey fill. */
+  const areaRef = useRef<ISeriesApi<'Area'> | null>(null);
+  const [chartType, setChartType] = useState<ChartType>(() => readStored(CHART_TYPE_KEY, ['line', 'candles'] as const, 'line'));
+  const [drawOpen, setDrawOpen] = useState(false);
+  const durationRef = useRef(durationSec);
+  durationRef.current = durationSec;
+  const deadlineRef = useRef<HTMLDivElement>(null);
+  const deadlineTimeRef = useRef<HTMLSpanElement>(null);
+  const dotRef = useRef<HTMLDivElement>(null);
   /** Real candles (history + live ticks). */
   const candlesRef = useRef<Candle[] | null>(null);
   /** What is drawn for the last candle; eases toward the real one every frame. */
@@ -122,7 +166,7 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
         panes: { separatorColor: COLORS.border, separatorHoverColor: 'rgba(0,216,232,0.35)', enableResize: true },
       },
       grid: {
-        vertLines: { visible: false },
+        vertLines: { color: COLORS.grid },
         horzLines: { color: COLORS.grid },
       },
       rightPriceScale: {
@@ -163,9 +207,23 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
       wickDownColor: COLORS.down,
       // The animated tag below replaces the built-in last-value label.
       lastValueVisible: false,
-      priceLineColor: 'rgba(0,216,232,0.55)',
-      priceLineStyle: LineStyle.Dotted,
+      priceLineColor: 'rgba(255,255,255,0.5)',
+      priceLineStyle: LineStyle.Dashed,
+      visible: false,
     });
+    const area = chart.addSeries(AreaSeries, {
+      priceFormat: { type: 'custom', minMove: 0.01, formatter: (p: number) => formatPrice(p, precisionRef.current ?? pricePrecision(p)) },
+      lineColor: '#ffffff',
+      lineWidth: 1,
+      topColor: 'rgba(255,255,255,0.22)',
+      bottomColor: 'rgba(255,255,255,0.0)',
+      lastValueVisible: false,
+      priceLineColor: 'rgba(255,255,255,0.5)',
+      priceLineStyle: LineStyle.Dashed,
+      crosshairMarkerBackgroundColor: COLORS.up,
+      crosshairMarkerBorderColor: '#ffffff',
+    });
+    areaRef.current = area;
     chartRef.current = chart;
     rendererRef.current = new IndicatorRenderer(chart);
     seriesRef.current = series;
@@ -175,6 +233,7 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      areaRef.current = null;
     };
   }, []);
 
@@ -187,8 +246,12 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
       if (!series) return;
       const candles = list.slice();
       const last = candles.at(-1);
-      if (last) applyPrecision(series, precisionRef, last.c);
+      if (last) {
+        applyPrecision(series, precisionRef, last.c);
+        if (areaRef.current) applyPrecision(areaRef.current, precisionRef, last.c);
+      }
       series.setData(candles.map(toBar));
+      areaRef.current?.setData(candles.map(toPoint));
       rendererRef.current?.setAll(candles, intervalMs(interval), precisionRef.current ?? 2);
       candlesRef.current = candles;
       shownRef.current = last ? { ...last } : null;
@@ -209,6 +272,7 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
       shownRef.current = null;
       setLoad({ status: 'loading' });
       seriesRef.current?.setData([]);
+      areaRef.current?.setData([]);
       rendererRef.current?.setAll([], intervalMs(interval), 2);
       seriesRef.current?.priceScale().applyOptions({ autoScale: true });
     }
@@ -236,7 +300,10 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
     const series = seriesRef.current;
     const candles = candlesRef.current;
     if (!series || !candles || !quote || quote.price === null || quote.stale) return;
-    if (precisionRef.current === null) applyPrecision(series, precisionRef, quote.price);
+    if (precisionRef.current === null) {
+      applyPrecision(series, precisionRef, quote.price);
+      if (areaRef.current) applyPrecision(areaRef.current, precisionRef, quote.price);
+    }
     // Quiet pairs repeat the last trade (and its time) as a heartbeat; never pull the clock back.
     const at = performance.now();
     const clock = feedClockRef.current;
@@ -245,14 +312,19 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
     if (r.kind === 'append') {
       // Close the previous candle at its exact final values before the new one opens.
       const prev = candles.at(-2);
-      if (prev) series.update(toBar(prev));
+      if (prev) {
+        series.update(toBar(prev));
+        areaRef.current?.update(toPoint(prev));
+      }
       shownRef.current = seedCandle(r.candle);
       series.update(toBar(shownRef.current));
+      areaRef.current?.update(toPoint(shownRef.current));
       rendererRef.current?.setAll(candles, intervalMs(interval), precisionRef.current ?? 2);
     } else if (r.kind === 'update') {
       if (!shownRef.current) {
         shownRef.current = { ...r.candle };
         series.update(toBar(r.candle));
+        areaRef.current?.update(toPoint(r.candle));
       }
       rendererRef.current?.updateLast(candles);
     }
@@ -278,6 +350,7 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
       let shown = shownRef.current;
       if (!chart || !series || !candles || !real || !shown) {
         hide(tagRef.current);
+        hide(deadlineRef.current);
         for (const el of orderTagsRef.current?.children ?? []) hide(el as HTMLElement);
         for (const el of bubblesRef.current?.children ?? []) hide(el as HTMLElement);
         return;
@@ -288,26 +361,54 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
         shownRef.current = next;
         shown = next;
         series.update(toBar(next));
+        areaRef.current?.update(toPoint(next));
       }
 
       const y = series.priceToCoordinate(shown.c);
       const plotWidth = chart.timeScale().width();
       const tag = tagRef.current;
       if (tag && y !== null) {
-        const feed = feedClockRef.current;
-        const exchangeNow = feed ? feed.ts + (now - feed.at) : serverClock.serverNow();
-        const candleLeftMs = Math.max(0, real.t + stepRef.current - exchangeNow);
-        const text = `${formatPrice(shown.c, precision)}|${formatCountdown(candleLeftMs)}`;
-        if (text !== lastTagText) {
-          lastTagText = text;
-          const [p, t] = text.split('|');
-          if (tagPriceRef.current) tagPriceRef.current.textContent = p ?? '';
-          if (tagTimeRef.current) tagTimeRef.current.textContent = t ?? '';
+        // "9.58" plain, the last digits bigger and green/red with the candle, as on the Kyden tag.
+        const text = formatPrice(shown.c, precision);
+        const cut = Math.max(0, text.length - Math.min(4, precision));
+        const key = `${text}|${shown.c >= shown.o ? 1 : 0}`;
+        if (key !== lastTagText) {
+          lastTagText = key;
+          if (tagPriceRef.current) tagPriceRef.current.textContent = text.slice(0, cut);
+          if (tagTimeRef.current) {
+            tagTimeRef.current.textContent = text.slice(cut);
+            tagTimeRef.current.style.color = shown.c >= shown.o ? COLORS.up : COLORS.down;
+          }
         }
         tag.style.visibility = 'visible';
-        tag.style.transform = `translate(${plotWidth}px, ${Math.round(y)}px) translateY(-50%)`;
-        tag.style.background = shown.c >= shown.o ? COLORS.up : COLORS.down;
-      } else hide(tag);
+        tag.style.transform = `translate(${plotWidth - tag.offsetWidth - 4}px, ${Math.round(y)}px) translateY(-50%)`;
+        // Small blinking dot on the current price, on the last candle (or the line's end).
+        const dot = dotRef.current;
+        const lx = chart.timeScale().logicalToCoordinate((candles.length - 1) as Logical);
+        if (dot && lx !== null) {
+          dot.style.visibility = 'visible';
+          dot.style.transform = `translate(${Math.round(lx)}px, ${Math.round(y)}px)`;
+        } else hide(dot);
+      } else {
+        hide(tag);
+        hide(dotRef.current);
+      }
+
+      // "HORA DE COMPRA 00:25": time left to enter the current candle for the picked duration.
+      const deadlineEl = deadlineRef.current;
+      if (deadlineEl) {
+        const serverNow = serverClock.serverNow();
+        const { closesAt } = candleExpiry(serverNow, durationRef.current);
+        const deadline = closesAt - LATE_ENTRY_MS;
+        const lastIndex = candles.length - 1;
+        const dx = logicalX(chart, lastIndex + (deadline - real.t) / stepRef.current);
+        if (dx !== null && dx >= 0 && dx <= plotWidth) {
+          deadlineEl.style.visibility = 'visible';
+          deadlineEl.style.transform = `translateX(${Math.round(dx)}px)`;
+          const t = purchaseCountdown(deadline - serverNow);
+          if (deadlineTimeRef.current && deadlineTimeRef.current.textContent !== t) deadlineTimeRef.current.textContent = t;
+        } else hide(deadlineEl);
+      }
 
       // Order tags on the right edge, on each entry price line, coloured by live state.
       const tagsBox = orderTagsRef.current;
@@ -391,6 +492,43 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
     };
   }, [orders]);
 
+  // Line or candles: both series always hold the same data; only one is shown.
+  useEffect(() => {
+    seriesRef.current?.applyOptions({ visible: chartType === 'candles' });
+    areaRef.current?.applyOptions({ visible: chartType === 'line' });
+  }, [chartType]);
+  const toggleChartType = useCallback(() => {
+    setChartType((t) => {
+      const next = t === 'line' ? 'candles' : 'line';
+      store(CHART_TYPE_KEY, next);
+      return next;
+    });
+  }, []);
+
+  // Empty space right of the last price (about 40% of the view, as on the Kyden platform),
+  // never less than what the expiry line of the picked duration needs.
+  const applySpan = useCallback(
+    (min: number) => {
+      const chart = chartRef.current;
+      const n = candlesRef.current?.length ?? 0;
+      if (!chart || n === 0) return;
+      const step = intervalMs(interval);
+      const bars = Math.max(10, Math.round((min * 60_000) / step));
+      const right = Math.max(Math.round(bars * 0.66), Math.ceil((durationRef.current * 2000) / step) + 4);
+      chart.timeScale().applyOptions({ rightOffset: right });
+      chart.timeScale().setVisibleLogicalRange({ from: (n - 1 - bars) as Logical, to: (n - 1 + right) as Logical });
+    },
+    [interval],
+  );
+  useEffect(() => {
+    if (load.status === 'ready') applySpan(SPAN_MIN);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [durationSec]);
+  // Each asset/timeframe opens at the default zoom once its history is in.
+  useEffect(() => {
+    if (load.status === 'ready') applySpan(SPAN_MIN);
+  }, [load.status, symbol, interval, applySpan]);
+
   // Indicator series follow the user's list (rebuilt only when it changes).
   useEffect(() => {
     rendererRef.current?.sync(indicators.list);
@@ -398,37 +536,86 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
 
   const bubbles = useMemo(() => resultBubbles(results, symbol), [results, symbol]);
 
+  const toolBtn =
+    'flex size-[34px] items-center justify-center rounded-[3px] border border-[#3a4049] bg-[#12171e]/80 text-[13px] font-bold text-[#d5d7da] hover:border-[#5a616b] hover:text-white';
   return (
     <div className="flex h-full min-h-[220px] lg:min-h-[320px]">
-      <div className="flex w-10 shrink-0 flex-col items-center gap-1 border-r border-border pt-2 sm:w-12">
-        {toolbarTop}
-        <IndicatorsButton onClick={() => setPickerOpen(true)} />
-        {/* Drawing needs a precise pointer and room; phones get the chart instead. */}
-        <div className="hidden flex-col items-center gap-1 sm:flex">
-          <div className="h-px w-6 bg-border" />
-          <DrawingToolbar
-            state={drawings}
-            onClearAll={() => {
-              drawings.commit([]);
-              drawings.select(null);
-            }}
-          />
-        </div>
-      </div>
       <div ref={hostRef} className="chart-map relative min-w-0 flex-1 overflow-hidden">
         <div
           ref={containerRef}
           className="absolute inset-0"
           role="img"
-          aria-label={`Gráfico de velas de ${display}, intervalo ${interval}`}
+          aria-label={`Gráfico ${chartType === 'line' ? 'de linha' : 'de velas'} de ${display}, intervalo ${interval}`}
         />
+        {/* Bottom-left tools, as on the Kyden platform: chart type, interval, indicators, drawing. */}
+        <div className="absolute bottom-[34px] left-[10px] z-30 flex flex-col gap-[8px]">
+          <button
+            type="button"
+            className={toolBtn}
+            aria-label={chartType === 'line' ? 'Mudar para velas' : 'Mudar para linha'}
+            title={chartType === 'line' ? 'Velas' : 'Linha'}
+            onClick={() => toggleChartType()}
+          >
+            {chartType === 'line' ? (
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 17l5-6 4 3 5-8 4 4" />
+                <path d="M3 21h18" opacity="0.5" />
+              </svg>
+            ) : (
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="size-[18px]" fill="currentColor">
+                <path d="M6 3h1.5v4H9v9H7.5v5H6v-5H4.5V7H6V3zm9 3h1.5v3H18v8h-1.5v4H15v-4h-1.5V9H15V6z" />
+              </svg>
+            )}
+          </button>
+          {toolbarTop}
+          <IndicatorsButton onClick={() => setPickerOpen(true)} />
+          <div className="relative hidden sm:block">
+            <button
+              type="button"
+              className={cx(toolBtn, drawOpen && 'border-[#5a616b] text-white')}
+              aria-label="Ferramentas de desenho"
+              aria-expanded={drawOpen}
+              title="Desenhar"
+              onClick={() => setDrawOpen((v) => !v)}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="size-[17px]" fill="currentColor">
+                <path d="M15.6 3.6l4.8 4.8L9 19.8 3 21l1.2-6L15.6 3.6zM4 22h16v-1.6H4z" />
+              </svg>
+            </button>
+            {drawOpen && (
+              <div className="absolute bottom-0 left-full ml-2 rounded-[3px] border border-[#3a4049] bg-[#12171e] px-1">
+                <DrawingToolbar
+                  state={drawings}
+                  onClearAll={() => {
+                    drawings.commit([]);
+                    drawings.select(null);
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
         <div ref={overlayRef} className="pointer-events-none absolute inset-0 z-10" aria-hidden="true">
+          <div ref={dotRef} className="invisible absolute top-0 left-0">
+            <span className="kd-dot-ring absolute -top-[5px] -left-[5px] size-[10px] rounded-full bg-white" />
+            <span className="kd-dot absolute -top-[3px] -left-[3px] size-[6px] rounded-full bg-white shadow-[0_0_6px_rgb(255_255_255/0.8)]" />
+          </div>
+          <div ref={deadlineRef} className="invisible absolute top-0 bottom-[28px] left-0 w-0">
+            <div className="absolute top-[14px] right-[6px] flex items-center gap-1.5 whitespace-nowrap">
+              <span className="text-right text-[9.5px] leading-[1.15] font-medium text-[#d5d7da] uppercase">
+                Hora de
+                <br />
+                compra
+              </span>
+              <span ref={deadlineTimeRef} className="tabular text-[22px] leading-none font-normal text-white" />
+            </div>
+          </div>
           <div
             ref={tagRef}
-            className="invisible absolute top-0 left-0 flex flex-col items-start rounded-r-md px-2 py-0.5 leading-tight text-bg shadow-lg"
+            className="invisible absolute top-0 left-0 flex h-[26px] items-center bg-[#cfd0d2] pr-2 pl-3.5 leading-none text-[#3b4048] [clip-path:polygon(9px_0,100%_0,100%_100%,9px_100%,0_50%)]"
           >
-            <span ref={tagPriceRef} className="tabular text-xs font-bold" />
-            <span ref={tagTimeRef} className="tabular text-[10px] font-semibold opacity-80" />
+            <span ref={tagPriceRef} className="tabular text-[12px]" />
+            <span ref={tagTimeRef} className="tabular text-[15px] font-bold" />
           </div>
           <div ref={orderTagsRef} data-testid="order-tags">
             {orders.map((o) => (
@@ -512,7 +699,7 @@ function logicalX(chart: IChartApi, logical: number): number | null {
   return a + (b - a) * frac;
 }
 
-function applyPrecision(series: ISeriesApi<'Candlestick'>, ref: { current: number | null }, price: number): void {
+function applyPrecision(series: ISeriesApi<'Candlestick'> | ISeriesApi<'Area'>, ref: { current: number | null }, price: number): void {
   const precision = pricePrecision(price);
   ref.current = precision;
   series.applyOptions({

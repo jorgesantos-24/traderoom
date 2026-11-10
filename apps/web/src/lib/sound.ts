@@ -38,8 +38,31 @@ interface Note {
   type?: OscillatorType;
 }
 
+const MUTE_KEY = 'traderoom.muted';
+let muted = (() => {
+  try {
+    return localStorage.getItem(MUTE_KEY) === '1';
+  } catch {
+    return false;
+  }
+})();
+
+export function isSoundMuted(): boolean {
+  return muted;
+}
+
+/** Footer speaker button: turns every sound off or back on; remembered in this browser. */
+export function setSoundMuted(value: boolean): void {
+  muted = value;
+  try {
+    localStorage.setItem(MUTE_KEY, value ? '1' : '0');
+  } catch {
+    // Private mode: only for this visit.
+  }
+}
+
 function play(notes: readonly Note[]): void {
-  if (!ctx) return;
+  if (!ctx || muted) return;
   try {
     const c = ctx;
     const start = c.currentTime + 0.01;

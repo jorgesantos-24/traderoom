@@ -21,3 +21,6 @@ secrets/
 
 # Local review dumps (git status/diff snapshots)
 .review/
+
+# Binance candles cached by apps/web/scripts/compare-patterns.ts (downloaded again when missing)
+apps/web/scripts/tv-patterns/candles/

@@ -8,9 +8,10 @@ import { CANDLE_LIMIT, PriceChart } from '../components/PriceChart';
 import { TimeframePicker } from '../components/TimeframePicker';
 import { prefetchCandles } from '../lib/candle-cache';
 import { ResultToasts } from '../components/ResultPopup';
-import { Card, EmptyState, ErrorState, LoadingState } from '../components/ui';
+import { EmptyState, ErrorState, LoadingState } from '../components/ui';
 import { useFeedStatus, useQuote, useSessionData } from '../lib/session-data';
 import { ASSET_PREF_KEY, OPEN_ASSET_EVENT } from '../lib/open-asset';
+import { cx } from '../components/ui';
 import { useTradeOrders } from '../lib/use-trade-orders';
 
 const TIMEFRAMES: readonly CandleInterval[] = ['1m', '5m', '15m', '1h'];
@@ -135,48 +136,86 @@ function Traderoom({ assets, limits }: { assets: AssetView[]; limits: OrderLimit
     [orders.open, asset.symbol],
   );
 
+  const [durationSec, setDurationSec] = useState(limits.durationsSec[0] ?? 60);
+  const [positionsOpen, setPositionsOpen] = useState(false);
+  const openCount = orders.open.status === 'ready' ? orders.open.data.length : 0;
+
   const banner =
     feedStatus === 'reconnecting' || feedStatus === 'unauthorized'
       ? 'Conexão com as cotações perdida. Reconectando… Novas ordens estão bloqueadas.'
       : null;
+
+  const positions = <OpenOrders open={orders.open} assets={assets} onRetry={orders.reload} bare />;
 
   return (
     <AppShell
       fullBleed
       banner={<StaleBanner message={banner} />}
       headerExtra={<AssetTabs assets={assets} tabs={tabs} active={asset.symbol} onSelect={setSymbol} onClose={closeTab} onOpen={openTab} />}
+      portfolio={positions}
     >
       <h1 className="sr-only">Negociar</h1>
       <div aria-live="polite" aria-atomic="true" className="sr-only" data-testid="order-announcer">
         {orders.announcement}
       </div>
       <ResultToasts results={orders.results} onDismiss={orders.dismissResult} />
-      <div className="grid gap-2 lg:h-full lg:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="flex min-h-0 min-w-0 flex-col">
-          <Card className="flex flex-1 flex-col overflow-hidden">
-            <div className="h-[calc(100svh-400px)] min-h-[220px] lg:h-auto lg:min-h-[320px] lg:flex-1">
-              <PriceChart
-                symbol={asset.symbol}
-                display={asset.display}
-                interval={interval}
-                orders={chartOrders}
-                results={orders.results}
-                toolbarTop={<TimeframePicker value={interval} options={TIMEFRAMES} onChange={setTimeframe} />}
-              />
-            </div>
-          </Card>
+      <div className="flex flex-col lg:h-full">
+        <div className="flex min-h-0 flex-col gap-2 lg:flex-1 lg:flex-row lg:gap-0">
+          <div className="h-[calc(100svh-360px)] min-h-[240px] min-w-0 lg:h-auto lg:flex-1">
+            <PriceChart
+              symbol={asset.symbol}
+              display={asset.display}
+              interval={interval}
+              orders={chartOrders}
+              results={orders.results}
+              durationSec={durationSec}
+              toolbarTop={<TimeframePicker value={interval} options={TIMEFRAMES} onChange={setTimeframe} />}
+            />
+          </div>
+          <div className="shrink-0 px-2 pb-2 lg:w-[128px] lg:pt-[9px] lg:pr-[10px] lg:pb-[12px] lg:pl-[10px]">
+            <OrderPanel
+              account={account}
+              asset={asset}
+              limits={limits}
+              quote={quote}
+              feedStatus={feedStatus}
+              balanceCents={wallet.status === 'ready' ? wallet.data.balanceCents : null}
+              onPlaced={orders.added}
+              durationSec={durationSec}
+              onDurationChange={setDurationSec}
+            />
+          </div>
         </div>
-        <div className="flex min-h-0 flex-col gap-2 lg:overflow-y-auto">
-          <OrderPanel
-            account={account}
-            asset={asset}
-            limits={limits}
-            quote={quote}
-            feedStatus={feedStatus}
-            balanceCents={wallet.status === 'ready' ? wallet.data.balanceCents : null}
-            onPlaced={orders.added}
-          />
-          <OpenOrders open={orders.open} assets={assets} onRetry={orders.reload} />
+        {/* "Portfólio total" bar: opens the open positions above it. */}
+        {positionsOpen && (
+          <div id="positions" className="max-h-[240px] overflow-y-auto border-t border-border bg-bg">
+            {positions}
+          </div>
+        )}
+        <div className="flex h-[30px] shrink-0 items-center justify-between border-b border-border bg-field px-6 text-[12px]">
+          <span className="font-bold text-text">
+            Portfólio total
+            {openCount > 0 && <span className="ml-2 font-normal text-muted">({openCount})</span>}
+          </span>
+          <button
+            type="button"
+            aria-expanded={positionsOpen}
+            aria-controls="positions"
+            onClick={() => setPositionsOpen((v) => !v)}
+            className="flex items-center gap-2 text-[#91959c] hover:text-text"
+          >
+            {positionsOpen ? 'Ocultar posições' : 'Exibir posições'}
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              className={cx('size-4 transition-transform', positionsOpen && 'rotate-180')}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M5 15l7-7 7 7" />
+            </svg>
+          </button>
         </div>
       </div>
     </AppShell>

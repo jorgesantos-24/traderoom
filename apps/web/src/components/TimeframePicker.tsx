@@ -39,18 +39,18 @@ export function TimeframePicker({
         aria-expanded={open}
         aria-label={`Intervalo do gráfico: ${value}`}
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-0.5 rounded-control px-1.5 py-1 text-sm font-semibold text-text hover:bg-field"
+        className={cx(
+          'flex size-[34px] items-center justify-center rounded-[3px] border bg-[#12171e]/80 text-[13px] font-bold hover:border-[#5a616b] hover:text-white',
+          open ? 'border-[#5a616b] text-white' : 'border-[#3a4049] text-[#d5d7da]',
+        )}
       >
         {value}
-        <svg aria-hidden="true" viewBox="0 0 24 24" className={cx('size-3.5 text-muted transition-transform', open && 'rotate-180')}>
-          <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
       </button>
       {open && (
         <div
           role="menu"
           aria-label="Intervalo do gráfico"
-          className="absolute top-0 left-full z-40 ml-2 flex min-w-[64px] flex-col rounded-control border border-border bg-field p-1 shadow-xl"
+          className="absolute bottom-0 left-full z-40 ml-2 flex min-w-[64px] flex-col rounded-control border border-border bg-field p-1 shadow-xl"
         >
           {options.map((tf) => (
             <button
@@ -64,7 +64,7 @@ export function TimeframePicker({
               }}
               className={cx(
                 'rounded px-2.5 py-1.5 text-left text-xs font-semibold',
-                tf === value ? 'bg-brand/10 text-brand' : 'text-muted hover:bg-surface hover:text-text',
+                tf === value ? 'bg-up/15 text-up' : 'text-muted hover:bg-surface hover:text-text',
               )}
             >
               {tf}

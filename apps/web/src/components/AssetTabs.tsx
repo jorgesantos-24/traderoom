@@ -17,8 +17,8 @@ interface Props {
   onOpen(symbol: string): void;
 }
 
-const CATEGORY: Record<AssetCategory, string> = { crypto: 'Cripto', stocks: 'Ações', synthetic: 'Sintéticos' };
-const TAB_LABEL: Record<AssetCategory, string> = { crypto: 'Cripto', stocks: 'Ação', synthetic: 'Sintético' };
+const CATEGORY: Record<AssetCategory, string> = { crypto: 'Cripto', forex: 'Moedas', stocks: 'Ações', synthetic: 'Sintéticos' };
+const TAB_LABEL: Record<AssetCategory, string> = { crypto: 'Cripto', forex: 'Moeda', stocks: 'Ação', synthetic: 'Sintético' };
 
 /** Header tabs with the charts the user has open, plus a "+" to open another one. */
 export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: Props) {
@@ -28,12 +28,28 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
   const bySymbol = new Map(assets.map((a) => [a.symbol, a]));
   const open = tabs.map((s) => bySymbol.get(s)).filter((a): a is AssetView => a !== undefined);
 
+  const squareBtn =
+    'flex size-9 shrink-0 items-center justify-center rounded-[4px] border border-[#232c39] text-[#888b8f] transition-colors hover:border-[#3a4352] hover:text-text sm:size-[46px]';
   return (
     <>
+      <button
+        type="button"
+        aria-label="Todos os ativos"
+        title="Todos os ativos"
+        onClick={() => setPicking(true)}
+        className={cx(squareBtn, 'hidden md:flex')}
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24" className="size-[26px]" fill="currentColor">
+          <rect x="2" y="2" width="9" height="9" rx="1.6" />
+          <rect x="13" y="2" width="9" height="9" rx="1.6" />
+          <rect x="2" y="13" width="9" height="9" rx="1.6" />
+          <rect x="13" y="13" width="9" height="9" rx="1.6" />
+        </svg>
+      </button>
       <div
         role="tablist"
         aria-label="Gráficos abertos"
-        className="scrollbar-none flex min-w-0 flex-1 items-center gap-1 overflow-x-auto md:flex-initial"
+        className="scrollbar-none flex min-w-0 flex-1 items-center gap-1 self-stretch overflow-x-auto md:flex-initial md:items-end md:pb-[13px]"
       >
         {open.map((a) => {
           const selected = a.symbol === active;
@@ -41,10 +57,8 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
             <div
               key={a.symbol}
               className={cx(
-                'group flex shrink-0 items-center rounded-control border transition-colors',
-                selected
-                  ? 'border-brand/50 bg-[linear-gradient(180deg,rgb(0_216_232/0.16),rgb(0_216_232/0.04))] shadow-[0_6px_20px_-10px_rgb(0_216_232/0.7)]'
-                  : 'border-border bg-field/70 hover:border-muted/70 hover:bg-field',
+                'group relative flex h-[44px] shrink-0 items-center rounded-t-[3px] border-b-2 transition-colors md:h-[48px] md:w-[131px]',
+                selected ? 'border-up bg-[#232c39]' : 'border-transparent hover:bg-[#1a2029]',
               )}
             >
               <button
@@ -52,19 +66,20 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
                 role="tab"
                 aria-selected={selected}
                 onClick={() => onSelect(a.symbol)}
-                className="flex items-center gap-2 py-1 pr-1 pl-2 leading-tight"
+                className="flex h-full min-w-0 flex-1 items-center gap-2 pr-2 pl-2.5 text-left leading-tight"
               >
-                <CoinIcon symbol={a.symbol} className="size-6" />
-                <span className="flex flex-col items-start">
-                  <span className={cx('text-sm font-semibold', selected ? 'text-text' : 'text-muted group-hover:text-text')}>
+                <CoinIcon symbol={a.symbol} className="size-[26px]" />
+                <span className="flex min-w-0 flex-col items-start">
+                  <span
+                    className={cx(
+                      'max-w-[78px] truncate text-[13px] font-bold',
+                      selected ? 'text-text' : 'text-[#c3c6ca] group-hover:text-text',
+                    )}
+                  >
                     {a.display}
+                    {a.kind === 'otc' && a.category !== 'synthetic' && !/OTC/i.test(a.display) ? ' (OTC)' : ''}
                   </span>
-                  <span className="text-[11px] font-semibold">
-                    <span className="text-up">{a.payoutPct}%</span>
-                    <span className="ml-1.5 text-muted uppercase">
-                      {a.kind === 'otc' && a.category !== 'synthetic' ? 'OTC' : TAB_LABEL[a.category]}
-                    </span>
-                  </span>
+                  <span className="text-[11px] text-muted">{TAB_LABEL[a.category] && 'Binária'}</span>
                 </span>
               </button>
               {open.length > 1 && (
@@ -72,7 +87,7 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
                   type="button"
                   aria-label={`Fechar ${a.display}`}
                   onClick={() => onClose(a.symbol)}
-                  className="mr-1 rounded px-1.5 py-1 text-xs text-muted hover:bg-field hover:text-text"
+                  className="absolute top-0.5 right-0.5 hidden rounded px-1 text-[10px] text-muted group-focus-within:block group-hover:block hover:text-text"
                 >
                   ✕
                 </button>
@@ -86,9 +101,11 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
         aria-label="Abrir outro gráfico"
         title="Abrir outro gráfico"
         onClick={() => setPicking(true)}
-        className="flex size-9 shrink-0 items-center sm:size-10 justify-center rounded-control border border-border bg-field text-xl font-semibold text-muted hover:border-brand hover:text-brand"
+        className={cx(squareBtn, 'md:ml-3')}
       >
-        +
+        <svg aria-hidden="true" viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="3">
+          <path d="M12 4v16M4 12h16" />
+        </svg>
       </button>
 
       <Dialog open={picking} title="Escolha um ativo" onClose={() => setPicking(false)}>
@@ -108,7 +125,9 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
         <p className="text-xs text-muted">
           {category === 'stocks'
             ? 'Ações OTC: preço gerado pela plataforma, disponível 24 horas, inclusive fins de semana. Não é a cotação da bolsa.'
-            : category === 'synthetic'
+            : category === 'forex'
+              ? 'Pares de moedas OTC: preço gerado pela plataforma, disponível 24 horas, inclusive fins de semana. Não é a cotação do mercado de câmbio.'
+              : category === 'synthetic'
               ? 'Índices sintéticos: preço gerado pela plataforma, 24 horas. Bull Market tende a subir e Bear Market a cair no longo prazo; no curto prazo o movimento é aleatório.'
               : 'Ativos com a etiqueta OTC têm preço gerado pela plataforma e funcionam 24 horas; os demais seguem a Binance.'}
         </p>

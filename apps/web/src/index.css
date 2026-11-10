@@ -1,24 +1,26 @@
 @import 'tailwindcss';
 @import '@fontsource-variable/inter';
+@import '@fontsource-variable/roboto';
 
 @theme {
-  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
-  /* Deep navy-black page; panels sit one step lighter so the layout reads in layers. */
-  --color-bg: #05080c;
-  --color-surface: #0a0f15;
-  /* Inputs, tabs and other inset controls on the panels. */
-  --color-field: #111821;
-  --color-border: #1b2430;
-  --color-text: #e8edf3;
-  --color-muted: #7f8a98;
+  /* Roboto, like the Kyden platform; Inter stays as the fallback. */
+  --font-sans: 'Roboto Variable', 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  /* Kyden platform palette (sampled from trade.kydeninvest.com). */
+  --color-bg: #12171e;
+  --color-surface: #161c24;
+  /* Inputs, tabs, the portfolio bar and other filled controls. */
+  --color-field: #232c39;
+  --color-border: #242d3c;
+  --color-text: #f5f6f7;
+  --color-muted: #91959c;
   --color-brand: #00d8e8;
   --color-brand-2: #1a8cff;
-  --color-up: #22c55e;
-  --color-down: #f04f4a;
+  --color-up: #00b535;
+  --color-down: #d74a37;
   --color-warn: #f5a524;
-  --radius-card: 14px;
-  --radius-control: 10px;
-  --shadow-panel: 0 1px 0 0 rgb(255 255 255 / 0.03) inset, 0 12px 32px -18px rgb(0 0 0 / 0.8);
+  --radius-card: 6px;
+  --radius-control: 4px;
+  --shadow-panel: 0 12px 32px -18px rgb(0 0 0 / 0.8);
   --shadow-glow: 0 8px 28px -10px rgb(0 216 232 / 0.55);
 }
 
@@ -124,17 +126,46 @@ input[type='number']::-webkit-outer-spin-button {
   margin: 0;
 }
 
-/* Chart backdrop: black with a faint dotted world map behind the candles. */
+/* Chart backdrop: flat dark with the Kyden logo as a faint grey watermark in the middle. */
 .chart-map {
-  background-color: var(--color-surface);
+  background-color: var(--color-bg);
 }
 .chart-map::before {
   content: '';
   position: absolute;
-  inset: 6% 70px 10% 2%;
-  background: url('./assets/world-dots.svg') center / contain no-repeat;
-  opacity: 0.14;
+  inset: 36% 32% 40% 26%;
+  background: url('/brand/kyden-logo.png') center / contain no-repeat;
+  filter: grayscale(1) brightness(1.6);
+  opacity: 0.06;
   pointer-events: none;
+}
+
+/* Sidebar: darker at the top, a step lighter at the bottom (as on the Kyden platform). */
+.kd-sidebar {
+  background: linear-gradient(180deg, #12171e, #191f29);
+}
+
+/* Current price dot: blinks, with a ring that pulses out. */
+.kd-dot {
+  animation: kd-blink 1s ease-in-out infinite;
+}
+.kd-dot-ring {
+  animation: kd-ring 1.6s ease-out infinite;
+}
+@keyframes kd-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+@keyframes kd-ring {
+  from {
+    transform: scale(0.6);
+    opacity: 0.6;
+  }
+  to {
+    transform: scale(2.4);
+    opacity: 0;
+  }
 }
 
 /* Open orders on the chart: a tag at the right edge on the entry price line, "COMPRA US$ 20,00 | 0:42".

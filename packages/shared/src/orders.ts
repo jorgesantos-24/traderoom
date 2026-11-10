@@ -155,7 +155,7 @@ export function creditCents(status: 'won' | 'lost' | 'void', stakeCents: number,
 
 /** One tradeable asset as served by `GET /api/assets`. */
 export type AssetKind = 'market' | 'otc';
-export const ASSET_CATEGORIES = ['crypto', 'stocks', 'synthetic'] as const;
+export const ASSET_CATEGORIES = ['crypto', 'stocks', 'synthetic', 'forex'] as const;
 export type AssetCategory = (typeof ASSET_CATEGORIES)[number];
 
 export interface AssetView {
