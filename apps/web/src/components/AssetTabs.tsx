@@ -17,7 +17,7 @@ interface Props {
   onOpen(symbol: string): void;
 }
 
-const CATEGORY: Record<AssetCategory, string> = { crypto: 'Cripto', forex: 'Moedas', stocks: 'Ações', synthetic: 'Sintéticos' };
+const CATEGORY: Record<AssetCategory, string> = { crypto: 'Cripto', forex: 'Forex', stocks: 'Ações', synthetic: 'Sintéticos' };
 
 /** Header tabs with the charts the user has open, plus a "+" to open another one. */
 export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: Props) {
@@ -124,7 +124,7 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
           {category === 'stocks'
             ? 'Ações OTC: preço gerado pela plataforma, disponível 24 horas, inclusive fins de semana. Não é a cotação da bolsa.'
             : category === 'forex'
-              ? 'Pares de moedas OTC: preço gerado pela plataforma, disponível 24 horas, inclusive fins de semana. Não é a cotação do mercado de câmbio.'
+              ? 'Pares forex OTC: preço gerado pela plataforma, disponível 24 horas, inclusive fins de semana. Não é a cotação do mercado de câmbio.'
               : category === 'synthetic'
               ? 'Índices sintéticos: preço gerado pela plataforma, 24 horas. Bull Market tende a subir e Bear Market a cair no longo prazo; no curto prazo o movimento é aleatório.'
               : 'Ativos com a etiqueta OTC têm preço gerado pela plataforma e funcionam 24 horas; os demais seguem a Binance.'}
