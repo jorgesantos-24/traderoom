@@ -63,7 +63,7 @@ export interface PaymentServiceDeps {
   withdrawFeePct?: number;
   /** Broker fee on an instant withdrawal (sent to the gateway with no review). Unset/null = instant withdrawals off. */
   instantWithdrawFeePct?: number | null;
-  /** Throws unless the user passed identity verification (KYC). Omitted = no check. */
+  /** Throws unless the user passed identity verification (KYC). Checked on withdrawals only. Omitted = no check. */
   requireKyc?: (userId: string) => Promise<void>;
 }
 
@@ -322,7 +322,7 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
 
     async createDeposit(userId, input) {
       if (!gateway) throw disabled();
-      await deps.requireKyc?.(userId);
+      // Deposits need no KYC; only withdrawals do.
       if (input.amountCents < limits.depositMinCents || input.amountCents > limits.depositMaxCents) {
         throw new AppError(
           400,

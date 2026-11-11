@@ -92,7 +92,7 @@ export function VerificationPage() {
       <div className="mx-auto max-w-3xl">
         <h1 className="mb-1 text-xl font-semibold">Verificação de conta</h1>
         <p className="mb-4 text-sm text-muted">
-          Para depositar e sacar na conta real, confirme sua identidade. A análise é feita pela nossa equipe.
+          Para sacar da conta real, confirme sua identidade. A análise é feita pela nossa equipe.
         </p>
         {loadError && <ErrorState message={loadError} onRetry={load} />}
         {!state && !loadError && <LoadingState label="Carregando…" />}
@@ -136,7 +136,7 @@ function Approved({ state }: { state: KycStateView }) {
     <StatusCard tone="up" title="Conta verificada">
       <p className="text-sm text-muted">
         {state.submission?.reviewedAt ? `Aprovada em ${formatDateTime(state.submission.reviewedAt)}. ` : ''}
-        Depósitos e saques via Pix estão liberados.
+        Saques via Pix estão liberados.
       </p>
       <Link href="/traderoom" className="text-sm font-semibold text-brand hover:underline">
         Voltar para a negociação

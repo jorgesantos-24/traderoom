@@ -263,8 +263,8 @@ export function createKycService(deps: { pool: pg.Pool; now?: () => Date; blobs?
       if (s === 'approved') return;
       const msg =
         s === 'pending'
-          ? 'Sua verificação de identidade está em análise. Depósitos e saques liberam assim que for aprovada.'
-          : 'Verifique sua identidade para depositar e sacar.';
+          ? 'Sua verificação de identidade está em análise. Os saques liberam assim que for aprovada.'
+          : 'Verifique sua identidade para sacar.';
       throw new AppError(403, ErrorCode.KycRequired, msg);
     },
 

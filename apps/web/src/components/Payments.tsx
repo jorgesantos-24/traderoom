@@ -30,17 +30,17 @@ import { Button, cx, Field, FormMessage, LoadingState } from './ui';
 
 const errMsg = (err: unknown, fallback: string) => (err instanceof ApiError ? err.message : fallback);
 
-/** Shown instead of the form until the account is verified. */
+/** Shown instead of the withdrawal form until the account is verified. Deposits need no verification. */
 function KycGate({ info, onClose }: { info: PaymentsInfo; onClose(): void }) {
   const pending = info.kycStatus === 'pending';
   return (
     <div className="flex flex-col gap-4" data-testid="kyc-gate">
       <FormMessage tone="info">
         {pending
-          ? 'Seus documentos estão em análise. Depósitos e saques serão liberados assim que a verificação for aprovada.'
+          ? 'Seus documentos estão em análise. Os saques serão liberados assim que a verificação for aprovada.'
           : info.kycStatus === 'rejected'
-            ? 'Sua verificação foi recusada. Veja o motivo e envie novamente para liberar depósitos e saques.'
-            : 'Para depositar e sacar na conta real, primeiro verifique sua identidade. Leva poucos minutos.'}
+            ? 'Sua verificação foi recusada. Veja o motivo e envie novamente para liberar os saques.'
+            : 'Para sacar da conta real, primeiro verifique sua identidade. Leva poucos minutos.'}
       </FormMessage>
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={onClose}>
@@ -186,8 +186,7 @@ export function DepositDialog({ open, onClose }: { open: boolean; onClose(): voi
         </>
       )}
 
-      {info?.enabled && info.kycStatus !== 'approved' && <KycGate info={info} onClose={onClose} />}
-      {info?.enabled && info.kycStatus === 'approved' && !deposit && (
+      {info?.enabled && !deposit && (
         <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-4" noValidate>
           <div className="flex flex-wrap gap-2">
             {DEPOSIT_PRESETS.map((p) => (
