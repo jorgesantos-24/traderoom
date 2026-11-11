@@ -95,7 +95,7 @@ describe('register', () => {
   });
 
   it.each([
-    ['password with 9 chars', { ...VALID_REGISTER, password: '123456789' }, 'password'],
+    ['empty password', { ...VALID_REGISTER, password: '' }, 'password'],
     ['password over 128 chars', { ...VALID_REGISTER, password: 'x'.repeat(129) }, 'password'],
     ['invalid e-mail', { ...VALID_REGISTER, email: 'not-an-email' }, 'email'],
     ['blank name', { ...VALID_REGISTER, name: '   ' }, 'name'],
@@ -109,7 +109,7 @@ describe('register', () => {
     expect(body.error.message.startsWith(`${field}: `)).toBe(true);
   });
 
-  it('accepts exactly 10 characters and trims e-mail and name', async () => {
+  it('accepts a 1-character password and trims e-mail and name', async () => {
     let seen: unknown;
     const a = await start({
       deps: {
@@ -125,10 +125,10 @@ describe('register', () => {
       method: 'POST',
       url: '/api/auth/register',
       headers: csrfHeaders,
-      payload: { email: '  ana@example.com ', password: '1234567890', name: ' Ana ' },
+      payload: { email: '  ana@example.com ', password: '1', name: ' Ana ' },
     });
     expect(res.statusCode).toBe(201);
-    expect(seen).toEqual({ email: 'ana@example.com', password: '1234567890', name: 'Ana' });
+    expect(seen).toEqual({ email: 'ana@example.com', password: '1', name: 'Ana' });
   });
 });
 

@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-export const PASSWORD_MIN_LENGTH = 10;
 /** Upper bound keeps argon2 work per request bounded. */
 export const PASSWORD_MAX_LENGTH = 128;
 
@@ -15,7 +14,7 @@ const email = z
 
 const password = z
   .string()
-  .min(PASSWORD_MIN_LENGTH, `A senha precisa ter pelo menos ${PASSWORD_MIN_LENGTH} caracteres.`)
+  .min(1, 'Informe uma senha.')
   .max(PASSWORD_MAX_LENGTH, `A senha pode ter no máximo ${PASSWORD_MAX_LENGTH} caracteres.`);
 
 /** Opaque 32-byte token encoded as base64url (43 chars). */
@@ -30,7 +29,6 @@ export type RegisterInput = z.infer<typeof RegisterInput>;
 
 export const LoginInput = z.object({
   email,
-  // Login does not enforce the minimum, so old/short passwords give a normal "invalid credentials".
   password: z.string().min(1).max(PASSWORD_MAX_LENGTH),
 });
 export type LoginInput = z.infer<typeof LoginInput>;

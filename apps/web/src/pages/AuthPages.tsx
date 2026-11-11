@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { ForgotInput, PASSWORD_MIN_LENGTH, RegisterInput, ResetInput, TokenSchema } from '@traderoom/shared';
+import { ForgotInput, RegisterInput, ResetInput, TokenSchema } from '@traderoom/shared';
 import type { z } from 'zod';
 import { Button, Card, Field, FormMessage } from '../components/ui';
 import { api, ApiError } from '../lib/api';
@@ -354,7 +354,6 @@ export function RegisterPage() {
           value={form.password}
           onChange={set('password')}
           error={errors.password}
-          hint={`Pelo menos ${PASSWORD_MIN_LENGTH} caracteres.`}
         />
         <PasswordField
           label="Confirmar senha"
@@ -484,7 +483,6 @@ export function ResetPage() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           error={errors.password}
-          hint={`Pelo menos ${PASSWORD_MIN_LENGTH} caracteres.`}
         />
         <PasswordField
           label="Confirmar nova senha"
