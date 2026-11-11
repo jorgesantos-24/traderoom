@@ -9,7 +9,10 @@ import {
   type AssetCategory,
   type AuditAction,
   type AuditEntryView,
+  type IndicatorAccessView,
   type Page,
+  type PremiumIndicator,
+  PREMIUM_INDICATORS,
 } from '@traderoom/shared';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 import { inTransaction } from '../lib/db.js';
@@ -34,6 +37,12 @@ export interface AdminService {
   listAssets(): Promise<AdminAssetView[]>;
   updateAsset(adminId: string, assetId: number, patch: AdminAssetPatch): Promise<AdminAssetView>;
   listAudit(q: AdminAuditQuery): Promise<Page<AuditEntryView>>;
+  /** Premium indicators this user may see: all of them for admins, the granted ones for others. */
+  allowedIndicators(userId: string, role: 'user' | 'admin'): Promise<PremiumIndicator[]>;
+  listIndicatorAccess(): Promise<IndicatorAccessView[]>;
+  /** Grants by e-mail; granting twice is a no-op that returns the existing row. */
+  grantIndicator(adminId: string, email: string, indicator: PremiumIndicator): Promise<IndicatorAccessView>;
+  revokeIndicator(adminId: string, userId: string, indicator: PremiumIndicator): Promise<void>;
 }
 
 export interface AdminServiceDeps {
@@ -126,6 +135,31 @@ const notFound = (what: string) => new AppError(404, ErrorCode.NotFound, `${what
 async function audit(c: pg.PoolClient, adminId: string, action: AuditAction, payload: Record<string, unknown>): Promise<void> {
   await c.query('insert into admin_audit (admin_id, action, payload) values ($1, $2, $3)', [adminId, action, JSON.stringify(payload)]);
 }
+
+interface AccessRow {
+  user_id: string;
+  email: string;
+  name: string;
+  indicator: PremiumIndicator;
+  granted_at: string;
+  granted_by_email: string | null;
+}
+
+const ACCESS_SELECT = `
+  select x.user_id, u.email::text as email, u.name, x.indicator, ${isoUs('x.granted_at')} as granted_at,
+         g.email::text as granted_by_email
+    from indicator_access x
+    join users u on u.id = x.user_id
+    left join users g on g.id = x.granted_by`;
+
+const toAccess = (r: AccessRow): IndicatorAccessView => ({
+  userId: r.user_id,
+  email: r.email,
+  name: r.name,
+  indicator: r.indicator,
+  grantedAt: r.granted_at,
+  grantedByEmail: r.granted_by_email,
+});
 
 async function userById(db: pg.Pool | pg.PoolClient, id: string): Promise<AdminUserView | null> {
   const { rows } = await db.query<UserRow>(`${USER_SELECT} where u.id = $1`, [id]);
@@ -304,6 +338,50 @@ export function createAdminService(deps: AdminServiceDeps): AdminService {
       });
       deps.onAssetsChanged?.();
       return updated;
+    },
+
+    async allowedIndicators(userId, role) {
+      if (role === 'admin') return [...PREMIUM_INDICATORS];
+      const { rows } = await pool.query<{ indicator: PremiumIndicator }>(
+        'select indicator from indicator_access where user_id = $1 order by indicator',
+        [userId],
+      );
+      return rows.map((r) => r.indicator);
+    },
+
+    async listIndicatorAccess() {
+      const { rows } = await pool.query<AccessRow>(`${ACCESS_SELECT} order by x.indicator, x.granted_at desc`);
+      return rows.map(toAccess);
+    },
+
+    async grantIndicator(adminId, email, indicator) {
+      return inTransaction(pool, async (c) => {
+        const u = await c.query<{ id: string; email: string }>('select id, email::text as email from users where email = $1', [email]);
+        const target = u.rows[0];
+        if (!target) throw new AppError(404, ErrorCode.NotFound, 'Nenhum usuário com este e-mail.');
+        const ins = await c.query(
+          `insert into indicator_access (user_id, indicator, granted_by) values ($1, $2, $3)
+           on conflict (user_id, indicator) do nothing`,
+          [target.id, indicator, adminId],
+        );
+        if ((ins.rowCount ?? 0) > 0) await audit(c, adminId, 'indicator.grant', { userId: target.id, email: target.email, indicator });
+        const { rows } = await c.query<AccessRow>(`${ACCESS_SELECT} where x.user_id = $1 and x.indicator = $2`, [target.id, indicator]);
+        return toAccess(rows[0]!);
+      });
+    },
+
+    async revokeIndicator(adminId, userId, indicator) {
+      await inTransaction(pool, async (c) => {
+        const del = await c.query<{ email: string }>(
+          `delete from indicator_access x using users u
+            where x.user_id = $1 and x.indicator = $2 and u.id = x.user_id
+          returning u.email::text as email`,
+          [userId, indicator],
+        );
+        const row = del.rows[0];
+        if (!row) throw notFound('Acesso');
+        await audit(c, adminId, 'indicator.revoke', { userId, email: row.email, indicator });
+      });
     },
 
     async listAudit(q) {

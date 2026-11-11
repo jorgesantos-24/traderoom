@@ -41,6 +41,7 @@ describe('schema', () => {
       'assets',
       'config',
       'deposits',
+      'indicator_access',
       'kyc_files',
       'kyc_submissions',
       'ledger',

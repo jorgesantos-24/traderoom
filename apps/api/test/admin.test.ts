@@ -66,7 +66,7 @@ async function build(overrides: Partial<AdminService> = {}, metrics = new Regist
 
 const KEY = 'admin-key-0001';
 
-function req(a: FastifyInstance, method: 'GET' | 'POST' | 'PATCH', url: string, payload?: object, sid = FAKE_ADMIN_SID) {
+function req(a: FastifyInstance, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: object, sid = FAKE_ADMIN_SID) {
   return a.inject({
     method,
     url,
@@ -159,6 +159,75 @@ describe('admin routes', () => {
     });
     expect(res.statusCode).toBe(403);
     expect(res.json()).toMatchObject({ error: { code: 'csrf_failed' } });
+    expect(calls).toEqual([]);
+  });
+});
+
+describe('premium indicator access routes', () => {
+  const ACCESS = {
+    userId: TARGET,
+    email: 'bia@example.com',
+    name: 'Bia',
+    indicator: 'smc' as const,
+    grantedAt: '2026-11-11T10:00:00.000000Z',
+    grantedByEmail: 'admin@example.com',
+  };
+  const overrides = (calls: unknown[][]): Partial<AdminService> => ({
+    allowedIndicators: async (...args) => {
+      calls.push(['allowedIndicators', ...args]);
+      return args[1] === 'admin' ? ['smc', 'patterns'] : ['patterns'];
+    },
+    listIndicatorAccess: async () => [ACCESS],
+    grantIndicator: async (...args) => {
+      calls.push(['grantIndicator', ...args]);
+      return { ...ACCESS, indicator: args[2] };
+    },
+    revokeIndicator: async (...args) => {
+      calls.push(['revokeIndicator', ...args]);
+    },
+  });
+
+  it('tells each signed-in user their own access', async () => {
+    const calls: unknown[][] = [];
+    const { app } = await build(overrides(calls));
+    const mine = await req(app, 'GET', '/api/indicators/access', undefined, FAKE_SID);
+    expect(mine.statusCode).toBe(200);
+    expect(mine.json()).toEqual({ indicators: ['patterns'] });
+    expect(mine.headers['cache-control']).toBe('no-store');
+    expect((await req(app, 'GET', '/api/indicators/access')).json()).toEqual({ indicators: ['smc', 'patterns'] });
+    expect(calls).toEqual([
+      ['allowedIndicators', TEST_USER.id, 'user'],
+      ['allowedIndicators', TEST_USER.id, 'admin'],
+    ]);
+    expect((await app.inject({ method: 'GET', url: '/api/indicators/access' })).statusCode).toBe(401);
+  });
+
+  it('lets only admins list, grant and revoke', async () => {
+    const calls: unknown[][] = [];
+    const { app } = await build(overrides(calls));
+    expect((await req(app, 'GET', '/api/admin/indicators', undefined, FAKE_SID)).statusCode).toBe(403);
+    expect((await req(app, 'POST', '/api/admin/indicators', { email: 'bia@example.com', indicator: 'smc' }, FAKE_SID)).statusCode).toBe(403);
+    expect((await req(app, 'DELETE', `/api/admin/indicators/${TARGET}/smc`, undefined, FAKE_SID)).statusCode).toBe(403);
+    expect(calls).toEqual([]);
+
+    expect((await req(app, 'GET', '/api/admin/indicators')).json()).toEqual({ access: [ACCESS] });
+    const granted = await req(app, 'POST', '/api/admin/indicators', { email: ' bia@example.com ', indicator: 'patterns' });
+    expect(granted.statusCode).toBe(200);
+    expect(granted.json()).toMatchObject({ access: { indicator: 'patterns' } });
+    expect((await req(app, 'DELETE', `/api/admin/indicators/${TARGET}/smc`)).statusCode).toBe(204);
+    expect(calls).toEqual([
+      ['grantIndicator', TEST_USER.id, 'bia@example.com', 'patterns'],
+      ['revokeIndicator', TEST_USER.id, TARGET, 'smc'],
+    ]);
+  });
+
+  it('validates the indicator, e-mail and user id', async () => {
+    const calls: unknown[][] = [];
+    const { app } = await build(overrides(calls));
+    expect((await req(app, 'POST', '/api/admin/indicators', { email: 'bia@example.com', indicator: 'rsi' })).statusCode).toBe(400);
+    expect((await req(app, 'POST', '/api/admin/indicators', { email: 'nope', indicator: 'smc' })).statusCode).toBe(400);
+    expect((await req(app, 'DELETE', '/api/admin/indicators/123/smc')).statusCode).toBe(400);
+    expect((await req(app, 'DELETE', `/api/admin/indicators/${TARGET}/macd`)).statusCode).toBe(400);
     expect(calls).toEqual([]);
   });
 });

@@ -4,11 +4,14 @@ import {
   AdminAuditQuery,
   AdminBlockInput,
   AdminCreditInput,
+  AdminIndicatorGrant,
   AdminUsersQuery,
   AssetIdParams,
   IDEMPOTENCY_HEADER,
   IdempotencyKeySchema,
+  IndicatorAccessParams,
   UserIdParams,
+  type IndicatorAccessResponse,
   type Counter,
   type Registry,
 } from '@traderoom/shared';
@@ -58,6 +61,33 @@ export function adminRoutes(app: FastifyInstance, deps: { admin: AdminService; m
     actions.inc({ action: 'asset.update' });
     req.log.info({ assetId: id, patch }, 'admin asset update');
     return reply.header('cache-control', noStore).send({ asset });
+  });
+
+  // Premium chart indicators: the signed-in user's own access, and the admin list.
+  app.get('/api/indicators/access', { preHandler: app.requireAuth }, async (req, reply) => {
+    const { user } = authOf(req);
+    const body: IndicatorAccessResponse = { indicators: await deps.admin.allowedIndicators(user.id, user.role) };
+    return reply.header('cache-control', noStore).send(body);
+  });
+
+  app.get('/api/admin/indicators', guard, async (_req, reply) => {
+    return reply.header('cache-control', noStore).send({ access: await deps.admin.listIndicatorAccess() });
+  });
+
+  app.post('/api/admin/indicators', guard, async (req, reply) => {
+    const { email, indicator } = AdminIndicatorGrant.parse(req.body);
+    const access = await deps.admin.grantIndicator(authOf(req).user.id, email, indicator);
+    actions.inc({ action: 'indicator.grant' });
+    req.log.info({ userId: access.userId, indicator }, 'admin indicator grant');
+    return reply.header('cache-control', noStore).send({ access });
+  });
+
+  app.delete('/api/admin/indicators/:userId/:indicator', guard, async (req, reply) => {
+    const { userId, indicator } = IndicatorAccessParams.parse(req.params);
+    await deps.admin.revokeIndicator(authOf(req).user.id, userId, indicator);
+    actions.inc({ action: 'indicator.revoke' });
+    req.log.info({ userId, indicator }, 'admin indicator revoke');
+    return reply.header('cache-control', noStore).code(204).send();
   });
 
   app.get('/api/admin/audit', guard, async (req, reply) => {

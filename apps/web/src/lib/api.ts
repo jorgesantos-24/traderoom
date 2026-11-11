@@ -5,6 +5,9 @@ import {
   type AdminUserView,
   type AuditAction,
   type AuditEntryView,
+  type IndicatorAccessResponse,
+  type IndicatorAccessView,
+  type PremiumIndicator,
   ErrorCode,
   IDEMPOTENCY_HEADER,
   type ApiErrorBody,
@@ -194,7 +197,15 @@ export const api = {
   createWithdrawal: async (input: CreateWithdrawalInput) =>
     (await request<{ withdrawal: WithdrawalView }>('POST', '/api/withdrawals', { body: input })).withdrawal,
 
+  /** Premium chart indicators (SMC, patterns) this user may use. */
+  indicatorAccess: async () => (await request<IndicatorAccessResponse>('GET', '/api/indicators/access')).indicators,
+
   admin: {
+    indicatorAccess: async () => (await request<{ access: IndicatorAccessView[] }>('GET', '/api/admin/indicators')).access,
+    grantIndicator: async (email: string, indicator: PremiumIndicator) =>
+      (await request<{ access: IndicatorAccessView }>('POST', '/api/admin/indicators', { body: { email, indicator } })).access,
+    revokeIndicator: (userId: string, indicator: PremiumIndicator) =>
+      request<void>('DELETE', `/api/admin/indicators/${encodeURIComponent(userId)}/${indicator}`),
     kycList: (q: { status: 'pending' | 'all'; cursor?: string; limit?: number }) =>
       request<Page<AdminKycView>>('GET', `/api/admin/kyc${qs(q)}`),
     /** Same-origin image URL; the session cookie authorizes it. */

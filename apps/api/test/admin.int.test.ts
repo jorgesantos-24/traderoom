@@ -375,3 +375,34 @@ describe('HTTP: /api/admin/*', () => {
     expect((await admin.send('GET', '/api/admin/audit?action=drop.table')).statusCode).toBe(400);
   });
 });
+
+describe('premium indicator access', () => {
+  it('grants by e-mail once, lists, revokes, and audits each real change; admins always have it', async () => {
+    const adminId = await newUser('Admin Ind', `adm-ind-${randomUUID()}@${DOMAIN}`);
+    const email = `Ind-${randomUUID()}@${DOMAIN}`;
+    const userId = await newUser('Cliente Ind', email);
+    expect(await svc.allowedIndicators(userId, 'user')).toEqual([]);
+    expect(await svc.allowedIndicators(userId, 'admin')).toEqual(['smc', 'patterns']);
+
+    // Case-insensitive e-mail; a second grant changes nothing.
+    const first = await svc.grantIndicator(adminId, email.toUpperCase(), 'smc');
+    expect(first).toMatchObject({ userId, indicator: 'smc', name: 'Cliente Ind' });
+    await svc.grantIndicator(adminId, email, 'smc');
+    await svc.grantIndicator(adminId, email, 'patterns');
+    expect((await svc.allowedIndicators(userId, 'user')).sort()).toEqual(['patterns', 'smc']);
+    const mine = (await svc.listIndicatorAccess()).filter((a) => a.userId === userId);
+    expect(mine.map((a) => a.indicator).sort()).toEqual(['patterns', 'smc']);
+    expect(mine[0]!.grantedByEmail).toMatch(/^adm-ind-/);
+
+    await svc.revokeIndicator(adminId, userId, 'smc');
+    expect(await svc.allowedIndicators(userId, 'user')).toEqual(['patterns']);
+    await expect(svc.revokeIndicator(adminId, userId, 'smc')).rejects.toMatchObject({ statusCode: 404 });
+    await expect(svc.grantIndicator(adminId, `nobody-${randomUUID()}@${DOMAIN}`, 'smc')).rejects.toMatchObject({ statusCode: 404 });
+
+    expect((await auditOf(adminId)).map((r) => [r.action, r.payload.indicator])).toEqual([
+      ['indicator.grant', 'smc'],
+      ['indicator.grant', 'patterns'],
+      ['indicator.revoke', 'smc'],
+    ]);
+  });
+});

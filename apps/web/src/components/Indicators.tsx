@@ -64,8 +64,10 @@ export function IndicatorsDialog({ open, onClose, state }: { open: boolean; onCl
   }, [open]);
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return INDICATORS.filter((d) => !s || d.name.toLowerCase().includes(s) || d.short.toLowerCase().includes(s));
-  }, [q]);
+    return INDICATORS.filter(
+      (d) => state.available(d.type) && (!s || d.name.toLowerCase().includes(s) || d.short.toLowerCase().includes(s)),
+    );
+  }, [q, state]);
   useEffect(() => {
     if (!added) return;
     const t = setTimeout(() => setAdded(null), 1200);

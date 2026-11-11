@@ -77,6 +77,8 @@ export const AUDIT_ACTIONS = [
   'kyc.reject',
   'otc.override',
   'otc.override.release',
+  'indicator.grant',
+  'indicator.revoke',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -120,4 +122,38 @@ export interface AuditEntryView {
   action: string;
   payload: Record<string, unknown>;
   createdAt: string;
+}
+
+// ---- premium indicators (shown only to users an admin let in) ----
+
+/** Chart indicators hidden until an admin grants them to the user. Admins always have them. */
+export const PREMIUM_INDICATORS = ['smc', 'patterns'] as const;
+export type PremiumIndicator = (typeof PREMIUM_INDICATORS)[number];
+export const PREMIUM_INDICATOR_LABEL: Record<PremiumIndicator, string> = {
+  smc: 'Smart Money Concepts (SMC)',
+  patterns: 'Figuras geométricas (padrões gráficos)',
+};
+
+const premiumIndicator = z.enum(PREMIUM_INDICATORS, 'Indicador inválido.');
+
+export const AdminIndicatorGrant = z.object({
+  email: z.string().trim().max(254, 'E-mail muito longo.').pipe(z.email('E-mail inválido.')),
+  indicator: premiumIndicator,
+});
+export type AdminIndicatorGrant = z.infer<typeof AdminIndicatorGrant>;
+
+export const IndicatorAccessParams = z.object({ userId: z.uuid('Usuário inválido.'), indicator: premiumIndicator });
+
+export interface IndicatorAccessView {
+  userId: string;
+  email: string;
+  name: string;
+  indicator: PremiumIndicator;
+  grantedAt: string;
+  grantedByEmail: string | null;
+}
+
+/** GET /api/indicators/access: the premium indicators this user may use. */
+export interface IndicatorAccessResponse {
+  indicators: PremiumIndicator[];
 }

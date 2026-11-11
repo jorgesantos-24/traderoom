@@ -1,4 +1,4 @@
-import type { AuditAction, AuditEntryView } from '@traderoom/shared';
+import { PREMIUM_INDICATOR_LABEL, type AuditAction, type AuditEntryView } from '@traderoom/shared';
 import { formatMoney, formatSignedMoney } from './format';
 
 export const AUDIT_LABEL: Record<AuditAction, string> = {
@@ -13,6 +13,8 @@ export const AUDIT_LABEL: Record<AuditAction, string> = {
   'kyc.reject': 'Verificação recusada',
   'otc.override': 'Intervenção no preço OTC',
   'otc.override.release': 'Intervenção OTC solta',
+  'indicator.grant': 'Indicador liberado',
+  'indicator.revoke': 'Indicador retirado',
 };
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
@@ -45,6 +47,12 @@ export function describeAudit(e: Pick<AuditEntryView, 'action' | 'payload'>): st
     case 'otc.override':
       if (!str(p.symbol)) break;
       return `${str(p.symbol)}: fechar em ${str(p.targetPrice)} (base ${str(p.basePrice)}) às ${num(p.candleCloseMs) === null ? '?' : new Date(num(p.candleCloseMs) as number).toLocaleTimeString('pt-BR')}`;
+    case 'indicator.grant':
+    case 'indicator.revoke': {
+      const ind = str(p.indicator);
+      if (!str(p.email) || !ind) break;
+      return `${str(p.email)}: ${(PREMIUM_INDICATOR_LABEL as Record<string, string>)[ind] ?? ind}`;
+    }
     case 'otc.override.release':
       if (!str(p.symbol)) break;
       return `${str(p.symbol)}: alvo ${str(p.targetPrice)} solto`;

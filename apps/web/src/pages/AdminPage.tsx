@@ -9,6 +9,7 @@ import {
   type AdminUserView,
   type AuditAction,
 } from '@traderoom/shared';
+import { IndicatorsTab } from '../components/AdminIndicators';
 import { KycTab } from '../components/AdminKyc';
 import { WithdrawalsTab } from '../components/AdminWithdrawals';
 import { AppShell } from '../components/AppShell';
@@ -28,6 +29,7 @@ const TABS = [
   { id: 'kyc', label: 'Verificações' },
   { id: 'withdrawals', label: 'Saques' },
   { id: 'assets', label: 'Ativos' },
+  { id: 'indicators', label: 'Indicadores' },
   { id: 'audit', label: 'Auditoria' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
@@ -117,6 +119,7 @@ export function AdminPage() {
         {tab === 'kyc' && <KycTab onNotice={setNotice} />}
         {tab === 'withdrawals' && <WithdrawalsTab onNotice={setNotice} />}
         {tab === 'assets' && <AssetsTab onNotice={setNotice} />}
+        {tab === 'indicators' && <IndicatorsTab onNotice={setNotice} />}
         {tab === 'audit' && <AuditTab />}
       </div>
     </AppShell>

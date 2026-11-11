@@ -99,6 +99,10 @@ export const unusedAdmin: AdminService = {
   listAssets: notUsed('admin.listAssets'),
   updateAsset: notUsed('admin.updateAsset'),
   listAudit: notUsed('admin.listAudit'),
+  allowedIndicators: notUsed('admin.allowedIndicators'),
+  listIndicatorAccess: notUsed('admin.listIndicatorAccess'),
+  grantIndicator: notUsed('admin.grantIndicator'),
+  revokeIndicator: notUsed('admin.revokeIndicator'),
 };
 
 export const unusedOtcOverride: OtcOverrideService = {
