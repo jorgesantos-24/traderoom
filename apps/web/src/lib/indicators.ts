@@ -9,6 +9,9 @@ export type Values = Array<number | null>;
 
 // ---- building blocks (Pine equivalents) ----
 
+const close = (c: readonly Candle[]): Values => c.map((k) => k.c);
+const hl2 = (c: readonly Candle[]): Values => c.map((k) => (k.h + k.l) / 2);
+
 /** ta.sma */
 export function sma(src: Values, len: number): Values {
   const out: Values = new Array(src.length).fill(null);
@@ -93,8 +96,13 @@ export function stdev(src: Values, len: number): Values {
 function rolling(src: Values, len: number, pick: (a: number, b: number) => number): Values {
   return src.map((_, i) => {
     if (i < len - 1) return null;
-    let r = src[i]!;
-    for (let j = 1; j < len; j++) r = pick(r, src[i - j]!);
+    let r = src[i];
+    if (r == null) return null;
+    for (let j = 1; j < len; j++) {
+      const v = src[i - j];
+      if (v == null) return null;
+      r = pick(r, v);
+    }
     return r;
   });
 }
@@ -294,6 +302,115 @@ export function parabolicSar(c: readonly Candle[], start: number, inc: number, m
   return out;
 }
 
+/**
+ * ta.supertrend(factor, atrPeriod) on hl2. Split in two series so each trend is its own line,
+ * broken where it flips: `up` (support under the price) and `down` (resistance over it).
+ */
+export function supertrend(c: readonly Candle[], atrLen: number, factor: number) {
+  const a = atr(c, atrLen);
+  const up: Values = new Array(c.length).fill(null);
+  const down: Values = new Array(c.length).fill(null);
+  let prevLower = 0;
+  let prevUpper = 0;
+  let prevSt: number | null = null;
+  for (let i = 0; i < c.length; i++) {
+    const k = c[i]!;
+    const v = a[i];
+    if (v == null) {
+      prevLower = 0;
+      prevUpper = 0;
+      prevSt = null;
+      continue;
+    }
+    const src = (k.h + k.l) / 2;
+    const prevClose = c[i - 1]?.c ?? k.c;
+    let lower = src - factor * v;
+    let upper = src + factor * v;
+    lower = lower > prevLower || prevClose < prevLower ? lower : prevLower;
+    upper = upper < prevUpper || prevClose > prevUpper ? upper : prevUpper;
+    let dir: 1 | -1;
+    if (a[i - 1] == null) dir = 1;
+    else if (prevSt === prevUpper) dir = k.c > upper ? -1 : 1;
+    else dir = k.c < lower ? 1 : -1;
+    const st = dir === -1 ? lower : upper;
+    if (dir === -1) up[i] = st;
+    else down[i] = st;
+    prevLower = lower;
+    prevUpper = upper;
+    prevSt = st;
+  }
+  return { up, down };
+}
+
+/** Middle of the highest high and lowest low over `len` bars (Ichimoku's donchian). */
+function midRange(c: readonly Candle[], len: number): Values {
+  const hh = highest(
+    c.map((k) => k.h),
+    len,
+  );
+  const ll = lowest(
+    c.map((k) => k.l),
+    len,
+  );
+  return hh.map((h, i) => (h == null || ll[i] == null ? null : (h + ll[i]!) / 2));
+}
+
+/**
+ * Ichimoku Cloud as in TradingView's built-in. Values sit on the bar they are computed on; the
+ * leading spans are drawn `displacement - 1` bars ahead and the lagging span as many back (outputOffset).
+ */
+export function ichimoku(c: readonly Candle[], conv: number, base: number, spanB: number) {
+  const conversion = midRange(c, conv);
+  const baseLine = midRange(c, base);
+  return {
+    conversion,
+    base: baseLine,
+    leadA: conversion.map((v, i) => (v == null || baseLine[i] == null ? null : (v + baseLine[i]!) / 2)),
+    leadB: midRange(c, spanB),
+    lagging: close(c),
+  };
+}
+
+/**
+ * Williams Fractals: a high above the `n` bars on each side, and the mirror for lows.
+ * Known only `n` bars later; values sit on the fractal's own bar.
+ */
+export function fractals(c: readonly Candle[], n: number) {
+  const up: Values = new Array(c.length).fill(null);
+  const down: Values = new Array(c.length).fill(null);
+  for (let i = n; i + n < c.length; i++) {
+    const h = c[i]!.h;
+    const l = c[i]!.l;
+    let isUp = true;
+    let isDown = true;
+    for (let j = 1; j <= n; j++) {
+      if (!(c[i - j]!.h < h && c[i + j]!.h < h)) isUp = false;
+      if (!(c[i - j]!.l > l && c[i + j]!.l > l)) isDown = false;
+    }
+    if (isUp) up[i] = h;
+    if (isDown) down[i] = l;
+  }
+  return { up, down };
+}
+
+/** Stochastic RSI (TradingView's built-in): %K = SMA(stoch(RSI), smoothK), %D = SMA(%K, smoothD). */
+export function stochRsi(src: Values, rsiLen: number, stochLen: number, smoothK: number, smoothD: number) {
+  const r = rsi(src, rsiLen);
+  const hh = highest(r, stochLen);
+  const ll = lowest(r, stochLen);
+  const raw: Values = r.map((v, i) => {
+    const h = hh[i];
+    const l = ll[i];
+    if (v == null || h == null || l == null) return null;
+    return h === l ? 0 : (100 * (v - l)) / (h - l);
+  });
+  const k = sma(raw, smoothK);
+  return { k, d: sma(k, smoothD) };
+}
+
+/** Awesome Oscillator: SMA(hl2, fast) - SMA(hl2, slow). */
+export const awesome = (c: readonly Candle[], fast: number, slow: number): Values => sub(sma(hl2(c), fast), sma(hl2(c), slow));
+
 // ---- registry ----
 
 export interface ParamDef {
@@ -316,6 +433,8 @@ export interface OutputDef {
   color: string;
   kind: 'line' | 'histogram' | 'dots';
   width?: 1 | 2 | 3;
+  /** Gaps (null values) break the line instead of joining across them (Supertrend's two trends). */
+  breaks?: boolean;
 }
 
 export interface IndicatorDef {
@@ -371,8 +490,6 @@ const S = (key: string, label: string, options: string[], def = 0, group?: strin
   group,
 });
 const G = (group: string, p: ParamDef): ParamDef => ({ ...p, group });
-const close = (c: readonly Candle[]): Values => c.map((k) => k.c);
-const hl2 = (c: readonly Candle[]): Values => c.map((k) => (k.h + k.l) / 2);
 
 export const INDICATORS: IndicatorDef[] = [
   {
@@ -666,12 +783,94 @@ export const INDICATORS: IndicatorDef[] = [
     levels: [0],
     compute: (c, p) => ({ v: momentum(close(c), p.length!) }),
   },
+  {
+    type: 'supertrend',
+    name: 'Supertrend',
+    short: 'Supertrend',
+    category: 'Tendência',
+    pane: 'main',
+    priceScaled: true,
+    params: [P('atrLen', 'Período ATR', 10), P('factor', 'Fator', 3, 0.1, 20, 0.1)],
+    outputs: [
+      { key: 'up', label: 'Alta', color: '#089981', kind: 'line', width: 2, breaks: true },
+      { key: 'down', label: 'Baixa', color: '#f23645', kind: 'line', width: 2, breaks: true },
+    ],
+    compute: (c, p) => supertrend(c, p.atrLen!, p.factor!),
+  },
+  {
+    type: 'ichimoku',
+    name: 'Ichimoku Cloud',
+    short: 'Ichimoku',
+    category: 'Tendência',
+    pane: 'main',
+    priceScaled: true,
+    params: [
+      P('conv', 'Linha de conversão', 9),
+      P('base', 'Linha base', 26),
+      P('spanB', 'Span B', 52),
+      P('displacement', 'Deslocamento', 26, 1, 200),
+    ],
+    outputs: [
+      { key: 'conversion', label: 'Conversão', color: '#2962ff', kind: 'line' },
+      { key: 'base', label: 'Base', color: '#b71c1c', kind: 'line' },
+      { key: 'lagging', label: 'Atrasada', color: '#43a047', kind: 'line' },
+      { key: 'leadA', label: 'Span A', color: '#a5d6a7', kind: 'line' },
+      { key: 'leadB', label: 'Span B', color: '#ef9a9a', kind: 'line' },
+    ],
+    compute: (c, p) => ichimoku(c, p.conv!, p.base!, p.spanB!),
+  },
+  {
+    type: 'fractals',
+    name: 'Fractais (Williams)',
+    short: 'Fractais',
+    category: 'Tendência',
+    pane: 'main',
+    overlay: true,
+    params: [P('n', 'Períodos', 2, 1, 20)],
+    outputs: [
+      { key: 'up', label: 'Fractal de alta', color: '#089981', kind: 'dots' },
+      { key: 'down', label: 'Fractal de baixa', color: '#f23645', kind: 'dots' },
+    ],
+    compute: (c, p) => fractals(c, p.n!),
+  },
+  {
+    type: 'stochrsi',
+    name: 'Estocástico RSI',
+    short: 'Stoch RSI',
+    category: 'Osciladores',
+    pane: 'own',
+    params: [P('smoothK', 'K', 3), P('smoothD', 'D', 3), P('rsiLen', 'Período RSI', 14), P('stochLen', 'Período estocástico', 14)],
+    outputs: [
+      { key: 'k', label: 'K', color: '#2962ff', kind: 'line', width: 2 },
+      { key: 'd', label: 'D', color: '#ff6d00', kind: 'line', width: 2 },
+    ],
+    levels: [80, 50, 20],
+    compute: (c, p) => stochRsi(close(c), p.rsiLen!, p.stochLen!, p.smoothK!, p.smoothD!),
+  },
+  {
+    type: 'ao',
+    name: 'Awesome Oscillator',
+    short: 'AO',
+    category: 'Osciladores',
+    pane: 'own',
+    priceScaled: true,
+    params: [P('fast', 'Rápida', 5), P('slow', 'Lenta', 34)],
+    outputs: [{ key: 'v', label: 'AO', color: '#089981', kind: 'histogram' }],
+    levels: [0],
+    compute: (c, p) => ({ v: awesome(c, p.fast!, p.slow!) }),
+  },
 ];
 
 export const INDICATOR_BY_TYPE = new Map(INDICATORS.map((d) => [d.type, d]));
 
-/** Alligator lines are shifted forward by their offset params. */
+/** Bars an output is drawn shifted by: Alligator lines forward by their offset params, Ichimoku's spans. */
 export function outputOffset(def: IndicatorDef, outputKey: string, params: Record<string, number>): number {
+  if (def.type === 'ichimoku') {
+    const d = Math.round(params.displacement ?? 26) - 1;
+    if (outputKey === 'leadA' || outputKey === 'leadB') return d;
+    if (outputKey === 'lagging') return -d;
+    return 0;
+  }
   if (def.type !== 'alligator') return 0;
   return Math.round(params[`${outputKey}Offset`] ?? 0);
 }

@@ -16,6 +16,8 @@ import { INDICATOR_BY_TYPE, outputOffset, type IndicatorConfig, type IndicatorDe
 const OWN_PANE_STRETCH = 0.32;
 
 const MACD_HIST = { upRising: '#26a69a', upFalling: '#b2dfdb', downRising: '#ffcdd2', downFalling: '#ff5252' };
+/** Awesome Oscillator bars: green while rising, red while falling (TradingView's colors). */
+const AO_BARS = { rising: '#089981', falling: '#f23645' };
 
 interface Built {
   cfg: IndicatorConfig;
@@ -178,9 +180,13 @@ export class IndicatorRenderer {
       b.values = b.def.compute(candles, b.cfg.params);
       for (const out of b.def.outputs) {
         const v = b.values[out.key]?.[last];
-        if (v == null) continue;
         const off = outputOffset(b.def, out.key, b.cfg.params);
         const time = toTime(candles[last]!.t + off * this.step);
+        // A broken line (Supertrend) whose trend just flipped drops the live point.
+        if (v == null) {
+          if (out.breaks) b.series.get(out.key)!.update({ time });
+          continue;
+        }
         b.series.get(out.key)!.update(this.point(b, out.key, last, time, v));
       }
     }
@@ -198,17 +204,30 @@ export class IndicatorRenderer {
       const color = v >= 0 ? (rising ? MACD_HIST.upRising : MACD_HIST.upFalling) : rising ? MACD_HIST.downRising : MACD_HIST.downFalling;
       return { time, value: v, color };
     }
+    if (b.def.type === 'ao') {
+      const prev = b.values[key]?.[i - 1];
+      return { time, value: v, color: prev != null && v <= prev ? AO_BARS.falling : AO_BARS.rising };
+    }
     return { time, value: v };
   }
 
   private points(b: Built, key: string) {
     const vals = b.values[key] ?? [];
     const off = outputOffset(b.def, key, b.cfg.params);
+    const breaks = b.def.outputs.find((o) => o.key === key)?.breaks === true;
     const out = [];
-    for (let i = 0; i < vals.length; i++) {
+    let started = false;
+    // Shifted back (Ichimoku's lagging span): nothing before the first candle, or the bars would move.
+    for (let i = Math.max(0, -off); i < vals.length; i++) {
       const v = vals[i];
-      if (v == null) continue;
-      out.push(this.point(b, key, i, toTime(this.candles[i]!.t + off * this.step), v));
+      const time = toTime(this.candles[i]!.t + off * this.step);
+      if (v == null) {
+        // Whitespace breaks the line; without it lightweight-charts joins across the gap.
+        if (breaks && started) out.push({ time });
+        continue;
+      }
+      started = true;
+      out.push(this.point(b, key, i, time, v));
     }
     return out;
   }

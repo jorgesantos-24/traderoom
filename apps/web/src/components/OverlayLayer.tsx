@@ -4,9 +4,10 @@ import type { Candle } from '@traderoom/shared';
 import { loadCandles } from '../lib/candle-cache';
 import { createMapper, type Mapper } from '../lib/chart-mapper';
 import { formatPrice, pricePrecision } from '../lib/format';
-import { INDICATOR_BY_TYPE, type IndicatorConfig } from '../lib/indicators';
+import { INDICATOR_BY_TYPE, type IndicatorConfig, type Values } from '../lib/indicators';
 import { findPatterns, patternSettings, type Pattern } from '../lib/patterns';
 import { computeSmc, previousLevels, smcSettings, visibleSmc, type SmcResult } from '../lib/smc';
+import { drawFractals, drawIchimokuCloud } from './draw-extras';
 import { drawPatterns } from './draw-patterns';
 import { FONT, rgba } from './draw-utils';
 
@@ -22,8 +23,8 @@ interface Props {
 
 const NEUTRAL = '#b2b5be';
 const DAILY_REFRESH_MS = 10 * 60_000;
-/** Indicators drawn by this layer, in drawing order (patterns under the SMC labels). */
-const OVERLAY_TYPES = ['patterns', 'smc'];
+/** Indicators drawn by this layer, in drawing order (the Ichimoku cloud at the bottom, SMC labels on top). */
+const OVERLAY_TYPES = ['ichimoku', 'patterns', 'fractals', 'smc'];
 
 /** Canvas over the candles for the overlay indicators (Smart Money Concepts, chart patterns). */
 export function OverlayLayer({ hostRef, chartRef, seriesRef, candlesRef, stepRef, configs, symbol }: Props) {
@@ -71,20 +72,25 @@ export function OverlayLayer({ hostRef, chartRef, seriesRef, candlesRef, stepRef
     resize();
 
     // Detection runs on closed candles only, and only when one closes or a setting changes.
-    const cache = new Map<string, { key: string; result: SmcResult | Pattern[] }>();
+    type Result = SmcResult | Pattern[] | Record<string, Values>;
+    const cache = new Map<string, { key: string; result: Result }>();
     const arrays = new WeakMap<Candle[], number>();
     let arrayId = 0;
-    const resultFor = (cfg: IndicatorConfig, candles: Candle[]): SmcResult | Pattern[] => {
+    const resultFor = (cfg: IndicatorConfig, candles: Candle[]): Result => {
       if (!arrays.has(candles)) arrays.set(candles, ++arrayId);
       const closed = candles.length - 1;
-      const key = `${arrays.get(candles)}|${closed}|${candles[0]?.t}|${JSON.stringify(cfg.params)}`;
+      // The cloud follows the live candle (as its lines do), so it also changes with the last high/low.
+      const live = cfg.type === 'ichimoku' ? `|${candles[closed]?.h}|${candles[closed]?.l}` : '';
+      const key = `${arrays.get(candles)}|${closed}|${candles[0]?.t}|${JSON.stringify(cfg.params)}${live}`;
       const hit = cache.get(cfg.id);
       if (hit && hit.key === key) return hit.result;
       const closedCandles = candles.slice(0, closed);
       const result =
         cfg.type === 'smc'
           ? computeSmc(closedCandles, smcSettings(cfg.params).options)
-          : findPatterns(closedCandles, patternSettings(cfg.params).options);
+          : cfg.type === 'patterns'
+            ? findPatterns(closedCandles, patternSettings(cfg.params).options)
+            : INDICATOR_BY_TYPE.get(cfg.type)!.compute(cfg.type === 'ichimoku' ? candles : closedCandles, cfg.params);
       cache.set(cfg.id, { key, result });
       return result;
     };
@@ -108,7 +114,9 @@ export function OverlayLayer({ hostRef, chartRef, seriesRef, candlesRef, stepRef
       for (const cfg of list) {
         const r = resultFor(cfg, m.candles);
         if (cfg.type === 'smc') drawSmc(ctx, m, cfg, r as SmcResult, dailyRef.current);
-        else drawPatterns(ctx, m, cfg, r as Pattern[]);
+        else if (cfg.type === 'patterns') drawPatterns(ctx, m, cfg, r as Pattern[]);
+        else if (cfg.type === 'ichimoku') drawIchimokuCloud(ctx, m, cfg, r as Record<string, Values>);
+        else drawFractals(ctx, m, cfg, r as Record<string, Values>);
       }
       ctx.restore();
     };
