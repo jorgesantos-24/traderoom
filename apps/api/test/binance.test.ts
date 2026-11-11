@@ -55,6 +55,14 @@ describe('createKlinesFetcher', () => {
     expect(f.calls[0]?.toString()).toBe('https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=1000');
   });
 
+  it('asks for candles before a time with endTime (exclusive)', async () => {
+    const f = fakeFetch(200, [ROW]);
+    await createKlinesFetcher('https://data-api.binance.vision', { fetchImpl: f.impl })('BTCUSDT', '1h', 1000, 1_800_000_000_000);
+    expect(f.calls[0]?.toString()).toBe(
+      'https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=1000&endTime=1799999999999',
+    );
+  });
+
   it('reports every upstream status, including network failures', async () => {
     const seen: Array<number | 'error'> = [];
     const ok = createKlinesFetcher('https://x.test', { fetchImpl: fakeFetch(200, [ROW]).impl, onStatus: (s) => seen.push(s) });

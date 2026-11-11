@@ -47,6 +47,7 @@ describe('schema', () => {
       'orders',
       'otc_overrides',
       'password_resets',
+      'price_candles_1m',
       'price_snapshots',
       'sessions',
       'users',

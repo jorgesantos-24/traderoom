@@ -59,6 +59,15 @@ beforeAll(async () => {
   }
 });
 
+// Minutes older than the snapshot window, as retention rolls them up (11:00 and 11:01).
+const H = 3_600_000;
+beforeAll(async () => {
+  await pool.query(
+    `insert into price_candles_1m (asset_id, t, o, h, l, c) values ($1, $2, 1, 2, 0.5, 1.5), ($1, $3, 1.4, 1.8, 1.2, 1.6)`,
+    [assetId, new Date(T0 - H), new Date(T0 - H + 60_000)],
+  );
+});
+
 afterAll(async () => {
   await pool.query('delete from price_snapshots where asset_id = any($1)', [[assetId, marketId]]);
   await pool.query('delete from assets where id = any($1)', [[assetId, marketId]]);
@@ -103,5 +112,18 @@ describe('OTC candles', () => {
       { t: T0 + 60_000, o: 20, h: 50, l: 20, c: 40, v: 0 },
     ]);
     expect(await src.fromSnapshots('ZZNOPE', '1m', 5)).toEqual([]);
+  });
+
+  it('pages back with `before`, reading rolled-up minutes once the snapshots are gone', async () => {
+    const src = createOtcCandleSource(pool, createAssetRepo(pool, { ttlMs: 0 }), { now: () => T0 + 100_000 });
+    expect(await src.candles(SYMBOL, '1m', 2, T0 - H + 120_000)).toEqual([
+      { t: T0 - H, o: 1, h: 2, l: 0.5, c: 1.5, v: 0 },
+      // Opens at the previous close, as snapshot candles do.
+      { t: T0 - H + 60_000, o: 1.5, h: 1.8, l: 1.2, c: 1.6, v: 0 },
+    ]);
+    // Longer buckets combine the minutes: first open, highest high, lowest low, last close.
+    expect(await src.candles(SYMBOL, '1h', 1, T0)).toEqual([{ t: T0 - H, o: 1, h: 2, l: 0.5, c: 1.6, v: 0 }]);
+    // `before` is exclusive, and there is nothing before 11:00.
+    expect(await src.candles(SYMBOL, '1m', 5, T0 - H)).toEqual([]);
   });
 });

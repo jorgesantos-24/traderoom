@@ -27,6 +27,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await pool.query('delete from price_candles_1m where asset_id = $1', [assetId]);
   await pool.query('delete from price_snapshots where asset_id = $1', [assetId]);
   await pool.query('delete from assets where id = $1', [assetId]);
   await pool.end();
@@ -36,6 +37,7 @@ describe('SnapshotRetention', () => {
   it('deletes rows older than the window in batches and keeps the rest', async () => {
     const now = Date.now();
     await pool.query('delete from price_snapshots where asset_id = $1', [assetId]);
+    await pool.query('delete from price_candles_1m where asset_id = $1', [assetId]);
     // 25 rows 8+ days old, 5 inside the window.
     for (let i = 1; i <= 25; i++) {
       await pool.query('insert into price_snapshots (asset_id, price, captured_at) values ($1, 1, $2)', [
@@ -62,6 +64,14 @@ describe('SnapshotRetention', () => {
     expect(Number(rows[0]?.n)).toBe(5);
     expect(Number(rows[0]?.old)).toBe(0);
     expect(metrics.render()).toContain('snapshots_pruned_total');
+    // The deleted seconds live on as one-minute candles; the kept ones are not rolled up yet.
+    const { rows: kept } = await pool.query<{ n: string; lo: string; hi: string }>(
+      'select count(*) as n, min(l) as lo, max(h) as hi from price_candles_1m where asset_id = $1',
+      [assetId],
+    );
+    expect(Number(kept[0]?.n)).toBeGreaterThanOrEqual(1);
+    expect(Number(kept[0]?.n)).toBeLessThanOrEqual(2);
+    expect([Number(kept[0]?.lo), Number(kept[0]?.hi)]).toEqual([1, 1]);
     expect(await r.run()).toBe(0);
   });
 });

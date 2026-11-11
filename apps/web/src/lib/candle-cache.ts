@@ -8,39 +8,60 @@ const MAX_ENTRIES = 40;
 interface Entry {
   at: number;
   candles: Candle[];
+  /** How many were asked for: a short series (e.g. 15 daily candles for a level) must not stand in for a chart's. */
+  limit: number;
 }
 
 const cache = new Map<string, Entry>();
 const inFlight = new Map<string, Promise<Candle[]>>();
 const key = (symbol: string, interval: CandleInterval) => `${symbol}:${interval}`;
 
-/** Recent history for a chart, or null when there is none worth showing. */
-export function cachedCandles(symbol: string, interval: CandleInterval, now = Date.now()): Candle[] | null {
+/** Recent history for a chart (loaded for at least `limit` candles), or null when there is none worth showing. */
+export function cachedCandles(symbol: string, interval: CandleInterval, now = Date.now(), limit = 0): Candle[] | null {
   const e = cache.get(key(symbol, interval));
-  return e && now - e.at < CANDLE_CACHE_MS ? e.candles : null;
+  return e && now - e.at < CANDLE_CACHE_MS && e.limit >= limit ? e.candles : null;
 }
 
-export function storeCandles(symbol: string, interval: CandleInterval, candles: Candle[], now = Date.now()): void {
+export function storeCandles(symbol: string, interval: CandleInterval, candles: Candle[], now = Date.now(), limit = Infinity): void {
   const k = key(symbol, interval);
+  const old = cache.get(k);
+  // A fresh longer series stays; a shorter request only fills in what is missing.
+  if (old && old.limit > limit && now - old.at < CANDLE_CACHE_MS) return;
   cache.delete(k);
-  cache.set(k, { at: now, candles });
+  cache.set(k, { at: now, candles, limit });
   while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value as string);
 }
 
 /** Fetches and caches a series, sharing one request between callers. */
 export function loadCandles(symbol: string, interval: CandleInterval, limit: number, signal?: AbortSignal): Promise<Candle[]> {
-  const k = key(symbol, interval);
+  // Shared only between callers asking for the same length.
+  const k = `${key(symbol, interval)}:${limit}`;
   let p = inFlight.get(k);
   if (!p) {
     p = api
       .candles(symbol, interval, limit)
       .then((r) => {
-        storeCandles(symbol, interval, r.candles, Date.now());
+        storeCandles(symbol, interval, r.candles, Date.now(), limit);
         return r.candles;
       })
       .finally(() => inFlight.delete(k));
     inFlight.set(k, p);
   }
+  return abortable(p, signal);
+}
+
+/** Older history (the chart scrolled back): the `limit` candles opening before `before`, [] past the start. */
+export function loadOlderCandles(
+  symbol: string,
+  interval: CandleInterval,
+  before: number,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<Candle[]> {
+  return api.candles(symbol, interval, limit, signal, before).then((r) => r.candles.filter((c) => c.t < before));
+}
+
+function abortable<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return p;
   // Abort only stops this caller from waiting; the shared request still fills the cache.
   return new Promise((resolve, reject) => {
@@ -54,7 +75,7 @@ export function loadCandles(symbol: string, interval: CandleInterval, limit: num
 /** Warms the cache for charts the user is likely to open next. Errors are ignored. */
 export function prefetchCandles(pairs: ReadonlyArray<readonly [string, CandleInterval]>, limit: number): void {
   for (const [symbol, interval] of pairs) {
-    if (cachedCandles(symbol, interval) || inFlight.has(key(symbol, interval))) continue;
+    if (cachedCandles(symbol, interval, Date.now(), limit) || inFlight.has(`${key(symbol, interval)}:${limit}`)) continue;
     loadCandles(symbol, interval, limit).catch(() => {});
   }
 }

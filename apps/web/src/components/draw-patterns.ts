@@ -4,7 +4,7 @@ import { INDICATOR_BY_TYPE, type IndicatorConfig } from '../lib/indicators';
 import { lineAt, patternSettings, visiblePatterns, type Line, type Pattern, type Pt } from '../lib/patterns';
 import { FONT, rgba } from './draw-utils';
 
-/** Chart patterns over the candles: outline, filled body, name tag and price target. */
+/** Chart patterns over the candles: outline, filled body and price target (no name). */
 export function drawPatterns(c: CanvasRenderingContext2D, m: Mapper, cfg: IndicatorConfig, all: Pattern[]) {
   const def = INDICATOR_BY_TYPE.get('patterns')!;
   const color = (key: string) => cfg.colors[key] ?? def.outputs.find((o) => o.key === key)?.color ?? '#2962ff';
@@ -119,18 +119,7 @@ export function drawPatterns(c: CanvasRenderingContext2D, m: Mapper, cfg: Indica
     }
     if (p.neckline && path([p.neckline.a, p.neckline.b])) stroke(col, 1, [5, 4]);
 
-    // Name tag: under bullish patterns, over bearish ones, centred on the pattern.
-    const prices = [...p.points.map((q) => q.p), ...(p.cup ? [p.cup.bottom.p] : [])];
-    const edge = p.dir === 1 ? Math.min(...prices) : Math.max(...prices);
-    const ye = m.toY(edge);
-    if (ye !== null)
-      tag(
-        `${p.dir === 1 ? '▲' : '▼'} ${forming ? `${p.name} (em formação)` : p.name}`,
-        (X(p.start) + X(end.i)) / 2,
-        ye,
-        forming ? rgba(col, 0.7) : col,
-        p.dir === 1 ? 'below' : 'above',
-      );
+    // No name tag on purpose: the figure is drawn unnamed, so users ask support what it is.
 
     // Target: dotted line from the breakout to the measured move, and its tag.
     if (s.targets && !forming) {

@@ -28,7 +28,8 @@ export const CANDLES_WARM_PAUSE_MS = 5_000;
 export const SNAPSHOT_INTERVALS: ReadonlySet<CandleInterval> = new Set<CandleInterval>(['1m', '5m', '15m']);
 
 export interface CandleService {
-  get(symbol: string, interval: CandleInterval, limit: number): Promise<Candle[]>;
+  /** The latest `limit` candles, or with `before` (epoch ms) the `limit` opening before it ([] past the start). */
+  get(symbol: string, interval: CandleInterval, limit: number, before?: number): Promise<Candle[]>;
   /** One pass of the warmer: refreshes every enabled symbol × interval whose copy is getting old. */
   warmOnce(intervals: readonly CandleInterval[]): Promise<void>;
   /**
@@ -106,6 +107,54 @@ export function createCandleService(deps: CandleServiceDeps): CandleService {
     }
   }
 
+  /**
+   * An older page from Binance (scrolling back in the chart). Past candles never change, so a copy is
+   * kept CANDLES_KEEP_MS; while Binance backs us off only a cached page is served.
+   */
+  async function older(symbol: string, interval: CandleInterval, limit: number, before: number): Promise<Candle[]> {
+    const key = `${RedisKeys.candles(symbol, interval)}:before:${before}:${limit}`;
+    const cached = parseCached(await safeGet(key));
+    if (cached) return cached.candles;
+    const backoffUntil = Number(await safeGet(RedisKeys.binanceRestBackoffUntil));
+    if (Number.isFinite(backoffUntil) && now() < backoffUntil) throw unavailable();
+    let p = inFlight.get(key);
+    if (!p) {
+      p = (async () => {
+        try {
+          const candles = (await deps.fetchKlines(symbol, interval, limit, before)).filter((c) => c.t < before);
+          await safeSet(key, JSON.stringify({ fetchedAt: now(), candles } satisfies CachedCandles), CANDLES_KEEP_MS);
+          return candles;
+        } catch (err) {
+          if (err instanceof UpstreamError && err.retryAfterMs !== undefined) {
+            deps.log.error({ status: err.status, retryAfterMs: err.retryAfterMs }, 'binance asked us to back off; pausing klines calls');
+            await safeSet(RedisKeys.binanceRestBackoffUntil, String(now() + err.retryAfterMs), err.retryAfterMs);
+          } else {
+            deps.log.error({ err, symbol, interval, before }, 'older klines fetch failed');
+          }
+          throw unavailable();
+        }
+      })().finally(() => inFlight.delete(key));
+      inFlight.set(key, p);
+    }
+    return p;
+  }
+
+  /** Snapshot candles of a market asset; where they run out (before recording began), Binance's fill in. */
+  async function snapshotsThenBinance(symbol: string, interval: CandleInterval, limit: number, before?: number): Promise<Candle[]> {
+    const own = (await deps.otc!.fromSnapshots(symbol, interval, limit, before)).slice(-limit);
+    // The latest page is the platform's price only; Binance fills in when scrolling back past it.
+    if (before === undefined || own.length >= limit) return own;
+    const edge = own[0]?.t ?? before;
+    if (edge === undefined) return own;
+    try {
+      return [...(await older(symbol, interval, limit - own.length, edge)), ...own];
+    } catch (err) {
+      // Our own candles are still worth showing.
+      if (own.length > 0) return own;
+      throw err;
+    }
+  }
+
   function refreshOnce(symbol: string, interval: CandleInterval, key: string, cached: CachedCandles | null): Promise<Candle[]> {
     let p = inFlight.get(key);
     if (!p) {
@@ -155,12 +204,13 @@ export function createCandleService(deps: CandleServiceDeps): CandleService {
         clearTimeout(timer);
       };
     },
-    async get(symbol, interval, limit) {
+    async get(symbol, interval, limit, before) {
       const enabled = await deps.assets.enabledSymbols();
       if (!enabled.has(symbol)) throw new AppError(404, ErrorCode.UnknownAsset, 'Ativo não encontrado.');
-      if (deps.otc && (await deps.otc.has(symbol))) return (await deps.otc.candles(symbol, interval, limit)).slice(-limit);
+      if (deps.otc && (await deps.otc.has(symbol))) return (await deps.otc.candles(symbol, interval, limit, before)).slice(-limit);
       // The chart shows the platform's price: the same one orders settle at.
-      if (deps.otc && SNAPSHOT_INTERVALS.has(interval)) return (await deps.otc.fromSnapshots(symbol, interval, limit)).slice(-limit);
+      if (deps.otc && SNAPSHOT_INTERVALS.has(interval)) return snapshotsThenBinance(symbol, interval, limit, before);
+      if (before !== undefined) return (await older(symbol, interval, limit, before)).slice(-limit);
 
       const key = RedisKeys.candles(symbol, interval);
       const cached = parseCached(await safeGet(key));

@@ -155,6 +155,34 @@ describe('CandleService', () => {
   });
 });
 
+describe('older history (before)', () => {
+  it('asks Binance for the page before `before` and keeps it', async () => {
+    const asked: Array<number | undefined> = [];
+    const s = setup(async (_s, _i, limit, before) => {
+      asked.push(before);
+      // Binance's endTime is inclusive; the service must still drop anything at or after `before`.
+      return candles(limit + 1, (before ?? 0) / 60_000 - limit);
+    });
+    const page = await s.svc.get('BTCUSDT', '1m', 3, 10 * 60_000);
+    expect(page.map((c) => c.t / 60_000)).toEqual([7, 8, 9]);
+    await s.svc.get('BTCUSDT', '1m', 3, 10 * 60_000);
+    expect(asked).toEqual([10 * 60_000]);
+    expect(s.calls).toEqual(['BTCUSDT:1m:3']);
+  });
+
+  it('is [] before the first candle', async () => {
+    const s = setup(async () => []);
+    expect(await s.svc.get('BTCUSDT', '1h', 500, 1000)).toEqual([]);
+  });
+
+  it('fails with 503 when Binance does (nothing cached)', async () => {
+    const s = setup(async () => {
+      throw new UpstreamError('binance 500', 500);
+    });
+    await expect(s.svc.get('BTCUSDT', '1h', 5, T0)).rejects.toMatchObject({ statusCode: 503 });
+  });
+});
+
 describe('candle warmer', () => {
   it('fetches every enabled symbol × interval once, then skips copies that are still recent', async () => {
     const { svc, calls, advance } = setup();
@@ -231,7 +259,16 @@ describe('GET /api/candles', () => {
     expect(body.symbol).toBe('BTCUSDT');
     expect(body.interval).toBe('1m');
     expect(body.candles).toHaveLength(3);
-    expect(seen).toEqual([['BTCUSDT', '1m', 500]]);
+    expect(seen).toEqual([['BTCUSDT', '1m', 500, undefined]]);
+  });
+
+  it('passes `before` through for older history, cached longer', async () => {
+    seen.length = 0;
+    const res = await get('/api/candles?symbol=BTCUSDT&interval=1h&limit=1000&before=1800000000000');
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['cache-control']).toBe('private, max-age=300');
+    expect(seen).toEqual([['BTCUSDT', '1h', 1000, 1_800_000_000_000]]);
+    expect((await get('/api/candles?symbol=BTCUSDT&before=abc')).statusCode).toBe(400);
   });
 
   it.each([
@@ -317,6 +354,26 @@ describe('snapshot candles (platform price)', () => {
     expect(await s.svc.get('ZZOTC', interval, 500)).toEqual(snap(1));
     expect(s.asked).toEqual([`otc:ZZOTC:${interval}`]);
     expect(s.klines).toEqual([]);
+  });
+
+  it('an older market page continues on Binance where the snapshots run out', async () => {
+    const klines: Array<number | undefined> = [];
+    const svc = createCandleService({
+      cache: memoryCache(() => T0),
+      fetchKlines: async (_s, _i, limit, before) => {
+        klines.push(before, limit);
+        return candles(limit, (before ?? 0) / 60_000 - limit);
+      },
+      assets: { enabledSymbols: async () => new Set(['BTCUSDT']) },
+      otc: { has: async () => false, candles: async () => [], fromSnapshots: async () => snap(100) },
+      log,
+      now: () => T0,
+    });
+    const page = await svc.get('BTCUSDT', '1m', 5, T0 + 120_000);
+    expect(page).toHaveLength(5);
+    expect(page.slice(-2)).toEqual(snap(100));
+    expect(page[2]!.t).toBe(T0 - 60_000);
+    expect(klines).toEqual([T0, 3]);
   });
 
   it('trims snapshot candles to the limit', async () => {

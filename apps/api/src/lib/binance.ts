@@ -13,7 +13,8 @@ export class UpstreamError extends Error {
   }
 }
 
-export type KlinesFetcher = (symbol: string, interval: CandleInterval, limit: number) => Promise<Candle[]>;
+/** `before` (epoch ms): only candles opening before it (older history); without it, the latest ones. */
+export type KlinesFetcher = (symbol: string, interval: CandleInterval, limit: number, before?: number) => Promise<Candle[]>;
 
 const num = z.string().transform((s, ctx) => {
   const v = Number(s);
@@ -44,11 +45,12 @@ export function createKlinesFetcher(
 ): KlinesFetcher {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? 5000;
-  return async (symbol, interval, limit) => {
+  return async (symbol, interval, limit, before) => {
     const url = new URL('/api/v3/klines', baseUrl);
     url.searchParams.set('symbol', symbol);
     url.searchParams.set('interval', interval);
     url.searchParams.set('limit', String(limit));
+    if (before !== undefined) url.searchParams.set('endTime', String(before - 1));
     let res: Response;
     try {
       res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });

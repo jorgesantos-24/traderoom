@@ -23,6 +23,7 @@ export interface RetentionDeps {
 /**
  * Deletes price_snapshots older than the retention window. Settlement only reads the last
  * seconds before expiry; the rest is kept for investigating disputed orders.
+ * Before deleting, each minute is rolled up into price_candles_1m so the chart history stays.
  * Works per asset so each batch uses the (asset_id, captured_at) index.
  */
 export class SnapshotRetention {
@@ -51,11 +52,23 @@ export class SnapshotRetention {
   async run(): Promise<number> {
     if (this.running) return 0;
     this.running = true;
-    const cutoff = new Date((this.deps.now ?? Date.now)() - this.opts.retentionDays * 86_400_000);
+    // On a minute boundary: only whole minutes are rolled up and deleted.
+    const cutoff = new Date(Math.floor(((this.deps.now ?? Date.now)() - this.opts.retentionDays * 86_400_000) / 60_000) * 60_000);
     let total = 0;
     try {
       const { rows: assets } = await this.deps.pool.query<{ id: number }>('select id from assets order by id');
       for (const { id } of assets) {
+        // Kept rows win: a minute rolled up before (e.g. a run that stopped before deleting) is not rewritten.
+        await this.deps.pool.query(
+          `insert into price_candles_1m (asset_id, t, o, h, l, c)
+           select $1, b, (array_agg(price order by captured_at asc))[1], max(price), min(price),
+                  (array_agg(price order by captured_at desc))[1]
+             from (select date_bin(interval '1 minute', captured_at, timestamptz 'epoch') as b, price, captured_at
+                     from price_snapshots where asset_id = $1 and captured_at < $2) s
+            group by b
+           on conflict (asset_id, t) do nothing`,
+          [id, cutoff],
+        );
         for (;;) {
           const r = await this.deps.pool.query(
             `delete from price_snapshots

@@ -14,7 +14,7 @@ import {
 } from 'lightweight-charts';
 import { candleExpiry, type Candle, type CandleInterval, type OrderView } from '@traderoom/shared';
 import { ApiError } from '../lib/api';
-import { cachedCandles, loadCandles } from '../lib/candle-cache';
+import { cachedCandles, loadCandles, loadOlderCandles } from '../lib/candle-cache';
 import { MOTION_TAU_MS, seedCandle, stepCandle } from '../lib/candle-motion';
 import { intervalMs, mergePrice } from '../lib/candles';
 import { crosshairLabel, tickLabel } from '../lib/chart-time';
@@ -73,6 +73,9 @@ export function purchaseCountdown(ms: number): string {
   return `${pad2(Math.floor(total / 60))}:${pad2(total % 60)}`;
 }
 export const CANDLE_LIMIT = 500;
+/** Candles per older page, fetched when the view gets this close to the first loaded candle. */
+const OLDER_PAGE = 1000;
+const OLDER_MARGIN = 150;
 
 /** Entry line colour: yellow while a late entry waits for its candle, then green (buy) or red (sell). */
 function lineColor(o: OrderView, waiting: boolean): string {
@@ -142,6 +145,8 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
   const dotRef = useRef<HTMLDivElement>(null);
   /** Real candles (history + live ticks). */
   const candlesRef = useRef<Candle[] | null>(null);
+  /** Which series candlesRef holds, and the state of loading its older history (scrolling back). */
+  const historyRef = useRef<{ key: string; loading: boolean; done: boolean }>({ key: '', loading: false, done: false });
   /** What is drawn for the last candle; eases toward the real one every frame. */
   const shownRef = useRef<Candle | null>(null);
   const stepRef = useRef(intervalMs(interval));
@@ -244,10 +249,16 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
   // (no spinner), then the fresh one from the API replaces it.
   useEffect(() => {
     const ctrl = new AbortController();
+    const seriesKey = `${symbol}:${interval}`;
     const show = (list: Candle[]) => {
       const series = seriesRef.current;
       if (!series) return;
-      const candles = list.slice();
+      // A refresh of the latest candles keeps the older history already scrolled back to.
+      const prev = historyRef.current.key === seriesKey ? candlesRef.current : null;
+      const first = list[0]?.t;
+      const kept = prev && first !== undefined ? prev.filter((c) => c.t < first) : [];
+      const candles = [...kept, ...list];
+      if (historyRef.current.key !== seriesKey) historyRef.current = { key: seriesKey, loading: false, done: false };
       const last = candles.at(-1);
       if (last) {
         applyPrecision(series, precisionRef, last.c);
@@ -266,7 +277,9 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
 
     feedClockRef.current = null;
     precisionRef.current = null;
-    const cached = cachedCandles(symbol, interval);
+    // Older pages of the previous series must not be merged into this one.
+    historyRef.current = { key: '', loading: false, done: false };
+    const cached = cachedCandles(symbol, interval, Date.now(), CANDLE_LIMIT);
     if (cached) {
       show(cached);
       chartRef.current?.timeScale().scrollToRealTime();
@@ -297,6 +310,64 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
     );
     return () => ctrl.abort();
   }, [symbol, interval, attempt]);
+
+  // Full history: scrolling or zooming out near the first loaded candle fetches the page before it
+  // and puts it in front (lightweight-charts keeps the view on the same bars).
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || load.status !== 'ready') return;
+    const ctrl = new AbortController();
+    const step = intervalMs(interval);
+    const maybeLoad = () => {
+      const h = historyRef.current;
+      const candles = candlesRef.current;
+      const range = chart.timeScale().getVisibleLogicalRange();
+      const first = candles?.[0];
+      if (!range || !candles || !first || h.loading || h.done || h.key !== `${symbol}:${interval}`) return;
+      if (range.from > OLDER_MARGIN) return;
+      h.loading = true;
+      loadOlderCandles(symbol, interval, first.t, OLDER_PAGE, ctrl.signal).then(
+        (older) => {
+          h.loading = false;
+          if (ctrl.signal.aborted || historyRef.current !== h) return;
+          const now = candlesRef.current;
+          const head = now?.[0];
+          if (!now || !head) return;
+          const add = older.filter((c) => c.t < head.t);
+          if (add.length === 0) {
+            h.done = true;
+            return;
+          }
+          const candles = [...add, ...now];
+          candlesRef.current = candles;
+          // The last bar as drawn (it eases toward the real one), so it does not jump.
+          const bars = candles.map(toBar);
+          const pts = candles.map(toPoint);
+          const shown = shownRef.current;
+          if (shown && shown.t === candles.at(-1)!.t) {
+            bars[bars.length - 1] = toBar(shown);
+            pts[pts.length - 1] = toPoint(shown);
+          }
+          seriesRef.current?.setData(bars);
+          areaRef.current?.setData(pts);
+          rendererRef.current?.setAll(candles, step, precisionRef.current ?? 2);
+          // Still at the edge (zoomed far out): keep going.
+          maybeLoad();
+        },
+        () => {
+          // Try again on the next scroll; a failed page is not the start of the history.
+          h.loading = false;
+        },
+      );
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(maybeLoad);
+    maybeLoad();
+    return () => {
+      ctrl.abort();
+      historyRef.current.loading = false;
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(maybeLoad);
+    };
+  }, [symbol, interval, load.status]);
 
   // Each tick updates the real candle; the frame loop below animates the drawing toward it.
   useEffect(() => {

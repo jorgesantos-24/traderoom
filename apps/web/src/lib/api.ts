@@ -165,8 +165,9 @@ export const api = {
   reset: (token: string, password: string) => request<void>('POST', '/api/auth/reset', { body: { token, password }, expectAnon: true }),
 
   assets: () => request<AssetsResponse>('GET', '/api/assets'),
-  candles: (symbol: string, interval: CandleInterval, limit: number, signal?: AbortSignal) =>
-    request<CandlesResponse>('GET', `/api/candles${qs({ symbol, interval, limit })}`, { signal }),
+  /** The latest `limit` candles, or with `before` (epoch ms) the `limit` opening before it. */
+  candles: (symbol: string, interval: CandleInterval, limit: number, signal?: AbortSignal, before?: number) =>
+    request<CandlesResponse>('GET', `/api/candles${qs({ symbol, interval, limit, before })}`, { signal }),
   /** Whether the platform is setting this asset's price now (price override). */
   marketOverride: (symbol: string, signal?: AbortSignal) =>
     request<PublicOverrideState>('GET', `/api/market/override${qs({ symbol })}`, { signal }),

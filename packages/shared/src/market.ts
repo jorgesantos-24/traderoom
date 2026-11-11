@@ -65,6 +65,8 @@ export const CandlesQuery = z.object({
     .min(1, 'O limite mínimo é 1.')
     .max(CANDLES_UPSTREAM_LIMIT, `O limite máximo é ${CANDLES_UPSTREAM_LIMIT}.`)
     .default(CANDLES_DEFAULT_LIMIT),
+  /** Older history: only candles that open before this time (epoch ms). Without it, the latest ones. */
+  before: z.coerce.number().int('Data inválida.').positive('Data inválida.').optional(),
 });
 export type CandlesQuery = z.infer<typeof CandlesQuery>;
 
