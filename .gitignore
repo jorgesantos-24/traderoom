@@ -23,4 +23,4 @@ secrets/
 .review/
 
 # Binance candles cached by apps/web/scripts/compare-patterns.ts (downloaded again when missing)
-apps/web/scripts/tv-patterns/candles/
+apps/web/scripts/tv-*/candles/

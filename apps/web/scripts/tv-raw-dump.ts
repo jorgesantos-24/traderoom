@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import { type RawSnap } from './tv-raw';
+const a: RawSnap[] = JSON.parse(fs.readFileSync(process.argv[2]!, 'utf8'));
+const [pair, res] = process.argv[3]!.split(' ');
+const r = a.find((x) => x.sym.endsWith(pair!) && x.res === res)!;
+const RM: Record<string, number> = { '1': 1, '3': 3, '5': 5, '15': 15, '30': 30, '60': 60, '120': 120, '240': 240, '1D': 1440 };
+const o = (t: number) => Math.round((t - r.t0) / RM[res!]!);
+const items = [...r.L.map((l) => ({ id: l[0], s: `L ${o(l[1])},${+l[2].toPrecision(7)} -> ${o(l[3])},${+l[4].toPrecision(7)} ${l[5]}` })), ...r.T.map((t) => ({ id: t[0], s: `T ${o(t[1])},${+t[2].toPrecision(7)} ${t[3]} ${(t[4] || '').replace(/\n/g, ' / ')}` }))].sort((x, y) => x.id - y.id);
+const from = +(process.argv[4] ?? 0), to = +(process.argv[5] ?? 1e9);
+console.log(items.filter((x) => x.id >= from && x.id <= to).map((x) => x.id + ' ' + x.s).join('\n'));

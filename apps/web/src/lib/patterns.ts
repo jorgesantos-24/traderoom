@@ -152,15 +152,22 @@ export const RULES = {
   window: 600,
   /** Points are consecutive zigzag points (true) or any pivots joined by clean price lines (false). */
   zigzag: false,
+  /** In-progress patterns may end on a provisional pivot, at least this many bars before the latest. */
+  provisional: true,
+  provisionalRight: 1,
   /** Overlap between two patterns of a kind (share of the smaller one's bars) that drops one. */
-  overlap: 0,
+  overlap: 0.5,
   overlapPts: 0,
   awaitingFirst: true,
   /** Price lines from a pivot: at most this many (the nearest) next points. */
   maxSucc: 99,
   /** Of the shapes ending on one pivot, keep the one built from the nearest points. */
   nearestLast: true,
-  nearestFamilies: ['wedge', 'triangle', 'rectangle'] as PatternFamily[],
+  nearestFamilies: ['rectangle'] as PatternFamily[],
+  /** Same shape from different starting points: keep the nearest start (otherwise the overlap rule picks). */
+  startFirst: ['double', 'triple', 'headShoulders', 'flag', 'pennant'] as PatternFamily[],
+  /** Of two overlapping patterns of these kinds, the one whose last point is later wins (before size). */
+  laterFirst: ['triangle'] as PatternFamily[],
   /** Wedges, triangles, rectangles: points joined by clean price lines; lines also contain the wicks. */
   channel: { legs: true, wicks: false, wickTol: 0 },
   // Trend height: TradingView says 50%, but its matches all sit at 0.7+ of the height measured here.
@@ -168,19 +175,22 @@ export const RULES = {
   triple: { trend: 0.9, tops: 0.1, minima: 0.5 },
   headShoulders: { trend: 0.9, headOver: 0.25, neckSlope: 0.15, shoulderHeight: 0.25, shoulderWidth: 0.6 },
   /** Channel Width Ratio Start/End: the end must be at least this much narrower than the start. */
-  wedge: { ratio: 0.25, relEnd: false, anyStart: false },
-  triangle: { dev: 0.05 },
+  wedge: { ratio: 0.17, relEnd: false, anyStart: false },
+  /** mono: each leg no bigger than the one before; minLast: the last leg's share of the first. */
+  triangle: { dev: 0.05, mono: 1, minLast: 0.2 },
   rectangle: { dev: 0.05 },
   flag: { dev: 0.15, rollback: 0.5 },
-  pennant: { rollback: 0.8 },
-  cup: { dev: 0.15, handle: 0.618, center: 0.5, minWidth: 20, round: 0.55 },
+  /** maxPole: the pole's share of the pattern's bars; minConv: width at the last point over the width at the pole's start. */
+  pennant: { rollback: 0.8, maxPole: 0.67, minConv: 0.1 },
+  flagShape: { maxPole: 0.7 },
+  cup: { dev: 0.15, handle: 0.618, center: 0.5, minWidth: 20, round: 0.9 },
 };
 
 /** Overlap tie-break by size: -1 keeps the larger pattern, 1 the smaller (TradingView: larger). */
 export const PREFER: Record<PatternFamily, number> = {
   double: -1,
   triple: -1,
-  headShoulders: -1,
+  headShoulders: 1,
   wedge: -1,
   triangle: 1,
   rectangle: -1,
@@ -282,6 +292,22 @@ export function findPatterns(c: readonly Candle[], o: PatternOptions = DEFAULT_P
 
   // Pivots in the window, by kind, with the "price line" successors of each.
   const P = pivots(c, depth).filter((z) => z.idx >= from);
+  // In-progress patterns may end on a provisional pivot: one of the latest `depth` bars that beats
+  // the bars before it and has not been beaten since (TradingView draws it dotted).
+  const prov = new Set<number>();
+  if (R.provisional && o.inProgress)
+    for (let i = Math.max(from, n - depth); i <= last - R.provisionalRight; i++) {
+      let hi = true;
+      let lo = true;
+      for (let j = Math.max(0, i - depth); j <= last && (hi || lo); j++) {
+        if (j === i) continue;
+        if (j < i ? c[j]!.h > c[i]!.h : c[j]!.h >= c[i]!.h) hi = false;
+        if (j < i ? c[j]!.l < c[i]!.l : c[j]!.l <= c[i]!.l) lo = false;
+      }
+      if (hi) P.push({ idx: i, price: c[i]!.h, kind: 'H', at: last });
+      if (lo) P.push({ idx: i, price: c[i]!.l, kind: 'L', at: last });
+      if (hi || lo) prov.add(i);
+    }
   const next = new Map<SwingPoint, SwingPoint[]>();
   for (let i = 0; i < P.length; i++) {
     const a = P[i]!;
@@ -468,6 +494,13 @@ export function findPatterns(c: readonly Candle[], o: PatternOptions = DEFAULT_P
                   type = up === 1 ? 'bullPennant' : 'bearPennant';
                 }
                 const Bl = B;
+                const poleShare = (a1.idx - a0.idx) / (a4.idx - a0.idx);
+                if (poleShare > (type.endsWith('Pennant') ? R.pennant.maxPole : R.flagShape.maxPole)) continue;
+                if (type.endsWith('Pennant')) {
+                  const wS = lineAt(A, a0.idx) - lineAt(Bl, a0.idx);
+                  const wE = lineAt(A, a4.idx) - lineAt(Bl, a4.idx);
+                  if (wS <= 0 || wE < R.pennant.minConv * wS) continue;
+                }
                 // No close through the lines between the tip and the last point.
                 let inside = true;
                 for (let k = a1.idx; k <= a4.idx && inside; k++) {
@@ -726,6 +759,11 @@ export function findPatterns(c: readonly Candle[], o: PatternOptions = DEFAULT_P
             return w > 0 && Math.abs(z.price - lineAt(A.line, z.idx)) <= R.triangle.dev * w;
           });
           if (!mid) continue;
+          // TradingView's triangles narrow leg by leg: each swing no bigger than the one before.
+          const five = [A.a, B.a, mid, B.b, A.b];
+          const legs = five.slice(1).map((z, j) => Math.abs(z.price - five[j]!.price));
+          if (R.triangle.mono && legs.some((l, j) => j > 0 && l > legs[j - 1]! * (1 + 1e-9))) continue;
+          if (legs[3]! < R.triangle.minLast * legs[0]!) continue;
           const flatU = Math.abs(su) <= 0.02 * base;
           const flatD = Math.abs(sd) <= 0.02 * base;
           const type: PatternType = flatU && !flatD ? 'ascendingTriangle' : flatD && !flatU ? 'descendingTriangle' : 'symmetricalTriangle';
@@ -733,17 +771,27 @@ export function findPatterns(c: readonly Candle[], o: PatternOptions = DEFAULT_P
         }
   }
 
+  // A provisional pivot can only be the last point of a pattern still forming.
+  if (prov.size)
+    for (let i = cands.length - 1; i >= 0; i--) {
+      const x = cands[i]!;
+      const pts = x.points;
+      const lastPt = pts.at(-1)!.i;
+      if (pts.slice(0, -1).some((q) => prov.has(q.i)) || (x.cup && [x.cup.left, x.cup.bottom, x.cup.right].some((q) => prov.has(q.i))) || (prov.has(lastPt) && !x.forming)) cands.splice(i, 1);
+    }
+
   // Settle each candidate, then per kind keep the Awaiting ones first, then the larger (or better
   // fitting) ones, dropping any that overlap a kept one of the same kind.
   const settled = cands.map((x) => {
     const { forming, rank, end, ...rest } = x;
     const p: Pattern = { ...rest, family: FAMILY[x.type], name: PATTERN_NAME[x.type], status: forming ? 'forming' : 'awaiting', statusAt: null };
-    return { p: forming ? p : settle(c, p), rank, end };
+    const lastPt = x.points.at(-1)!.i;
+    return { p: forming ? p : settle(c, p), rank: R.laterFirst.includes(FAMILY[x.type]) ? rank - lastPt * 1e6 : rank, end };
   });
   const live = (p: Pattern) => p.status === 'awaiting' || p.status === 'forming';
   // The same shape with different starting points (the low the move into it started from): the
   // nearest start is the one TradingView draws.
-  const startFirst = new Set<PatternFamily>(['double', 'triple', 'headShoulders', 'flag', 'pennant']);
+  const startFirst = new Set<PatternFamily>(R.startFirst);
   const nearest = new Map<string, number>();
   for (const x of settled) {
     if (!startFirst.has(x.p.family)) continue;

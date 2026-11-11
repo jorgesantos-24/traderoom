@@ -127,8 +127,9 @@ describe('flags and cup', () => {
 
   it('cup and handle', () => {
     const c = fromCloses([
-      110, 115, 120, 118, 115, 111, 107, 104, 102, 101, 100.5, 100, 101, 100.5, 100, 101, 100.2, 100.8, 101.5, 103, 105, 108, 111, 114, 117,
-      119.5, 120, 118, 116, 114.5, 116, 119, 121.5, 124, 123,
+      // A rounded bottom: nearly every bar between the rims sits in the cup's lower half.
+      110, 115, 120, 108, 104, 102, 101, 100.5, 100, 101, 100.5, 100, 101, 100.2, 100.8, 100.4, 101, 101.5, 103, 105, 108, 119.5,
+      120, 118, 116, 114.5, 116, 119, 121.5, 124, 123,
     ]);
     const [p] = findPatterns(c, opts({ depth: 2 }));
     expect(p).toMatchObject({ type: 'cupHandle', dir: 1 });
@@ -193,7 +194,9 @@ describe('against TradingView (BTCUSDT 5m, Binance, 2026-11-07 ~13:20 UTC-3)', (
 
   it('draws them through the same swing points and breakouts', () => {
     // Times in UTC (TradingView showed them 3 hours earlier, in UTC-3).
-    expect(touches('risingWedge')).toEqual(['11-06T17:50', '11-06T22:00', '11-07T03:40', '11-07T09:00']);
+    // Rechecked 2026-11-11 with TradingView's bar replay at 11-07 16:00 UTC: the wedge starts at 16:20
+    // (17:50 is where the double top on the same three points starts).
+    expect(touches('risingWedge')).toEqual(['11-06T16:20', '11-06T22:00', '11-07T03:40', '11-07T09:00']);
     expect(at(find('risingWedge')!.breakout.i)).toBe('11-07T10:25');
     // The triangle and rectangle end on the swing points TradingView drew and break on the same bar;
     // their first points still differ (TradingView started them at 19:45 and 20:50).

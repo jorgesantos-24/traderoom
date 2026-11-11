@@ -5,7 +5,7 @@ import type { Candle } from '@traderoom/shared';
 import { DEFAULT_PATTERNS, findPatterns, type Pattern } from '../src/lib/patterns';
 import { loadSnapshots, TV_NAME } from './compare-patterns';
 
-const RES_MIN: Record<string, number> = { '1': 1, '3': 3, '5': 5, '15': 15, '30': 30, '60': 60, '240': 240, '1D': 1440 };
+const RES_MIN: Record<string, number> = { '1': 1, '3': 3, '5': 5, '15': 15, '30': 30, '60': 60, '120': 120, '240': 240, '1D': 1440 };
 const [dir, name] = process.argv.slice(2);
 const PRE = 600;
 const rows: string[] = [];

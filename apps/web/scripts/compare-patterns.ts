@@ -11,12 +11,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Candle } from '@traderoom/shared';
+import { rawPatterns, type RawSnap } from './tv-raw';
 import { PREFER, RULES, DEFAULT_PATTERNS, findPatterns, visiblePatterns, type Pattern, type PatternType } from '../src/lib/patterns';
 
 type TvPattern = { n: string; st?: string; p: Array<[number, number]>; tg: [number, number] | null };
 type Snapshot = { sym: string; res: string; t0: number; t1: number; out: TvPattern[]; mode?: 'last' | 'all' };
 
-const RES_MIN: Record<string, number> = { '1': 1, '3': 3, '5': 5, '15': 15, '30': 30, '60': 60, '120': 120, '240': 240, '1D': 1440 };
+export const RES_MIN: Record<string, number> = { '1': 1, '3': 3, '5': 5, '15': 15, '30': 30, '60': 60, '120': 120, '240': 240, '1D': 1440 };
 const BINANCE_INT: Record<string, string> = { '1': '1m', '3': '3m', '5': '5m', '15': '15m', '30': '30m', '60': '1h', '120': '2h', '240': '4h', '1D': '1d' };
 
 /** Our types under TradingView's names (TradingView has one "Triangle"). */
@@ -191,7 +192,10 @@ export function parseSnapshots(text: string): Snapshot[] {
 export function loadSnapshots(dir: string): Snapshot[] {
   const files = fs.readdirSync(dir);
   return [
-    ...files.filter((f) => f.endsWith('.json')).map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) as Snapshot),
+    ...files
+      .filter((f) => f.endsWith('.raw.json'))
+      .flatMap((f) => (JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) as RawSnap[]).map((r) => ({ sym: r.sym, res: r.res, t0: r.t0, t1: r.t1, out: rawPatterns(r), mode: 'all' as const }))),
+    ...files.filter((f) => f.endsWith('.json') && !f.endsWith('.raw.json')).map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) as Snapshot),
     ...files
       .filter((f) => f.endsWith('.txt'))
       .flatMap((f) => parseSnapshots(fs.readFileSync(path.join(dir, f), 'utf8')).map((x) => ({ ...x, mode: f.includes('-all') ? ('all' as const) : ('last' as const) }))),
@@ -208,7 +212,7 @@ async function main() {
     const keys = path[0] === 'prefer' ? path.slice(1) : path;
     let o = root;
     for (const p of keys.slice(0, -1)) o = o[p] as Record<string, unknown>;
-    o[keys.at(-1)!] = val === 'true' ? true : val === 'false' ? false : Number(val);
+    o[keys.at(-1)!] = val === 'true' ? true : val === 'false' ? false : val!.includes(',') || /^[a-z]/i.test(val!) ? (val ? val.split(',').filter(Boolean) : []) : Number(val);
   }
   const verbose = process.argv.includes('--verbose');
   const quiet = process.argv.includes('--quiet');
