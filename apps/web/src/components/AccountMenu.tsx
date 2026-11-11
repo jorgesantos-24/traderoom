@@ -495,6 +495,7 @@ export function DepositButton() {
         onClick={() => setOpen(true)}
         className="flex h-10 items-center gap-2.5 rounded-[3px] border border-up px-2.5 text-[20px] font-normal text-up transition-colors hover:bg-up/10 active:scale-[0.98] sm:h-[46px] sm:w-[132px] sm:justify-center sm:px-0"
         data-testid="deposit-button"
+        aria-label="Depositar"
       >
         <svg aria-hidden="true" viewBox="0 0 24 24" className="size-6 sm:hidden" fill="currentColor">
           <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4H17a1 1 0 0 1 1 1v2H6.5a.5.5 0 0 0 0 1H19a2 2 0 0 1 2 2v2h-4a3 3 0 0 0 0 6h4v1a2 2 0 0 1-2 2H6.5A2.5 2.5 0 0 1 4 18.5v-12z" />

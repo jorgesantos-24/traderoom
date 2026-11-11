@@ -2,6 +2,10 @@
 @import '@fontsource-variable/inter';
 @import '@fontsource-variable/roboto';
 
+/* Desktop shell (sidebar, footer) only with room for it: a phone on its side is wide but short and
+   keeps the phone layout. */
+@custom-variant md (@media (width >= 48rem) and (height >= 32rem));
+
 @theme {
   /* Roboto, like the Kyden platform; Inter stays as the fallback. */
   --font-sans: 'Roboto Variable', 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
@@ -373,4 +377,9 @@ input[type='number']::-webkit-outer-spin-button {
   to {
     transform: translateX(310%);
   }
+}
+
+/* Headings and regions focused by script (route change) need no visible ring. */
+[tabindex='-1']:focus {
+  outline: none;
 }

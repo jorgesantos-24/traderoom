@@ -77,7 +77,7 @@ export function IndicatorsDialog({ open, onClose, state }: { open: boolean; onCl
   return (
     <Dialog open={open} title="Indicadores" onClose={onClose}>
       <input
-        autoFocus
+        autoFocus={matchMedia('(pointer: fine)').matches}
         type="search"
         value={q}
         onChange={(e) => setQ(e.target.value)}

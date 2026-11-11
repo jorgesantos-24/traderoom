@@ -159,9 +159,9 @@ function Traderoom({ assets, limits }: { assets: AssetView[]; limits: OrderLimit
         {orders.announcement}
       </div>
       <ResultToasts results={orders.results} onDismiss={orders.dismissResult} />
-      <div className="flex flex-col lg:h-full">
-        <div className="flex min-h-0 flex-col gap-2 lg:flex-1 lg:flex-row lg:gap-0">
-          <div className="h-[calc(100svh-360px)] min-h-[240px] min-w-0 lg:h-auto lg:flex-1">
+      <div className="flex h-full flex-col">
+        <div className="flex flex-1 flex-col gap-2 lg:min-h-0 lg:flex-row lg:gap-0">
+          <div className="min-h-[220px] min-w-0 flex-1">
             <PriceChart
               symbol={asset.symbol}
               display={asset.display}
@@ -188,7 +188,7 @@ function Traderoom({ assets, limits }: { assets: AssetView[]; limits: OrderLimit
         </div>
         {/* "Portfólio total" bar: opens the open positions above it. */}
         {positionsOpen && (
-          <div id="positions" className="max-h-[240px] overflow-y-auto border-t border-border bg-bg">
+          <div id="positions" className="max-h-[40%] shrink-0 overflow-y-auto border-t border-border bg-bg lg:max-h-[240px]">
             {positions}
           </div>
         )}

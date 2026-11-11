@@ -75,7 +75,7 @@ test('register → login → order → settlement → updated balance', async ({
   await expect(page).toHaveURL(/\/login\?registered=1$/);
   await expect(page.getByText('Conta criada. Entre para continuar.')).toBeVisible();
   await page.getByLabel('E-mail').fill(email);
-  await page.getByLabel('Senha').fill(PASSWORD);
+  await page.getByLabel('Senha', { exact: true }).fill(PASSWORD);
   await page.getByRole('button', { name: 'Entrar' }).click();
   await expect(page).toHaveURL(/\/traderoom$/);
 
@@ -145,7 +145,7 @@ test('register → login → order → settlement → updated balance', async ({
   await expect(page.getByTestId('ledger-row')).toHaveCount(settled.status === 'lost' ? 2 : 3);
   await page.getByRole('button', { name: 'Histórico' }).click();
   await expect(page.getByTestId('history-row')).toHaveCount(1);
-  await expect(page.getByTestId('history-row')).toContainText(/R\$|Devolvido/);
+  await expect(page.getByTestId('history-row')).toContainText(/US\$|Devolvido/);
   await page.getByTestId('history-row').getByRole('button').click();
   await expect(page.getByText('Informações da operação')).toBeVisible();
 });
