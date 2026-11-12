@@ -124,7 +124,7 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
           {category === 'stocks'
             ? 'Ações OTC: preço gerado pela plataforma, disponível 24 horas, inclusive fins de semana. Não é a cotação da bolsa.'
             : category === 'forex'
-              ? 'Pares forex OTC: preço gerado pela plataforma, disponível 24 horas, inclusive fins de semana. Não é a cotação do mercado de câmbio.'
+              ? 'Pares de moedas: preço gerado pela plataforma, disponível 24 horas, inclusive fins de semana. Não é a cotação do mercado de câmbio.'
               : category === 'synthetic'
               ? 'Índices sintéticos: preço gerado pela plataforma, 24 horas. Bull Market tende a subir e Bear Market a cair no longo prazo; no curto prazo o movimento é aleatório.'
               : 'Ativos com a etiqueta OTC têm preço gerado pela plataforma e funcionam 24 horas; os demais seguem a Binance.'}
@@ -167,7 +167,7 @@ function AssetRow({ asset, isOpen, onPick }: { asset: AssetView; isOpen: boolean
         <span className="flex-1">
           <span className="block text-sm font-semibold text-text">
             {asset.display}
-            {asset.kind === 'otc' && (
+            {asset.kind === 'otc' && asset.category !== 'forex' && (
               <span className="ml-2 rounded bg-warn/15 px-1.5 py-0.5 text-[10px] font-semibold text-warn">
                 {asset.category === 'synthetic' ? 'Sintético' : 'OTC'}
               </span>
