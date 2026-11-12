@@ -120,15 +120,6 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
             </button>
           ))}
         </div>
-        <p className="text-xs text-muted">
-          {category === 'stocks'
-            ? 'Ações OTC: preço gerado pela plataforma, disponível 24 horas, inclusive fins de semana. Não é a cotação da bolsa.'
-            : category === 'forex'
-              ? 'Pares de moedas: preço gerado pela plataforma, disponível 24 horas, inclusive fins de semana. Não é a cotação do mercado de câmbio.'
-              : category === 'synthetic'
-              ? 'Índices sintéticos: preço gerado pela plataforma, 24 horas. Bull Market tende a subir e Bear Market a cair no longo prazo; no curto prazo o movimento é aleatório.'
-              : 'Ações, pares de moedas e índices sintéticos têm preço gerado pela plataforma e funcionam 24 horas; as criptomoedas seguem a Binance.'}
-        </p>
         <ul className="-mx-2 flex max-h-[60vh] flex-col overflow-y-auto">
           {shown.map((a) => (
             <AssetRow

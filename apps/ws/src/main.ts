@@ -1,4 +1,4 @@
-import { RedisKeys } from '@traderoom/shared';
+import { RedisKeys, WS_PRESENCE_INTERVAL_MS, WS_PRESENCE_TTL_MS, type WsPresenceSnapshot } from '@traderoom/shared';
 import { loadConfig } from './config.js';
 import { RELAY_DEFAULTS, Relay } from './feed/relay.js';
 import { insertSnapshots, lastPrice, loadEnabledAssets, loadOverrideTarget, saveOverrideTarget, writePricesToRedis } from './feed/sinks.js';
@@ -56,6 +56,15 @@ const gateway = new Gateway(
   { log, metrics },
 );
 
+// Who is online, for the admin panel. Short TTL: if this process dies the list empties by itself.
+async function publishPresence(): Promise<void> {
+  const snapshot: WsPresenceSnapshot = { at: Date.now(), users: gateway.presence() };
+  await redis.set(RedisKeys.wsPresence, JSON.stringify(snapshot), 'PX', WS_PRESENCE_TTL_MS);
+}
+const presenceTimer = setInterval(() => {
+  publishPresence().catch((err: unknown) => log.warn({ err }, 'failed to publish ws presence'));
+}, WS_PRESENCE_INTERVAL_MS);
+
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
@@ -63,7 +72,9 @@ async function shutdown(signal: string): Promise<void> {
   log.info({ signal }, 'shutting down');
   try {
     // Clients first (1001 tells them to reconnect), then upstream feeds.
+    clearInterval(presenceTimer);
     await gateway.close();
+    await redis.del(RedisKeys.wsPresence).catch(() => undefined);
     await relay.stop();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await Promise.allSettled([pool.end(), redis.quit()]);

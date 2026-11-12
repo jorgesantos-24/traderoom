@@ -11,14 +11,16 @@ import {
   IdempotencyKeySchema,
   IndicatorAccessParams,
   UserIdParams,
+  type AdminOnlineResponse,
   type IndicatorAccessResponse,
   type Counter,
   type Registry,
 } from '@traderoom/shared';
 import { authOf } from '../plugins/security.js';
 import type { AdminService } from '../services/admin.js';
+import type { PresenceService } from '../services/presence.js';
 
-export function adminRoutes(app: FastifyInstance, deps: { admin: AdminService; metrics: Registry }): void {
+export function adminRoutes(app: FastifyInstance, deps: { admin: AdminService; presence?: PresenceService; metrics: Registry }): void {
   const actions: Counter = deps.metrics.counter('admin_actions_total', 'Admin changes, by action.');
   const guard = { preHandler: app.requireAdmin };
   const noStore = 'no-store';
@@ -26,6 +28,11 @@ export function adminRoutes(app: FastifyInstance, deps: { admin: AdminService; m
   app.get('/api/admin/users', guard, async (req, reply) => {
     const q = AdminUsersQuery.parse(req.query);
     return reply.header('cache-control', noStore).send(await deps.admin.listUsers(q));
+  });
+
+  app.get('/api/admin/online', guard, async (_req, reply) => {
+    const body: AdminOnlineResponse = deps.presence ? await deps.presence.listOnline() : { users: [], updatedAt: null };
+    return reply.header('cache-control', noStore).send(body);
   });
 
   app.post('/api/admin/users/:id/credit', guard, async (req, reply) => {

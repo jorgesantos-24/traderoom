@@ -157,3 +157,45 @@ export interface IndicatorAccessView {
 export interface IndicatorAccessResponse {
   indicators: PremiumIndicator[];
 }
+
+// ---- Online users ----
+
+/** How often the ws gateway rewrites its presence snapshot, and how long Redis keeps it. */
+export const WS_PRESENCE_INTERVAL_MS = 5_000;
+export const WS_PRESENCE_TTL_MS = 20_000;
+
+/** One connected user, as the ws gateway sees it. */
+export interface WsPresenceEntry {
+  userId: string;
+  /** Open WebSocket connections (tabs or devices). */
+  connections: number;
+  /** Epoch ms of the oldest open connection. */
+  since: number;
+  /** Assets the user's connections are subscribed to. */
+  assets: string[];
+}
+
+/** What the ws gateway writes to `RedisKeys.wsPresence`. */
+export interface WsPresenceSnapshot {
+  /** Epoch ms when it was written. */
+  at: number;
+  users: WsPresenceEntry[];
+}
+
+export interface AdminOnlineUserView {
+  id: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  balanceCents: number;
+  connections: number;
+  /** ISO time of the oldest open connection. */
+  onlineSince: string;
+  assets: string[];
+}
+
+export interface AdminOnlineResponse {
+  users: AdminOnlineUserView[];
+  /** ISO time of the snapshot; null when the price server has not published one (down or restarting). */
+  updatedAt: string | null;
+}

@@ -12,6 +12,7 @@ import { createCandleService } from './services/candles.js';
 import { createOtcCandleSource } from './services/otc-candles.js';
 import { createOrderLimitsRepo } from './services/order-limits.js';
 import { createAdminService } from './services/admin.js';
+import { createPresenceService } from './services/presence.js';
 import { createOrderStatsService } from './services/order-stats.js';
 import { createOrderService, redisDueScheduler, redisPriceReader } from './services/orders.js';
 import { createWalletService } from './services/wallet.js';
@@ -105,6 +106,7 @@ const app = await buildApp(
     assets,
     limits,
     admin: createAdminService({ pool, onAssetsChanged: () => assets.invalidate() }),
+    presence: createPresenceService({ pool, readSnapshot: () => redis.get(RedisKeys.wsPresence) }),
     payments,
     kyc,
     otcOverride: createOtcOverrideService({ pool, redis }),

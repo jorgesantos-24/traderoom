@@ -14,6 +14,7 @@ import {
   type ErrorFrame,
   type PriceItem,
   type SnapshotFrame,
+  type WsPresenceEntry,
 } from '@traderoom/shared';
 import type { PublishedPrice, SeqCounter } from '../feed/conflator.js';
 import { staleFrame } from '../feed/conflator.js';
@@ -79,6 +80,8 @@ interface Client {
   ws: WebSocket;
   session: WsSession;
   subs: Set<string>;
+  /** Epoch ms when the connection was accepted. */
+  openedAt: number;
   lastSeen: number;
   msgWindowStart: number;
   msgCount: number;
@@ -158,6 +161,21 @@ export class Gateway {
 
   get connectionCount(): number {
     return this.clients.size;
+  }
+
+  /** Users connected right now, one entry per user (for the admin's "online" list). */
+  presence(): WsPresenceEntry[] {
+    const out: WsPresenceEntry[] = [];
+    for (const [userId, conns] of this.byUser) {
+      let since = Infinity;
+      const assets = new Set<string>();
+      for (const c of conns) {
+        since = Math.min(since, c.openedAt);
+        for (const s of c.subs) assets.add(s);
+      }
+      out.push({ userId, connections: conns.size, since, assets: [...assets].sort() });
+    }
+    return out;
   }
 
   /** Closes every client with 1001 and stops accepting new ones. */
@@ -250,7 +268,7 @@ export class Gateway {
     }
 
     const now = this.now();
-    const client: Client = { ws, session, subs: new Set(), lastSeen: now, msgWindowStart: now, msgCount: 0 };
+    const client: Client = { ws, session, subs: new Set(), openedAt: now, lastSeen: now, msgWindowStart: now, msgCount: 0 };
     this.clients.add(client);
     if (userConns) userConns.add(client);
     else this.byUser.set(session.userId, new Set([client]));

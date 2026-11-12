@@ -2,6 +2,7 @@ import {
   CSRF_HEADER,
   type AdminAssetPatch,
   type AdminAssetView,
+  type AdminOnlineResponse,
   type AdminUserView,
   type AuditAction,
   type AuditEntryView,
@@ -201,6 +202,7 @@ export const api = {
   indicatorAccess: async () => (await request<IndicatorAccessResponse>('GET', '/api/indicators/access')).indicators,
 
   admin: {
+    online: () => request<AdminOnlineResponse>('GET', '/api/admin/online'),
     indicatorAccess: async () => (await request<{ access: IndicatorAccessView[] }>('GET', '/api/admin/indicators')).access,
     grantIndicator: async (email: string, indicator: PremiumIndicator) =>
       (await request<{ access: IndicatorAccessView }>('POST', '/api/admin/indicators', { body: { email, indicator } })).access,

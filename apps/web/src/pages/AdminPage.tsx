@@ -11,6 +11,7 @@ import {
 } from '@traderoom/shared';
 import { IndicatorsTab } from '../components/AdminIndicators';
 import { KycTab } from '../components/AdminKyc';
+import { OnlineTab } from '../components/AdminOnline';
 import { WithdrawalsTab } from '../components/AdminWithdrawals';
 import { AppShell } from '../components/AppShell';
 import { Dialog } from '../components/Dialog';
@@ -26,6 +27,7 @@ import { usePaged } from '../lib/use-paged';
 
 const TABS = [
   { id: 'users', label: 'Usuários' },
+  { id: 'online', label: 'Online' },
   { id: 'kyc', label: 'Verificações' },
   { id: 'withdrawals', label: 'Saques' },
   { id: 'assets', label: 'Ativos' },
@@ -116,6 +118,7 @@ export function AdminPage() {
       </div>
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
         {tab === 'users' && <UsersTab selfId={user.id} onNotice={setNotice} />}
+        {tab === 'online' && <OnlineTab />}
         {tab === 'kyc' && <KycTab onNotice={setNotice} />}
         {tab === 'withdrawals' && <WithdrawalsTab onNotice={setNotice} />}
         {tab === 'assets' && <AssetsTab onNotice={setNotice} />}

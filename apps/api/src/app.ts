@@ -27,6 +27,7 @@ import { kycRoutes } from './routes/kyc.js';
 import { otcOverrideRoutes } from './routes/otc-override.js';
 import type { OtcOverrideService } from './services/otc-override.js';
 import type { KycService } from './services/kyc.js';
+import type { PresenceService } from './services/presence.js';
 
 export const BODY_LIMIT_BYTES = 16 * 1024;
 
@@ -43,6 +44,8 @@ export interface AppDeps {
   assets: AssetRepo;
   limits: OrderLimitsRepo;
   admin: AdminService;
+  /** Who is online (admin panel); left out by tests that do not need it. */
+  presence?: PresenceService;
   payments: PaymentService;
   kyc: KycService;
   otcOverride: OtcOverrideService;
@@ -130,7 +133,7 @@ export async function buildApp(deps: AppDeps, opts: AppOptions): Promise<Fastify
     limits: deps.limits,
     metrics: deps.metrics,
   });
-  adminRoutes(app, { admin: deps.admin, metrics: deps.metrics });
+  adminRoutes(app, { admin: deps.admin, presence: deps.presence, metrics: deps.metrics });
   otcOverrideRoutes(app, { otcOverride: deps.otcOverride, metrics: deps.metrics });
   paymentRoutes(app, { payments: deps.payments, metrics: deps.metrics });
   kycRoutes(app, { kyc: deps.kyc });

@@ -12,4 +12,6 @@ export const RedisKeys = {
   binanceRestBackoffUntil: 'binance:rest:backoff_until',
   /** Active OTC price override (JSON `OtcOverrideWire`), one for the whole system. */
   otcOverride: 'otc:override',
+  /** Who is connected to the ws gateway right now (JSON `WsPresenceSnapshot`), rewritten every few seconds with a short TTL. */
+  wsPresence: 'ws:presence',
 } as const;

@@ -384,3 +384,23 @@ describe('metrics', () => {
     expect(text).toContain('ws_frames_sent_total{type="snapshot"} 1');
   });
 });
+
+describe('presence', () => {
+  it('lists each connected user once, with connection count and subscribed assets', async () => {
+    const a1 = await opened(connect({ cookie: 'sid=u1:s1' }));
+    const a2 = await opened(connect({ cookie: 'sid=u1:s2' }));
+    const b = await opened(connect({ cookie: 'sid=u2:s3' }));
+    a1.send({ t: 'sub', assets: ['ETHUSDT'] });
+    a2.send({ t: 'sub', assets: ['BTCUSDT', 'ETHUSDT'] });
+    await vi.waitFor(() => expect(of(a1, 'snapshot').length + of(a2, 'snapshot').length).toBe(2));
+
+    const byUser = new Map(gateway.presence().map((p) => [p.userId, p]));
+    expect(byUser.size).toBe(2);
+    expect(byUser.get('u1')).toMatchObject({ connections: 2, assets: ['BTCUSDT', 'ETHUSDT'] });
+    expect(byUser.get('u2')).toMatchObject({ connections: 1, assets: [] });
+    expect(typeof byUser.get('u1')?.since).toBe('number');
+
+    b.ws.close();
+    await vi.waitFor(() => expect(gateway.presence().map((p) => p.userId)).toEqual(['u1']));
+  });
+});
