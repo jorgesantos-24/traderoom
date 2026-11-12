@@ -76,7 +76,7 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
                     )}
                   >
                     {a.display}
-                    {a.kind === 'otc' && a.category !== 'synthetic' && !/OTC/i.test(a.display) ? ' (OTC)' : ''}
+                    {a.kind === 'otc' && a.category !== 'synthetic' && a.category !== 'forex' && !/OTC/i.test(a.display) ? ' (OTC)' : ''}
                   </span>
                 </span>
               </button>
@@ -127,14 +127,13 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
               ? 'Pares de moedas: preço gerado pela plataforma, disponível 24 horas, inclusive fins de semana. Não é a cotação do mercado de câmbio.'
               : category === 'synthetic'
               ? 'Índices sintéticos: preço gerado pela plataforma, 24 horas. Bull Market tende a subir e Bear Market a cair no longo prazo; no curto prazo o movimento é aleatório.'
-              : 'Ativos com a etiqueta OTC têm preço gerado pela plataforma e funcionam 24 horas; os demais seguem a Binance.'}
+              : 'Ações, pares de moedas e índices sintéticos têm preço gerado pela plataforma e funcionam 24 horas; as criptomoedas seguem a Binance.'}
         </p>
         <ul className="-mx-2 flex max-h-[60vh] flex-col overflow-y-auto">
           {shown.map((a) => (
             <AssetRow
               key={a.symbol}
               asset={a}
-              isOpen={tabs.includes(a.symbol)}
               onPick={() => {
                 onOpen(a.symbol);
                 setPicking(false);
@@ -154,7 +153,7 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
   );
 }
 
-function AssetRow({ asset, isOpen, onPick }: { asset: AssetView; isOpen: boolean; onPick(): void }) {
+function AssetRow({ asset, onPick }: { asset: AssetView; onPick(): void }) {
   const quote = useQuote(asset.symbol);
   return (
     <li>
@@ -167,15 +166,9 @@ function AssetRow({ asset, isOpen, onPick }: { asset: AssetView; isOpen: boolean
         <span className="flex-1">
           <span className="block text-sm font-semibold text-text">
             {asset.display}
-            {asset.kind === 'otc' && asset.category !== 'forex' && (
-              <span className="ml-2 rounded bg-warn/15 px-1.5 py-0.5 text-[10px] font-semibold text-warn">
-                {asset.category === 'synthetic' ? 'Sintético' : 'OTC'}
-              </span>
-            )}
           </span>
           <span className="tabular block text-xs text-muted">{quote?.price != null ? formatPrice(quote.price) : '—'}</span>
         </span>
-        {isOpen && <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand">Aberto</span>}
         <span className="tabular text-sm font-bold text-up">{asset.payoutPct}%</span>
       </button>
     </li>
