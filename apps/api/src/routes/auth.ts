@@ -11,12 +11,13 @@ export interface AuthRouteDeps {
 }
 
 export function authRoutes(app: FastifyInstance, { auth, mailer, publicOrigin }: AuthRouteDeps): void {
-  app.get('/api/auth/csrf', async (req, reply) => {
+  app.get('/api/auth/csrf', { config: { rateLimit: false } }, async (req, reply) => {
     const token = app.csrf.current(req) ?? app.csrf.issue(reply);
     return reply.header('cache-control', 'no-store').send({ csrfToken: token });
   });
 
-  app.post('/api/auth/register', { config: { rateLimit: { max: 5, timeWindow: '1 hour' } } }, async (req, reply) => {
+  // TEMP: no rate limit at all (not even the global one); restore { config: { rateLimit: { max: 5, timeWindow: '1 hour' } } }
+  app.post('/api/auth/register', { config: { rateLimit: false } }, async (req, reply) => {
     const input = RegisterInput.parse(req.body);
     const user = await auth.register(input);
     return reply.status(201).send({ user });
@@ -32,7 +33,7 @@ export function authRoutes(app: FastifyInstance, { auth, mailer, publicOrigin }:
     return reply.header('cache-control', 'no-store').send({ user, csrfToken });
   });
 
-  app.post('/api/auth/logout', async (req, reply) => {
+  app.post('/api/auth/logout', { config: { rateLimit: false } }, async (req, reply) => {
     await auth.logout(app.sessionCookie.read(req));
     app.sessionCookie.clear(reply);
     return reply.status(204).send();
@@ -61,7 +62,7 @@ export function authRoutes(app: FastifyInstance, { auth, mailer, publicOrigin }:
     return reply.status(204).send();
   });
 
-  app.get('/api/me', { preHandler: app.requireAuth }, async (req, reply) => {
+  app.get('/api/me', { config: { rateLimit: false }, preHandler: app.requireAuth }, async (req, reply) => {
     return reply.header('cache-control', 'no-store').send({ user: authOf(req).user });
   });
 }
