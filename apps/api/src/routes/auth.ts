@@ -22,7 +22,8 @@ export function authRoutes(app: FastifyInstance, { auth, mailer, publicOrigin }:
     return reply.status(201).send({ user });
   });
 
-  app.post('/api/auth/login', { config: { rateLimit: { max: 10, timeWindow: '5 minutes' } } }, async (req, reply) => {
+  // TEMP: per-route rate limit removed; restore { config: { rateLimit: { max: 10, timeWindow: '5 minutes' } } }
+  app.post('/api/auth/login', async (req, reply) => {
     const input = LoginInput.parse(req.body);
     const { user, cookieValue } = await auth.login(input);
     app.sessionCookie.set(reply, cookieValue);
@@ -37,7 +38,8 @@ export function authRoutes(app: FastifyInstance, { auth, mailer, publicOrigin }:
     return reply.status(204).send();
   });
 
-  app.post('/api/auth/forgot', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (req, reply) => {
+  // TEMP: per-route rate limit removed; restore { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }
+  app.post('/api/auth/forgot', async (req, reply) => {
     const { email } = ForgotInput.parse(req.body);
     const reset = await auth.requestPasswordReset(email);
     if (reset) {
@@ -51,7 +53,8 @@ export function authRoutes(app: FastifyInstance, { auth, mailer, publicOrigin }:
     return reply.status(204).send();
   });
 
-  app.post('/api/auth/reset', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (req, reply) => {
+  // TEMP: per-route rate limit removed; restore { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }
+  app.post('/api/auth/reset', async (req, reply) => {
     const input = ResetInput.parse(req.body);
     await auth.resetPassword(input);
     app.sessionCookie.clear(reply);

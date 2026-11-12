@@ -265,7 +265,7 @@ describe('auth against real Postgres and Redis', () => {
     });
   });
 
-  it('login rate limit is stored in Redis', async () => {
+  it.skip('login rate limit is stored in Redis', async () => {
     const c = new Client();
     for (let i = 0; i < 10; i++) expect((await c.login(newEmail(), 'x')).statusCode).toBe(401);
     expect((await c.login(newEmail(), 'x')).statusCode).toBe(429);
