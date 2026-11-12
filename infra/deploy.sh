@@ -215,6 +215,23 @@ setup() {
   cp -r infra/systemd infra/sysctl infra/redis infra/Caddyfile infra/vm/*.sh "$stage/"
   # No contact e-mail: the certificate is issued without one (ACME allows it).
   [[ -n $ACME_EMAIL ]] || sed -i '/^\temail {\$TRADEROOM_ACME_EMAIL}$/d' "$stage/Caddyfile"
+  # Other hostnames (www, an old domain) redirect to $TRADEROOM_DOMAIN. Payment webhooks are still answered
+  # on them, so postbacks registered under an old domain keep working.
+  if [[ -n ${TRADEROOM_REDIRECT_FROM:-} ]]; then
+    cat >>"$stage/Caddyfile" <<CADDY
+
+${TRADEROOM_REDIRECT_FROM// /, } {
+	handle /api/webhooks/* {
+		reverse_proxy 127.0.0.1:3000 {
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+	handle {
+		redir https://$TRADEROOM_DOMAIN{uri} permanent
+	}
+}
+CADDY
+  fi
   # Non-secret settings. Secrets (DATABASE_URL, RESEND_API_KEY, NOVUS_*, EAGLE_*) are built at boot by fetch-secrets.sh.
   cat >"$stage/traderoom.env" <<EOF
 GCP_PROJECT=$GCP_PROJECT
