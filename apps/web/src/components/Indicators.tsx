@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState, type RefObject } from 'react';
 import { DRAW_COLORS } from '../lib/drawings';
+import { useFavorites } from '../lib/favorites';
 import type { IndicatorRenderer, LegendPane } from '../lib/indicator-series';
 import { INDICATOR_BY_TYPE, INDICATORS, indicatorLabel, type IndicatorConfig, type ParamDef } from '../lib/indicators';
 import type { IndicatorsState } from '../lib/use-indicators';
 import { Dialog } from './Dialog';
+import { SearchField, StarButton } from './PickerControls';
 import { Button, cx } from './ui';
 
 const CATEGORIES = ['Smart Money', 'Padrões', 'Tendência', 'Osciladores', 'Volatilidade'] as const;
@@ -58,6 +60,7 @@ export function IndicatorsButton({ onClick }: { onClick(): void }) {
 export function IndicatorsDialog({ open, onClose, state }: { open: boolean; onClose(): void; state: IndicatorsState }) {
   const [q, setQ] = useState('');
   const [added, setAdded] = useState<string | null>(null);
+  const favorites = useFavorites('indicators');
   // Each opening starts with an empty search.
   useEffect(() => {
     if (open) setQ('');
@@ -76,42 +79,38 @@ export function IndicatorsDialog({ open, onClose, state }: { open: boolean; onCl
 
   return (
     <Dialog open={open} title="Indicadores" onClose={onClose}>
-      <input
-        autoFocus={matchMedia('(pointer: fine)').matches}
-        type="search"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder="Pesquisar"
-        aria-label="Pesquisar indicador"
-        className="rounded-control border border-border bg-field px-3 py-2 text-sm text-text placeholder:text-muted focus:border-brand focus:outline-none"
-      />
+      <SearchField value={q} onChange={setQ} label="Pesquisar indicador" />
       <div className="-mx-2 max-h-[55vh] overflow-y-auto">
-        {CATEGORIES.map((cat) => {
-          const items = shown.filter((d) => d.category === cat);
+        {(['Favoritos', ...CATEGORIES] as const).map((cat) => {
+          const items = shown.filter((d) => (cat === 'Favoritos' ? favorites.has(d.type) : d.category === cat));
           if (items.length === 0) return null;
           return (
             <div key={cat} className="mb-2">
-              <div className="px-2 py-1 text-[11px] font-semibold tracking-wide text-muted uppercase">{cat}</div>
+              <div className="px-2 py-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
+                {cat === 'Favoritos' ? '★ Favoritos' : cat}
+              </div>
               {items.map((d) => {
                 const count = state.list.filter((c) => c.type === d.type).length;
                 return (
-                  <button
-                    key={d.type}
-                    type="button"
-                    onClick={() => {
-                      state.add(d.type);
-                      setAdded(d.type);
-                    }}
-                    className="flex w-full items-center justify-between gap-3 rounded-control px-2 py-2 text-left text-sm hover:bg-field"
-                  >
-                    <span>
-                      {d.name}
-                      <span className="ml-2 text-xs text-muted">{d.pane === 'main' ? 'no gráfico' : 'painel próprio'}</span>
-                    </span>
-                    <span className={cx('text-xs font-semibold', added === d.type ? 'text-up' : 'text-muted')}>
-                      {added === d.type ? 'Adicionado ✓' : count > 0 ? `${count} no gráfico` : '+'}
-                    </span>
-                  </button>
+                  <div key={d.type} className="flex items-center gap-1">
+                    <StarButton on={favorites.has(d.type)} name={d.name} onToggle={() => favorites.toggle(d.type)} />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        state.add(d.type);
+                        setAdded(d.type);
+                      }}
+                      className="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-control px-2 py-2 text-left text-sm hover:bg-field"
+                    >
+                      <span>
+                        {d.name}
+                        <span className="ml-2 text-xs text-muted">{d.pane === 'main' ? 'no gráfico' : 'painel próprio'}</span>
+                      </span>
+                      <span className={cx('text-xs font-semibold', added === d.type ? 'text-up' : 'text-muted')}>
+                        {added === d.type ? 'Adicionado ✓' : count > 0 ? `${count} no gráfico` : '+'}
+                      </span>
+                    </button>
+                  </div>
                 );
               })}
             </div>

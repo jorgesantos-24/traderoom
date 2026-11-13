@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ASSET_CATEGORIES, type AssetCategory, type AssetView } from '@traderoom/shared';
 import { formatPrice } from '../lib/format';
+import { useFavorites } from '../lib/favorites';
 import { useQuote } from '../lib/session-data';
 import { Dialog } from './Dialog';
 import { cx } from './ui';
 import { CoinIcon } from './CoinIcon';
+import { SearchField, StarButton } from './PickerControls';
 
 interface Props {
   assets: readonly AssetView[];
@@ -22,8 +24,19 @@ const CATEGORY: Record<AssetCategory, string> = { crypto: 'Cripto', forex: 'Fore
 /** Header tabs with the charts the user has open, plus a "+" to open another one. */
 export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: Props) {
   const [picking, setPicking] = useState(false);
-  const [category, setCategory] = useState<AssetCategory | 'all'>('all');
-  const shown = category === 'all' ? assets : assets.filter((a) => a.category === category);
+  const [category, setCategory] = useState<AssetCategory | 'all' | 'fav'>('all');
+  const [q, setQ] = useState('');
+  const favorites = useFavorites('assets');
+  // Each opening starts with an empty search.
+  useEffect(() => {
+    if (picking) setQ('');
+  }, [picking]);
+  const s = q.trim().toLowerCase();
+  const matches = (a: AssetView) =>
+    (category === 'all' || (category === 'fav' ? favorites.has(a.symbol) : a.category === category)) &&
+    (!s || a.display.toLowerCase().includes(s) || a.symbol.toLowerCase().includes(s));
+  // Favorites first, otherwise the server's order.
+  const shown = assets.filter(matches).sort((a, b) => Number(favorites.has(b.symbol)) - Number(favorites.has(a.symbol)));
   const bySymbol = new Map(assets.map((a) => [a.symbol, a]));
   const open = tabs.map((s) => bySymbol.get(s)).filter((a): a is AssetView => a !== undefined);
 
@@ -107,16 +120,20 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
       </button>
 
       <Dialog open={picking} title="Escolha um ativo" onClose={() => setPicking(false)}>
-        <div className="flex gap-1" role="group" aria-label="Categoria">
-          {(['all', ...ASSET_CATEGORIES] as const).map((c) => (
+        <SearchField value={q} onChange={setQ} label="Pesquisar ativo" />
+        <div className="scrollbar-none flex gap-1 overflow-x-auto" role="group" aria-label="Categoria">
+          {(['all', 'fav', ...ASSET_CATEGORIES] as const).map((c) => (
             <button
               key={c}
               type="button"
               aria-pressed={category === c}
               onClick={() => setCategory(c)}
-              className={cx('rounded-control px-3 py-1 text-sm', category === c ? 'bg-field text-text' : 'text-muted hover:text-text')}
+              className={cx(
+                'shrink-0 rounded-control px-3 py-1 text-sm',
+                category === c ? 'bg-field text-text' : 'text-muted hover:text-text',
+              )}
             >
-              {c === 'all' ? 'Todos' : CATEGORY[c]}
+              {c === 'all' ? 'Todos' : c === 'fav' ? '★ Favoritos' : CATEGORY[c]}
             </button>
           ))}
         </div>
@@ -125,12 +142,19 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
             <AssetRow
               key={a.symbol}
               asset={a}
+              favorite={favorites.has(a.symbol)}
+              onToggleFavorite={() => favorites.toggle(a.symbol)}
               onPick={() => {
                 onOpen(a.symbol);
                 setPicking(false);
               }}
             />
           ))}
+          {shown.length === 0 && (
+            <li className="px-3 py-6 text-center text-sm text-muted">
+              {category === 'fav' && !s ? 'Nenhum favorito ainda. Toque na estrela ao lado de um ativo.' : 'Nenhum ativo encontrado.'}
+            </li>
+          )}
         </ul>
         <button
           type="button"
@@ -144,20 +168,29 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
   );
 }
 
-function AssetRow({ asset, onPick }: { asset: AssetView; onPick(): void }) {
+function AssetRow({
+  asset,
+  favorite,
+  onToggleFavorite,
+  onPick,
+}: {
+  asset: AssetView;
+  favorite: boolean;
+  onToggleFavorite(): void;
+  onPick(): void;
+}) {
   const quote = useQuote(asset.symbol);
   return (
-    <li>
+    <li className="flex items-center gap-1 pl-1">
+      <StarButton on={favorite} name={asset.display} onToggle={onToggleFavorite} />
       <button
         type="button"
         onClick={onPick}
-        className="flex w-full items-center gap-3 rounded-control px-3 py-2.5 text-left hover:bg-field"
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-control px-2 py-2.5 text-left hover:bg-field"
       >
         <CoinIcon symbol={asset.symbol} className="size-8" />
         <span className="flex-1">
-          <span className="block text-sm font-semibold text-text">
-            {asset.display}
-          </span>
+          <span className="block text-sm font-semibold text-text">{asset.display}</span>
           <span className="tabular block text-xs text-muted">{quote?.price != null ? formatPrice(quote.price) : '—'}</span>
         </span>
         <span className="tabular text-sm font-bold text-up">{asset.payoutPct}%</span>
