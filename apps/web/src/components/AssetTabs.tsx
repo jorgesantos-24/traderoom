@@ -121,41 +121,44 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
 
       <Dialog open={picking} title="Escolha um ativo" onClose={() => setPicking(false)}>
         <SearchField value={q} onChange={setQ} label="Pesquisar ativo" />
-        <div className="scrollbar-none flex gap-1 overflow-x-auto" role="group" aria-label="Categoria">
-          {(['all', 'fav', ...ASSET_CATEGORIES] as const).map((c) => (
-            <button
-              key={c}
-              type="button"
-              aria-pressed={category === c}
-              onClick={() => setCategory(c)}
-              className={cx(
-                'shrink-0 rounded-control px-3 py-1 text-sm',
-                category === c ? 'bg-field text-text' : 'text-muted hover:text-text',
-              )}
-            >
-              {c === 'all' ? 'Todos' : c === 'fav' ? '★ Favoritos' : CATEGORY[c]}
-            </button>
-          ))}
+        {/* Topics on the left, assets on the right: every category is visible without scrolling sideways. */}
+        <div className="flex min-h-0 gap-2">
+          <div className="flex w-[88px] shrink-0 flex-col gap-1 border-r border-border pr-2 sm:w-28" role="group" aria-label="Categoria">
+            {(['all', 'fav', ...ASSET_CATEGORIES] as const).map((c) => (
+              <button
+                key={c}
+                type="button"
+                aria-pressed={category === c}
+                onClick={() => setCategory(c)}
+                className={cx(
+                  'rounded-control px-2 py-2 text-left text-sm',
+                  category === c ? 'bg-field font-semibold text-text' : 'text-muted hover:bg-field/50 hover:text-text',
+                )}
+              >
+                {c === 'all' ? 'Todos' : c === 'fav' ? '★ Favoritos' : CATEGORY[c]}
+              </button>
+            ))}
+          </div>
+          <ul className="flex max-h-[60vh] min-w-0 flex-1 flex-col overflow-y-auto">
+            {shown.map((a) => (
+              <AssetRow
+                key={a.symbol}
+                asset={a}
+                favorite={favorites.has(a.symbol)}
+                onToggleFavorite={() => favorites.toggle(a.symbol)}
+                onPick={() => {
+                  onOpen(a.symbol);
+                  setPicking(false);
+                }}
+              />
+            ))}
+            {shown.length === 0 && (
+              <li className="px-3 py-6 text-center text-sm text-muted">
+                {category === 'fav' && !s ? 'Nenhum favorito ainda. Toque na estrela ao lado de um ativo.' : 'Nenhum ativo encontrado.'}
+              </li>
+            )}
+          </ul>
         </div>
-        <ul className="-mx-2 flex max-h-[60vh] flex-col overflow-y-auto">
-          {shown.map((a) => (
-            <AssetRow
-              key={a.symbol}
-              asset={a}
-              favorite={favorites.has(a.symbol)}
-              onToggleFavorite={() => favorites.toggle(a.symbol)}
-              onPick={() => {
-                onOpen(a.symbol);
-                setPicking(false);
-              }}
-            />
-          ))}
-          {shown.length === 0 && (
-            <li className="px-3 py-6 text-center text-sm text-muted">
-              {category === 'fav' && !s ? 'Nenhum favorito ainda. Toque na estrela ao lado de um ativo.' : 'Nenhum ativo encontrado.'}
-            </li>
-          )}
-        </ul>
         <button
           type="button"
           onClick={() => setPicking(false)}
@@ -181,19 +184,19 @@ function AssetRow({
 }) {
   const quote = useQuote(asset.symbol);
   return (
-    <li className="flex items-center gap-1 pl-1">
+    <li className="flex items-center gap-0.5">
       <StarButton on={favorite} name={asset.display} onToggle={onToggleFavorite} />
       <button
         type="button"
         onClick={onPick}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-control px-2 py-2.5 text-left hover:bg-field"
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-control px-1.5 py-2.5 text-left hover:bg-field sm:gap-3 sm:px-2"
       >
-        <CoinIcon symbol={asset.symbol} className="size-8" />
-        <span className="flex-1">
-          <span className="block text-sm font-semibold text-text">{asset.display}</span>
+        <CoinIcon symbol={asset.symbol} className="size-7 shrink-0 sm:size-8" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-semibold text-text">{asset.display}</span>
           <span className="tabular block text-xs text-muted">{quote?.price != null ? formatPrice(quote.price) : '—'}</span>
         </span>
-        <span className="tabular text-sm font-bold text-up">{asset.payoutPct}%</span>
+        <span className="tabular shrink-0 text-sm font-bold text-up">{asset.payoutPct}%</span>
       </button>
     </li>
   );
