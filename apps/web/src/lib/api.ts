@@ -1,5 +1,8 @@
 import {
   CSRF_HEADER,
+  type ActivityGroup,
+  type AdminActivityView,
+  type AdminResultsResponse,
   type AdminAssetPatch,
   type AdminAssetView,
   type AdminOnlineResponse,
@@ -203,6 +206,9 @@ export const api = {
 
   admin: {
     online: () => request<AdminOnlineResponse>('GET', '/api/admin/online'),
+    activity: (q: { group?: ActivityGroup; account?: 'real' | 'demo' | 'all'; q?: string; cursor?: string; limit?: number }) =>
+      request<Page<AdminActivityView>>('GET', `/api/admin/activity${qs(q)}`),
+    results: (tz: string) => request<AdminResultsResponse>('GET', `/api/admin/results${qs({ tz })}`),
     indicatorAccess: async () => (await request<{ access: IndicatorAccessView[] }>('GET', '/api/admin/indicators')).access,
     grantIndicator: async (email: string, indicator: PremiumIndicator) =>
       (await request<{ access: IndicatorAccessView }>('POST', '/api/admin/indicators', { body: { email, indicator } })).access,

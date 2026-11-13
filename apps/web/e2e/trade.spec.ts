@@ -62,6 +62,7 @@ test.afterAll(async () => {
 });
 
 test('register → login → order → settlement → updated balance', async ({ page }) => {
+  test.setTimeout(240_000);
   // Register.
   await page.goto('/register');
   await expect(page.getByRole('heading', { name: 'Criar conta' })).toBeVisible();
@@ -117,8 +118,9 @@ test('register → login → order → settlement → updated balance', async ({
   await expect.poll(() => balanceText(page)).toBe(brl(CREDIT_CENTS - STAKE_CENTS));
   await expect(openOrder).toContainText(/Ganhando|Perdendo|Empatando/);
 
-  // Settlement: expiry (60 s) + worker grace, then the screen polls the result.
-  await expect(page.getByTestId('order-announcer')).toContainText(/ganhou|perdeu|anulada/, { timeout: 100_000 });
+  // Settlement: the order closes at the end of its 1-minute candle, or of the next one on a late entry
+  // (last 50 s of the candle), so up to 110 s; then worker grace and the screen polls the result.
+  await expect(page.getByTestId('order-announcer')).toContainText(/ganhou|perdeu|anulada/, { timeout: 130_000 });
   await expect(openOrder).toHaveCount(0);
   const { rows } = await pool.query<{ payout_pct: number; status: string }>(
     `select o.payout_pct, o.status from orders o join users u on u.id = o.user_id where u.email = $1`,

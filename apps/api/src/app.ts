@@ -14,6 +14,7 @@ import { marketRoutes } from './routes/market.js';
 import { metricsRoute, orderRoutes } from './routes/orders.js';
 import type { OrderStatsService } from './services/order-stats.js';
 import type { AdminService } from './services/admin.js';
+import type { AdminReportsService } from './services/admin-reports.js';
 import type { AssetRepo } from './services/assets.js';
 import type { OrderLimitsRepo } from './services/order-limits.js';
 import type { AuthService } from './services/auth.js';
@@ -46,6 +47,8 @@ export interface AppDeps {
   admin: AdminService;
   /** Who is online (admin panel); left out by tests that do not need it. */
   presence?: PresenceService;
+  /** Admin logs and house results; left out by tests that do not need it. */
+  reports?: AdminReportsService;
   payments: PaymentService;
   kyc: KycService;
   otcOverride: OtcOverrideService;
@@ -133,7 +136,7 @@ export async function buildApp(deps: AppDeps, opts: AppOptions): Promise<Fastify
     limits: deps.limits,
     metrics: deps.metrics,
   });
-  adminRoutes(app, { admin: deps.admin, presence: deps.presence, metrics: deps.metrics });
+  adminRoutes(app, { admin: deps.admin, presence: deps.presence, reports: deps.reports, metrics: deps.metrics });
   otcOverrideRoutes(app, { otcOverride: deps.otcOverride, metrics: deps.metrics });
   paymentRoutes(app, { payments: deps.payments, metrics: deps.metrics });
   kycRoutes(app, { kyc: deps.kyc });

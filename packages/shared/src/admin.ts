@@ -1,4 +1,4 @@
-import type { AssetCategory } from './orders.js';
+import type { AccountKind, AssetCategory, Direction, LedgerKind, OrderStatus } from './orders.js';
 import { z } from 'zod';
 import type { UserRole } from './auth.js';
 import { MAX_STAKE_CENTS_HARD, PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT } from './orders.js';
@@ -198,4 +198,110 @@ export interface AdminOnlineResponse {
   users: AdminOnlineUserView[];
   /** ISO time of the snapshot; null when the price server has not published one (down or restarting). */
   updatedAt: string | null;
+}
+
+// ---- Activity log (every balance movement of every client) ----
+
+/** Filters of the activity log; each group maps to ledger kinds. */
+export const ACTIVITY_GROUPS = ['trades', 'deposits', 'withdrawals', 'adjustments'] as const;
+export type ActivityGroup = (typeof ACTIVITY_GROUPS)[number];
+export const ACTIVITY_GROUP_KINDS: Record<ActivityGroup, readonly LedgerKind[]> = {
+  trades: ['stake', 'payout', 'refund'],
+  deposits: ['deposit', 'deposit_reversal'],
+  withdrawals: ['withdrawal', 'withdrawal_return'],
+  adjustments: ['credit', 'debit', 'adjust'],
+};
+
+export const AdminActivityQuery = z.object({
+  group: z.enum(ACTIVITY_GROUPS, 'Filtro inválido.').optional(),
+  account: z.enum(['real', 'demo', 'all'], 'Conta inválida.').default('real'),
+  q: z.string().trim().max(100, 'Busca muito longa.').optional(),
+  cursor: z.string().max(200).optional(),
+  limit,
+});
+export type AdminActivityQuery = z.infer<typeof AdminActivityQuery>;
+
+export interface AdminActivityView {
+  id: string;
+  createdAt: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  account: AccountKind;
+  kind: LedgerKind;
+  deltaCents: number;
+  balanceAfterCents: number;
+  note: string | null;
+  /** The order behind a stake, payout or refund. */
+  order: {
+    id: string;
+    asset: string;
+    direction: Direction;
+    status: OrderStatus;
+    stakeCents: number;
+    payoutPct: number;
+    durationSec: number;
+  } | null;
+}
+
+// ---- House results (what the platform won or lost against its clients) ----
+
+export const AdminResultsQuery = z.object({
+  tz: z.string().min(1).max(64).default('America/Sao_Paulo'),
+});
+export type AdminResultsQuery = z.infer<typeof AdminResultsQuery>;
+
+export interface HousePeriodResult {
+  /** Orders opened in the period ("entradas"). */
+  entries: number;
+  /** Distinct clients who opened at least one. */
+  traders: number;
+  volumeCents: number;
+  won: number;
+  lost: number;
+  void: number;
+  open: number;
+  /** Stakes the house kept from losing orders. */
+  collectedCents: number;
+  /** Profit the house paid on winning orders (the stake itself goes back too, but it was the client's). */
+  paidCents: number;
+  /** collected − paid: positive, the house is up; negative, clients took money from it. */
+  houseCents: number;
+  depositsCents: number;
+  depositsCount: number;
+  withdrawalsCents: number;
+  withdrawalsCount: number;
+}
+
+export interface HouseDay {
+  /** YYYY-MM-DD in the requested time zone. */
+  day: string;
+  entries: number;
+  volumeCents: number;
+  houseCents: number;
+}
+
+export interface HouseClientResult {
+  userId: string;
+  name: string;
+  email: string;
+  entries: number;
+  volumeCents: number;
+  /** Client's net result: positive means they took money from the house. */
+  netCents: number;
+}
+
+export interface AdminResultsResponse {
+  tz: string;
+  generatedAt: string;
+  today: HousePeriodResult;
+  week: HousePeriodResult;
+  month: HousePeriodResult;
+  /** Orders still running: if all of them win, the house pays `maxPayoutCents` in profit. */
+  openNow: { orders: number; stakeCents: number; maxPayoutCents: number };
+  /** Last 30 days, oldest first, every day present. */
+  daily: HouseDay[];
+  /** This month: clients who won the most, and who lost the most. */
+  topWinners: HouseClientResult[];
+  topLosers: HouseClientResult[];
 }

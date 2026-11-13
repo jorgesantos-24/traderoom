@@ -140,9 +140,11 @@ test('admin credits, blocks and unblocks a user, edits an asset, and every actio
   const { rows } = await pool.query<{ payout_pct: number }>('select payout_pct from assets where id = $1', [asset.id]);
   expect(rows[0]?.payout_pct).toBe(newPct);
 
-  // Keyboard: arrow keys move between tabs.
+  // Keyboard: arrow keys move between tabs, End jumps to the last one.
   await page.getByRole('tab', { name: 'Ativos' }).focus();
   await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Indicadores' })).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('End');
   await expect(page.getByRole('tab', { name: 'Auditoria' })).toHaveAttribute('aria-selected', 'true');
 
   // Audit trail, newest first.
@@ -156,4 +158,23 @@ test('admin credits, blocks and unblocks a user, edits an asset, and every actio
   await expect(audit.nth(3)).toContainText('Bônus E2E');
   await page.getByLabel('Ação').selectOption('user.credit');
   await expect(page.getByTestId('audit-row').filter({ hasText: adminEmail })).toHaveCount(1);
+
+  // Logs: the credit shows up under the client's name, and the "Ajustes" filter keeps it.
+  await page.getByRole('tab', { name: 'Logs' }).click();
+  await page.getByLabel('Buscar cliente por nome ou e-mail').fill(userEmail);
+  const logRow = page.getByTestId('activity-row').filter({ hasText: userEmail });
+  await expect(logRow).toHaveCount(1);
+  await expect.poll(async () => nb(await logRow.textContent())).toContain('+US$ 50,00');
+  await page.getByRole('button', { name: 'Ajustes' }).click();
+  await expect(logRow).toHaveCount(1);
+  await page.getByRole('button', { name: 'Depósitos' }).click();
+  await expect(page.getByText('Nenhum movimento')).toBeVisible();
+
+  // Resultados: house result for each period, switching between them.
+  await page.getByRole('tab', { name: 'Resultados' }).click();
+  await expect(page.getByTestId('house-result')).toBeVisible();
+  await expect(page.getByText('Lucro da casa de hoje')).toBeVisible();
+  await page.getByRole('radio', { name: 'Mês' }).click();
+  await expect(page.getByText('Lucro da casa deste mês')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Últimos 30 dias' })).toBeVisible();
 });

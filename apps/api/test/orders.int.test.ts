@@ -67,9 +67,9 @@ async function newUser(balanceCents = 0): Promise<string> {
 /** Stand-in for the admin credit of milestone 7: same ledger rules. */
 async function credit(userId: string, cents: number): Promise<void> {
   await inTransaction(pool, async (c) => {
-    const { rows } = await c.query<{ balance_cents: string }>('select balance_cents from accounts where user_id = $1 for update', [userId]);
+    const { rows } = await c.query<{ balance_cents: string }>(`select balance_cents from accounts where user_id = $1 and kind = 'real' for update`, [userId]);
     const after = Number(rows[0]?.balance_cents) + cents;
-    await c.query('update accounts set balance_cents = $2 where user_id = $1', [userId, after]);
+    await c.query(`update accounts set balance_cents = $2 where user_id = $1 and kind = 'real'`, [userId, after]);
     await c.query(`insert into ledger (user_id, delta_cents, balance_after, kind, note) values ($1, $2, $3, 'credit', 'teste')`, [
       userId,
       cents,

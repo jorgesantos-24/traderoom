@@ -13,6 +13,8 @@ export interface Paged<T> {
   reload(): void;
   /** Rewrites loaded items in place, e.g. after an edit on one row. */
   patch(fn: (item: T) => T): void;
+  /** Puts newer items on top, skipping ids already loaded (live feeds). Returns how many were new. */
+  prepend(fresh: T[], idOf: (item: T) => string): number;
 }
 
 const message = (err: unknown) => (err instanceof ApiError ? err.message : 'Não foi possível carregar os dados.');
@@ -71,6 +73,14 @@ export function usePaged<T>(fetchPage: (cursor?: string) => Promise<Page<T>>, ke
 
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
   const patch = useCallback((fn: (item: T) => T) => setItems((cur) => cur.map(fn)), []);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const prepend = useCallback((fresh: T[], idOf: (item: T) => string) => {
+    const seen = new Set(itemsRef.current.map(idOf));
+    const add = fresh.filter((x) => !seen.has(idOf(x)));
+    if (add.length) setItems((cur) => [...add, ...cur]);
+    return add.length;
+  }, []);
 
-  return { status, items, error, hasMore: cursor !== null, loadingMore, moreError, loadMore, reload, patch };
+  return { status, items, error, hasMore: cursor !== null, loadingMore, moreError, loadMore, reload, patch, prepend };
 }

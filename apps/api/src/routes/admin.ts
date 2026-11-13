@@ -1,26 +1,31 @@
 import type { FastifyInstance } from 'fastify';
 import {
+  AdminActivityQuery,
   AdminAssetPatch,
   AdminAuditQuery,
   AdminBlockInput,
   AdminCreditInput,
   AdminIndicatorGrant,
+  AdminResultsQuery,
   AdminUsersQuery,
   AssetIdParams,
   IDEMPOTENCY_HEADER,
   IdempotencyKeySchema,
   IndicatorAccessParams,
   UserIdParams,
+  ErrorCode,
   type AdminOnlineResponse,
   type IndicatorAccessResponse,
   type Counter,
   type Registry,
 } from '@traderoom/shared';
 import { authOf } from '../plugins/security.js';
+import { AppError } from '../lib/errors.js';
 import type { AdminService } from '../services/admin.js';
+import type { AdminReportsService } from '../services/admin-reports.js';
 import type { PresenceService } from '../services/presence.js';
 
-export function adminRoutes(app: FastifyInstance, deps: { admin: AdminService; presence?: PresenceService; metrics: Registry }): void {
+export function adminRoutes(app: FastifyInstance, deps: { admin: AdminService; presence?: PresenceService; reports?: AdminReportsService; metrics: Registry }): void {
   const actions: Counter = deps.metrics.counter('admin_actions_total', 'Admin changes, by action.');
   const guard = { preHandler: app.requireAdmin };
   const noStore = 'no-store';
@@ -33,6 +38,21 @@ export function adminRoutes(app: FastifyInstance, deps: { admin: AdminService; p
   app.get('/api/admin/online', guard, async (_req, reply) => {
     const body: AdminOnlineResponse = deps.presence ? await deps.presence.listOnline() : { users: [], updatedAt: null };
     return reply.header('cache-control', noStore).send(body);
+  });
+
+  const reports = (): AdminReportsService => {
+    if (!deps.reports) throw new AppError(503, ErrorCode.Unavailable, 'Relatórios indisponíveis.');
+    return deps.reports;
+  };
+
+  app.get('/api/admin/activity', guard, async (req, reply) => {
+    const q = AdminActivityQuery.parse(req.query);
+    return reply.header('cache-control', noStore).send(await reports().activity(q));
+  });
+
+  app.get('/api/admin/results', guard, async (req, reply) => {
+    const { tz } = AdminResultsQuery.parse(req.query);
+    return reply.header('cache-control', noStore).send(await reports().results(tz));
   });
 
   app.post('/api/admin/users/:id/credit', guard, async (req, reply) => {
