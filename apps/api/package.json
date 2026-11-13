@@ -10,6 +10,7 @@
     "start": "node dist/main.js",
     "dev:worker": "tsx watch --conditions=development --env-file-if-exists=../../.env src/worker.ts",
     "start:worker": "node dist/worker.js",
+    "set-password": "tsx --conditions=development --env-file-if-exists=../../.env src/cli/set-password.ts",
     "admin-role": "tsx --conditions=development --env-file-if-exists=../../.env src/cli/admin-role.ts",
     "mail:test": "tsx --conditions=development --env-file-if-exists=../../.env src/cli/mail-test.ts",
     "load-users": "tsx --conditions=development --env-file-if-exists=../../.env src/cli/load-users.ts",

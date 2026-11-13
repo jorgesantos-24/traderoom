@@ -8,7 +8,6 @@ import {
   OTC_OVERRIDE_RAMP_DEFAULT_MS,
   OTC_OVERRIDE_RELEASE_MAX_MS,
   OTC_OVERRIDE_RELEASE_MIN_MS,
-  OTC_OVERRIDE_RELEASE_MS,
   OTC_OVERRIDE_SCHEDULE_HORIZON_MS,
   OTC_OVERRIDE_TICKS_STEP,
   type CandleInterval,
@@ -46,10 +45,8 @@ import { Link } from '../lib/router';
 import { useQuote } from '../lib/session-data';
 
 const CANDLES = 60;
-/** Volta padrão em mercado: 45 s é suave o bastante para não dar talo no gráfico. */
-const RELEASE_MARKET_SEC = 45;
-/** OTC: o gerador volta sempre em ~2 s; um tempo maior só seguraria o slot. */
-const RELEASE_OTC_SEC = OTC_OVERRIDE_RELEASE_MS / 1000;
+/** Volta padrão (mercado e OTC): 45 s é suave o bastante para não dar talo no gráfico. */
+const RELEASE_DEFAULT_SEC = 45;
 const RELEASE_PRESETS_SEC = [15, 45, 90] as const;
 const errMsg = (err: unknown, fallback: string) => (err instanceof ApiError ? err.message : fallback);
 
@@ -101,7 +98,7 @@ function OverrideScreen() {
   const [targetText, setTargetText] = useState('');
   const [nextCandle, setNextCandle] = useState(false);
   /** Tempo de volta ao preço real, em segundos. */
-  const [releaseSec, setReleaseSec] = useState(RELEASE_MARKET_SEC);
+  const [releaseSec, setReleaseSec] = useState(RELEASE_DEFAULT_SEC);
   /** Aceita alvo fora da banda max_override_pct. */
   const [ignoreBand, setIgnoreBand] = useState(false);
   /** Market assets: set the current candle now, or book a future 1m candle. */
@@ -185,10 +182,10 @@ function OverrideScreen() {
     };
   }, [symbol, interval, bucket.openMs]);
 
-  // A new asset starts from its type's release: 45 s on market, 2 s on OTC.
+  // A new asset starts from the default release.
   useEffect(() => {
-    setReleaseSec(market ? RELEASE_MARKET_SEC : RELEASE_OTC_SEC);
-  }, [symbol, market]);
+    setReleaseSec(RELEASE_DEFAULT_SEC);
+  }, [symbol]);
 
   // A new asset or interval starts a fresh edit.
   useEffect(() => {
@@ -206,8 +203,8 @@ function OverrideScreen() {
   }, [tooLate]);
   const useNext = tooLate && nextCandle;
   const closeMs = useNext ? bucket.closeMs + stepMs : bucket.closeMs;
-  // Market: the server ramps over the rest of the candle.
-  const plan = rampPlan(now, closeMs, market ? 60_000 : undefined);
+  // The server ramps over the rest of the candle (up to 60 s), market and OTC alike.
+  const plan = rampPlan(now, closeMs, 60_000);
 
   const releaseMs = Math.round(releaseSec * 1000);
   const releaseOk =
@@ -547,7 +544,7 @@ function OverrideScreen() {
               {scheduling ? 'Ignorar o limite do ativo (não encolher o corpo)' : 'Ignorar o limite do ativo (alvo livre)'}
             </label>
           )}
-          <ReleaseField ids={ids} value={releaseSec} onChange={setReleaseSec} ok={releaseOk} otc={!market} />
+          <ReleaseField ids={ids} value={releaseSec} onChange={setReleaseSec} ok={releaseOk} />
           {actionError && <FormMessage tone="error">{actionError}</FormMessage>}
           <div className="flex gap-2">
             <Button onClick={() => void apply()} busy={busy === 'apply'} disabled={applyBlocked}>
@@ -690,14 +687,11 @@ function ReleaseField({
   value,
   onChange,
   ok,
-  otc,
 }: {
   ids: string;
   value: number;
   onChange(v: number): void;
   ok: boolean;
-  /** OTC: the generator always returns in ~2 s, the field only keeps the slot busy. */
-  otc: boolean;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -732,11 +726,6 @@ function ReleaseField({
         />
         <span className="text-sm text-muted">s</span>
       </div>
-      {otc && (
-        <span className="max-w-96 text-xs text-muted" data-testid="otc-release-note">
-          OTC volta em 2 s; o tempo só importa em ativo de mercado
-        </span>
-      )}
       <span className={cx('max-w-96 text-xs', ok ? 'text-muted' : 'text-down')}>
         Depois do fechamento o preço volta ao real de forma amortecida, nesse tempo. Enquanto a volta corre, o slot fica
         ocupado: não dá para aplicar outro override nem liberar sem cortar a descida.

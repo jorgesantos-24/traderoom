@@ -318,6 +318,33 @@ describe('OtcWalk override', () => {
     }
   });
 
+  it('a long release spreads the way back over its whole time (no sharp drop after the close)', () => {
+    const zero = () => 0;
+    const releaseMs = 45_000;
+    const target = '77500.00';
+    const ov = new OtcWalk(BTC, 76_000, zero);
+    const ref = new OtcWalk(BTC, 76_000, zero);
+    ov.setOverride(wire(target, { jitter: false, releaseMs }), START);
+    const end = CLOSE + releaseMs + 2000;
+    const a = run(ov, end);
+    const b = run(ref, end);
+    const gapAt = (t: number) => {
+      const i = a.findIndex((x) => x.t >= t);
+      return Number(a[i]!.p) - Number(b[i]!.p);
+    };
+    const gap0 = gapAt(CLOSE);
+    expect(gap0).toBeGreaterThan(1000);
+    // 5 s in, still most of the gap; halfway, about half; at the end, on the natural path.
+    expect(gapAt(CLOSE + 5000) / gap0).toBeGreaterThan(0.9);
+    expect(gapAt(CLOSE + releaseMs / 2) / gap0).toBeCloseTo(0.5, 1);
+    expect(Math.abs(gapAt(CLOSE + releaseMs + 1000))).toBeLessThan(1);
+    // Biggest move between two ticks stays small: no sharp drop.
+    const after = a.filter((x) => x.t > CLOSE);
+    let maxStep = 0;
+    for (let i = 1; i < after.length; i++) maxStep = Math.max(maxStep, Math.abs(Number(after[i]!.p) - Number(after[i - 1]!.p)));
+    expect(maxStep).toBeLessThan(gap0 / 40);
+  });
+
   it('with random normals the return lands within the noise of ramp+hold+release, not of the whole candle', () => {
     let worst = 0;
     for (let k = 0; k < 200; k++) {

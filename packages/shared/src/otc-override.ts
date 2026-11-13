@@ -158,8 +158,7 @@ export const OtcOverrideInput = z
     rampMs: z.number().int().min(500).max(60_000).default(OTC_OVERRIDE_RAMP_DEFAULT_MS),
     /**
      * Quanto tempo o preço leva para voltar ao real depois do fechamento. Valores altos espalham a
-     * volta pela vela seguinte em vez de dar um talo. Vale nos dois modos, mas só suaviza em ativo de
-     * mercado: o OTC volta sempre em ~2 s, e um valor alto ali só segura o slot.
+     * volta pela vela seguinte em vez de dar um talo. Vale para mercado e OTC.
      */
     releaseMs: z
       .number('Informe o tempo de volta.')

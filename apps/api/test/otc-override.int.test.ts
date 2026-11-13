@@ -10,7 +10,6 @@ import {
   OTC_OVERRIDE_HOLD_MS,
   OTC_OVERRIDE_LANDING_MS,
   OTC_OVERRIDE_MIN_LEAD_MS,
-  OTC_OVERRIDE_RAMP_DEFAULT_MS,
   OTC_OVERRIDE_RELEASE_MS,
   OTC_OVERRIDE_SCHEDULE_HORIZON_MS,
   OtcOverrideInput,
@@ -163,7 +162,8 @@ describe('apply', () => {
       candleCloseMs: T0 + MIN,
       phase: 'ramp',
     });
-    expect(v.rampStartMs).toBe(T0 + MIN - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS - OTC_OVERRIDE_RAMP_DEFAULT_MS);
+    // OTC like market: the ramp spans the rest of the candle, so it starts now.
+    expect(v.rampStartMs).toBe(T0 + 20_000);
 
     const wire = parseOtcOverride(await redis.get(KEY));
     expect(wire).toEqual({
@@ -220,7 +220,8 @@ describe('apply', () => {
     const v = await svc.apply(adminId, input({ assetId: ids.a, targetPrice: 101, nextCandle: true }));
     expect(v.candleOpenMs).toBe(T0 + MIN);
     expect(v.candleCloseMs).toBe(T0 + 2 * MIN);
-    expect(v.rampStartMs).toBe(T0 + 2 * MIN - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS - OTC_OVERRIDE_RAMP_DEFAULT_MS);
+    // The rest of the next candle is under 60 s of ramp, so it starts now.
+    expect(v.rampStartMs).toBe(T0 + 56_500);
     expect(parseOtcOverride(await redis.get(KEY))?.closeMs).toBe(T0 + 2 * MIN);
   });
 

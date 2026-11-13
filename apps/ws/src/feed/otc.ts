@@ -96,6 +96,10 @@ interface ActiveOverride {
   closeMs: number;
   /** Override is dropped here, after the candle is closed and the price is back. */
   releaseEndMs: number;
+  /** Duration of the way back to the natural price (the admin's choice), ms. */
+  releaseMs: number;
+  /** Gap (log-price) between the shown price and the shadow at the first release step; it shrinks to 0. */
+  releaseGapX: number | null;
   /** Log-price where the ramp starts. Set when the ramp begins, never at capture. */
   x0: number | null;
   /**
@@ -178,7 +182,8 @@ export class OtcWalk {
     }
     // A finished one arriving again (the key outlives the release by its TTL margin, or the ws
     // restarted): installing it would only cost the walk a natural step.
-    if (nowMs >= o.closeMs + o.releaseMs) {
+    const releaseMs = Number.isFinite(o.releaseMs) && o.releaseMs > 0 ? o.releaseMs : OTC_OVERRIDE_RELEASE_MS;
+    if (nowMs >= o.closeMs + releaseMs) {
       this.ov = null;
       return;
     }
@@ -192,7 +197,9 @@ export class OtcWalk {
       rampStartMs: Math.min(Math.max(o.rampStartMs, nowMs), o.closeMs - o.holdMs),
       holdStartMs: o.closeMs - o.holdMs,
       closeMs: o.closeMs,
-      releaseEndMs: o.closeMs + o.releaseMs,
+      releaseEndMs: o.closeMs + releaseMs,
+      releaseMs,
+      releaseGapX: null,
       x0: null,
       shadow: null,
       jitter: o.jitter ?? true,
@@ -245,11 +252,16 @@ export class OtcWalk {
 
     // closeMs itself still belongs to the hold: a snapshot stamped exactly at expiry must see the target.
     if (atMs > ov.closeMs) {
-      // Candle closed on the target. Ease back to the live counterfactual price (τ ≈ release/3).
-      ov.shadow?.step(dtS, atMs);
-      const to = ov.shadow ? Math.log(ov.shadow.price) : this.x;
-      const k = 1 - Math.exp(-dtS / (OTC_OVERRIDE_RELEASE_MS / 1000 / 3));
-      this.x += (to - this.x) * k;
+      // Candle closed on the target. The price follows the live counterfactual (shadow), with full natural
+      // noise, plus the gap it had at the close shrinking by a smoothstep over the whole release (zero slope
+      // at both ends, like market assets). A long release spreads the way back over the next candle instead
+      // of a sharp drop, and it lands exactly on the shadow at releaseEnd.
+      if (!ov.shadow) return this.naturalStep(dtS);
+      ov.releaseGapX ??= this.x - Math.log(ov.shadow.price);
+      ov.shadow.step(dtS, atMs);
+      const t = Math.min(1, (atMs - ov.closeMs) / ov.releaseMs);
+      const k = t * t * (3 - 2 * t);
+      this.x = Math.log(ov.shadow.price) + ov.releaseGapX * (1 - k);
       return this.price;
     }
 

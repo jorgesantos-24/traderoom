@@ -373,8 +373,9 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
               `Faltam ${(leadMs / 1000).toFixed(1).replace('.', ',')} s para o fechamento; o mínimo é ${OTC_OVERRIDE_MIN_LEAD_MS / 1000} s. Aplique no próximo candle.`,
             );
           }
-          // Market: the ramp spans the rest of the candle (the client's rampMs is ignored), so the move is gradual.
-          const rampMs = market ? Math.min(60_000, Math.max(500, leadMs - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS)) : input.rampMs;
+          // Market and OTC: the ramp spans the rest of the candle, up to 60 s (the client's rampMs is ignored),
+          // so the move is gradual instead of a sharp run in the last seconds.
+          const rampMs = Math.min(60_000, Math.max(500, leadMs - OTC_OVERRIDE_HOLD_MS - OTC_OVERRIDE_LANDING_MS));
           const rampStartMs = otcOverrideRampStartMs(nowMs, closeMs, rampMs);
           const targetText = target.toFixed(decimals);
           const releaseMs = input.releaseMs;
