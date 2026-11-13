@@ -84,7 +84,8 @@ Pré-requisitos na máquina local: `gcloud` autenticado, Node 22+, npm, tar.
 
 ```sh
 export GCP_PROJECT=meu-projeto TRADEROOM_DOMAIN=trade.exemplo.com ACME_EMAIL=ops@exemplo.com
-export RESEND_API_KEY=re_...                        # opcional; vai para o Secret Manager
+export SMTP_PASS=...                                # senha da caixa de MAIL_FROM (Hostinger, smtp.hostinger.com:465); Secret Manager
+export RESEND_API_KEY=re_...                        # alternativa ao SMTP; vai para o Secret Manager
 export MAIL_FROM='Traderoom <nao-responda@exemplo.com>'
 
 infra/deploy.sh provision   # VPC, IP fixo, firewall 80/443 (22 só via IAP), Cloud SQL 16 com IP privado

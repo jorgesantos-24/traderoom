@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import Fastify from 'fastify';
-import { createResendMailer, passwordResetEmail } from '../src/lib/mailer.js';
+import { createResendMailer, createSmtpMailer, mailAddress, passwordResetEmail } from '../src/lib/mailer.js';
 
 const LINK = 'https://app.example.com/reset?token=abc_DEF-123';
 
@@ -77,5 +77,54 @@ describe('createResendMailer', () => {
     const m = createResendMailer(log, { apiKey: 'k', from: 'f@x.test', fetch: f.fn, sleep: async () => {} });
     await expect(m.sendPasswordReset('a@x.test', LINK)).rejects.toThrow('network error');
     expect(f.calls).toHaveLength(2);
+  });
+});
+
+describe('mailAddress', () => {
+  it('extracts the address from a display name', () => {
+    expect(mailAddress('Kyden <support@kydeninvest.com>')).toBe('support@kydeninvest.com');
+    expect(mailAddress(' support@kydeninvest.com ')).toBe('support@kydeninvest.com');
+  });
+});
+
+describe('createSmtpMailer', () => {
+  const opts = { host: 'smtp.test', port: 465, user: 'u@x.test', pass: 'p', from: 'Kyden <u@x.test>', sleep: async () => {} };
+
+  it('sends the reset mail through the transport', async () => {
+    const sent: unknown[] = [];
+    const { log, lines } = logSpy();
+    const m = createSmtpMailer(log, { ...opts, transport: { sendMail: async (msg) => void sent.push(msg) } });
+    await m.sendPasswordReset('a@b.test', LINK);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ from: 'Kyden <u@x.test>', to: 'a@b.test', subject: passwordResetEmail(LINK).subject });
+    expect(JSON.stringify(lines)).not.toContain('token=');
+  });
+
+  it('retries once, then throws without logging the link', async () => {
+    let calls = 0;
+    const { log, lines } = logSpy();
+    const m = createSmtpMailer(log, {
+      ...opts,
+      transport: {
+        sendMail: async () => {
+          calls++;
+          throw Object.assign(new Error(`Invalid login ${LINK}`), { code: 'EAUTH', responseCode: 535 });
+        },
+      },
+    });
+    await expect(m.sendPasswordReset('a@b.test', LINK)).rejects.toThrow('535');
+    expect(calls).toBe(2);
+    expect(JSON.stringify(lines)).not.toContain('token=');
+  });
+
+  it('succeeds on the retry', async () => {
+    let calls = 0;
+    const { log } = logSpy();
+    const m = createSmtpMailer(log, {
+      ...opts,
+      transport: { sendMail: async () => { if (++calls === 1) throw new Error('ETIMEDOUT'); } },
+    });
+    await m.sendPasswordReset('a@b.test', LINK);
+    expect(calls).toBe(2);
   });
 });

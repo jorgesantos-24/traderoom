@@ -35,6 +35,7 @@ secret() {
 db_password=$(secret traderoom-db-password)
 [[ -n $db_password ]] || { echo 'traderoom-db-password is empty or missing' >&2; exit 1; }
 resend_key=$(secret traderoom-resend-api-key optional)
+smtp_pass=$(secret traderoom-smtp-pass optional)
 novus_key=$(secret traderoom-novus-api-key optional)
 novus_whsec=$(secret traderoom-novus-webhook-secret optional)
 eagle_client=$(secret traderoom-eagle-client-id optional)
@@ -50,6 +51,7 @@ tmp=$(mktemp "$OUT_DIR/.secrets.XXXXXX")
   # Double quotes: systemd strips them, and release.sh can `source` this file (the URL has "&").
   echo "DATABASE_URL=\"postgres://$DB_USER:$db_password@$DB_HOST:5432/$DB_NAME?sslmode=verify-ca&sslrootcert=/etc/traderoom/cloudsql-server-ca.pem&uselibpqcompat=true\""
   if [[ -n $resend_key ]]; then echo "RESEND_API_KEY=\"$resend_key\""; fi
+  if [[ -n $smtp_pass ]]; then echo "SMTP_PASS=\"$smtp_pass\""; fi
   if [[ -n $novus_key ]]; then echo "NOVUS_API_KEY=\"$novus_key\""; fi
   if [[ -n $novus_whsec ]]; then echo "NOVUS_WEBHOOK_SECRET=\"$novus_whsec\""; fi
   if [[ -n $eagle_client ]]; then echo "EAGLE_CLIENT_ID=\"$eagle_client\""; fi

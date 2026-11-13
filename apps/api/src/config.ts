@@ -20,6 +20,12 @@ const EnvSchema = z.object({
   HEALTH_FEED_MAX_AGE_MS: z.coerce.number().int().positive().default(5000),
   /** Resend API key; without it, password reset e-mails are dropped outside development. */
   RESEND_API_KEY: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().min(1).optional()),
+  /** SMTP mailbox (Hostinger Email: smtp.hostinger.com, 465). Takes precedence over Resend when SMTP_PASS is set. */
+  SMTP_HOST: z.string().trim().min(1).default('smtp.hostinger.com'),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(465),
+  /** Mailbox login; empty = the address inside MAIL_FROM. */
+  SMTP_USER: optionalSecret,
+  SMTP_PASS: optionalSecret,
   MAIL_FROM: z.string().trim().min(3).default('Traderoom <nao-responda@localhost>'),
   /** Novus Pagamentos private key (Integrações > Chave Privada). Without it, deposits and withdrawals are off. */
   NOVUS_API_KEY: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().min(1).optional()),

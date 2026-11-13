@@ -74,8 +74,8 @@ source infra/firebase.env
 export TRADEROOM_DOMAIN=seudominio.com ACME_EMAIL=voce@seudominio.com
 export EAGLE_CLIENT_ID='...' EAGLE_PUBLIC_KEY='...' EAGLE_SECRET_KEY='...'   # vão direto para o Secret Manager
 export NOVUS_API_KEY='...'        # opcional: só enquanto houver transações abertas na Novus
-export RESEND_API_KEY='...'       # opcional
-export MAIL_FROM='Kyden <nao-responda@seudominio.com>'
+export SMTP_PASS='...'            # senha da caixa support@kydeninvest.com (Hostinger); vai para o Secret Manager
+# MAIL_FROM já vem do firebase.env (Kyden <support@kydeninvest.com>); SMTP_HOST/PORT padrão: smtp.hostinger.com:465
 # Para já sair do db-f1-micro (encerra o teste grátis do SQL Connect):
 #   export SQL_RESIZE=1
 infra/deploy.sh provision

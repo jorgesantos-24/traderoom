@@ -4,6 +4,7 @@
 #
 #   export GCP_PROJECT=my-project TRADEROOM_DOMAIN=trade.example.com ACME_EMAIL=ops@example.com
 #   export RESEND_API_KEY=re_...           # optional; stored in Secret Manager, never on disk
+#   export SMTP_PASS=...                   # Hostinger mailbox password (MAIL_FROM's address); Secret Manager. Wins over Resend
 #   export NOVUS_API_KEY=...               # Pix deposits/withdrawals (Novus private key); Secret Manager, never on disk
 #   export NOVUS_WEBHOOK_SECRET=whsec_...  # optional: secret of a global webhook made in the Novus dashboard
 #   export EAGLE_CLIENT_ID=... EAGLE_PUBLIC_KEY=... EAGLE_SECRET_KEY=...  # EaglePay (Integrações → API e Webhooks); Secret Manager
@@ -109,7 +110,7 @@ provision() {
     unset current
   fi
   local name var
-  for pair in traderoom-novus-api-key:NOVUS_API_KEY traderoom-novus-webhook-secret:NOVUS_WEBHOOK_SECRET     traderoom-eagle-client-id:EAGLE_CLIENT_ID traderoom-eagle-public-key:EAGLE_PUBLIC_KEY traderoom-eagle-secret-key:EAGLE_SECRET_KEY; do
+  for pair in traderoom-smtp-pass:SMTP_PASS traderoom-novus-api-key:NOVUS_API_KEY traderoom-novus-webhook-secret:NOVUS_WEBHOOK_SECRET     traderoom-eagle-client-id:EAGLE_CLIENT_ID traderoom-eagle-public-key:EAGLE_PUBLIC_KEY traderoom-eagle-secret-key:EAGLE_SECRET_KEY; do
     name=${pair%%:*} var=${pair#*:}
     [[ -n ${!var:-} ]] || continue
     exists g secrets describe "$name" || g secrets create "$name" --replication-policy user-managed --locations "$REGION"
@@ -123,7 +124,7 @@ provision() {
   for role in roles/logging.logWriter roles/monitoring.metricWriter; do
     g projects add-iam-policy-binding "$GCP_PROJECT" --member "serviceAccount:$SA" --role "$role" --condition None >/dev/null
   done
-  for s in traderoom-db-password traderoom-resend-api-key traderoom-novus-api-key traderoom-novus-webhook-secret     traderoom-eagle-client-id traderoom-eagle-public-key traderoom-eagle-secret-key; do
+  for s in traderoom-db-password traderoom-resend-api-key traderoom-smtp-pass traderoom-novus-api-key traderoom-novus-webhook-secret     traderoom-eagle-client-id traderoom-eagle-public-key traderoom-eagle-secret-key; do
     if exists g secrets describe "$s"; then
       g secrets add-iam-policy-binding "$s" --member "serviceAccount:$SA" --role roles/secretmanager.secretAccessor >/dev/null
     fi
@@ -232,7 +233,7 @@ ${TRADEROOM_REDIRECT_FROM// /, } {
 }
 CADDY
   fi
-  # Non-secret settings. Secrets (DATABASE_URL, RESEND_API_KEY, NOVUS_*, EAGLE_*) are built at boot by fetch-secrets.sh.
+  # Non-secret settings. Secrets (DATABASE_URL, RESEND_API_KEY, SMTP_PASS, NOVUS_*, EAGLE_*) are built at boot by fetch-secrets.sh.
   cat >"$stage/traderoom.env" <<EOF
 GCP_PROJECT=$GCP_PROJECT
 TRADEROOM_DOMAIN=$TRADEROOM_DOMAIN
@@ -243,6 +244,9 @@ PUBLIC_ORIGIN=https://$TRADEROOM_DOMAIN
 COOKIE_SECURE=true
 RATE_LIMIT_GLOBAL_PER_MIN=${RATE_LIMIT_GLOBAL_PER_MIN:-2000}
 MAIL_FROM="$MAIL_FROM"
+SMTP_HOST=${SMTP_HOST:-smtp.hostinger.com}
+SMTP_PORT=${SMTP_PORT:-465}
+SMTP_USER=${SMTP_USER:-}
 API_HOST=127.0.0.1
 API_PORT=3000
 WS_HOST=127.0.0.1

@@ -4,7 +4,7 @@ import { loadConfig } from './config.js';
 import { createPool } from './lib/db.js';
 import { createKlinesFetcher } from './lib/binance.js';
 import { redisCache } from './lib/cache.js';
-import { createConsoleMailer, createNullMailer, createResendMailer } from './lib/mailer.js';
+import { createConsoleMailer, createNullMailer, createResendMailer, createSmtpMailer, mailAddress } from './lib/mailer.js';
 import { createRedis } from './lib/redis.js';
 import { createAssetRepo } from './services/assets.js';
 import { createAuthService } from './services/auth.js';
@@ -78,9 +78,17 @@ const app = await buildApp(
     createMailer: (log) =>
       config.NODE_ENV === 'development'
         ? createConsoleMailer(log)
-        : config.RESEND_API_KEY
-          ? createResendMailer(log, { apiKey: config.RESEND_API_KEY, from: config.MAIL_FROM })
-          : createNullMailer(log),
+        : config.SMTP_PASS
+          ? createSmtpMailer(log, {
+              host: config.SMTP_HOST,
+              port: config.SMTP_PORT,
+              user: config.SMTP_USER ?? mailAddress(config.MAIL_FROM),
+              pass: config.SMTP_PASS,
+              from: config.MAIL_FROM,
+            })
+          : config.RESEND_API_KEY
+            ? createResendMailer(log, { apiKey: config.RESEND_API_KEY, from: config.MAIL_FROM })
+            : createNullMailer(log),
     createCandles: (log) =>
       createCandleService({
         cache: redisCache(redis),
