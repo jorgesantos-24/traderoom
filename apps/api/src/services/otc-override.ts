@@ -11,6 +11,9 @@ import {
   otcOverrideRampStartMs,
   RedisKeys,
   type AuditAction,
+  type OtcExposure,
+  type OtcExposureBucket,
+  type OtcExposureQuery,
   type OtcOverrideAsset,
   type OtcOverrideInput,
   type OtcOverrideScheduleInput,
@@ -46,6 +49,8 @@ export interface OtcOverrideService {
   release(adminId: string): Promise<boolean>;
   /** What clients see: whether the platform is setting this symbol's price now. */
   publicState(symbol: string): Promise<PublicOverrideState>;
+  /** Open bets on one asset right now (real accounts), and the house result at a price. */
+  exposure(q: OtcExposureQuery): Promise<OtcExposure>;
 }
 
 interface Row {
@@ -234,6 +239,50 @@ export function createOtcOverrideService(deps: OtcOverrideServiceDeps): OtcOverr
   }
 
   return {
+    async exposure({ assetId, closeMs, price }) {
+      const close = closeMs ?? null;
+      const at = close === null || price === undefined ? null : String(price);
+      // $2: closeMs or null; "closing" = expires by the candle close. $3: price, as numeric.
+      const CLOSING = `($2::bigint is not null and o.expires_at <= to_timestamp($2::bigint / 1000.0))`;
+      const [bySide, people] = await Promise.all([
+        pool.query<{ direction: 'call' | 'put'; n: number; stake: string; n_c: number; stake_c: string; house: string }>(
+          `select o.direction, count(*)::int as n, sum(o.stake_cents)::text as stake,
+                  count(*) filter (where ${CLOSING})::int as n_c,
+                  coalesce(sum(o.stake_cents) filter (where ${CLOSING}), 0)::text as stake_c,
+                  coalesce(sum(case
+                      when $3::numeric is null or o.open_price = $3::numeric then 0
+                      when (o.direction = 'call') = ($3::numeric > o.open_price) then -((o.stake_cents * o.payout_pct) / 100)
+                      else o.stake_cents end) filter (where ${CLOSING}), 0)::text as house
+             from orders o
+            where o.asset_id = $1 and o.status = 'open' and o.account = 'real'
+            group by o.direction`,
+          [assetId, close, at],
+        ),
+        pool.query<{ t: number; t_c: number }>(
+          `select count(distinct o.user_id)::int as t,
+                  count(distinct o.user_id) filter (where ${CLOSING})::int as t_c
+             from orders o
+            where o.asset_id = $1 and o.status = 'open' and o.account = 'real'`,
+          [assetId, close],
+        ),
+      ]);
+      const empty = () => ({ orders: 0, stakeCents: 0 });
+      const open: OtcExposureBucket = { call: empty(), put: empty(), traders: people.rows[0]?.t ?? 0 };
+      const closing: OtcExposureBucket = { call: empty(), put: empty(), traders: people.rows[0]?.t_c ?? 0 };
+      let house = 0;
+      for (const r of bySide.rows) {
+        open[r.direction] = { orders: r.n, stakeCents: Number(r.stake) };
+        closing[r.direction] = { orders: r.n_c, stakeCents: Number(r.stake_c) };
+        house += Number(r.house);
+      }
+      return {
+        open,
+        closing: close === null ? null : closing,
+        houseAtPriceCents: at === null ? null : house,
+        serverNowMs: now(),
+      };
+    },
+
     async get() {
       const nowMs = now();
       await expireFinished(pool, nowMs);

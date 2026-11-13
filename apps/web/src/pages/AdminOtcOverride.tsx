@@ -13,6 +13,8 @@ import {
   OTC_OVERRIDE_TICKS_STEP,
   type CandleInterval,
   type OverrideDirection,
+  type OtcExposure,
+  type OtcExposureBucket,
   type OtcOverrideAsset,
   type OtcOverrideView,
 } from '@traderoom/shared';
@@ -21,7 +23,7 @@ import { Button, Card, cx, EmptyState, ErrorState, Field, FormMessage, LoadingSt
 import { api, ApiError } from '../lib/api';
 import { useUser } from '../lib/auth';
 import { serverClock } from '../lib/clock';
-import { formatCountdown, formatPrice } from '../lib/format';
+import { formatCountdown, formatMoney, formatPrice, formatSignedMoney, formatTime } from '../lib/format';
 import {
   editedCandle,
   epochToLocalMinute,
@@ -404,6 +406,16 @@ function OverrideScreen() {
         </dl>
       </Card>
 
+      {asset && (
+        <ExposurePanel
+          assetId={asset.id}
+          closeMs={activeHere ? override.candleCloseMs : closeMs}
+          price={activeHere ? override.targetPrice : (target ?? price)}
+          priceLabel={activeHere || target !== null ? 'no alvo' : 'no preço atual'}
+          decimals={decimals}
+        />
+      )}
+
       <Card className="p-2">
         <OverrideChart
           candles={live}
@@ -551,6 +563,123 @@ function OverrideScreen() {
       )}
       {active && actionError && <FormMessage tone="error">{actionError}</FormMessage>}
       {pollError && <FormMessage tone="error">{pollError}</FormMessage>}
+    </div>
+  );
+}
+
+const EXPOSURE_POLL_MS = 2000;
+
+/**
+ * Open bets on the asset right now (real accounts): the candle being edited and everything open,
+ * split by direction, plus what the house makes if those orders settle at the target/current price.
+ */
+function ExposurePanel({
+  assetId,
+  closeMs,
+  price,
+  priceLabel,
+  decimals,
+}: {
+  assetId: number;
+  closeMs: number;
+  price: number | null;
+  priceLabel: string;
+  decimals: number;
+}) {
+  const [data, setData] = useState<OtcExposure | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // The price moves every tick; the poll reads the latest without restarting.
+  const priceRef = useRef(price);
+  priceRef.current = price;
+
+  useEffect(() => {
+    setData(null);
+    const ctrl = new AbortController();
+    const load = () => {
+      const p = priceRef.current;
+      api.admin.otcExposure({ assetId, closeMs, price: p === null ? undefined : p }, ctrl.signal).then(
+        (r) => {
+          setData(r);
+          setError(null);
+        },
+        (err: unknown) => {
+          if (!ctrl.signal.aborted) setError(errMsg(err, 'Erro ao carregar o volume.'));
+        },
+      );
+    };
+    load();
+    const t = setInterval(load, EXPOSURE_POLL_MS);
+    return () => {
+      ctrl.abort();
+      clearInterval(t);
+    };
+  }, [assetId, closeMs]);
+
+  const house = data?.houseAtPriceCents ?? null;
+  return (
+    <Card className="flex flex-col gap-3 p-4" data-testid="otc-exposure">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold">Volume apostado agora</h2>
+        <span className="text-xs text-muted">Contas reais · atualiza a cada {EXPOSURE_POLL_MS / 1000} s</span>
+      </div>
+      {data === null ? (
+        error ? (
+          <p className="text-sm text-down">{error}</p>
+        ) : (
+          <p className="text-sm text-muted">Carregando…</p>
+        )
+      ) : (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {data.closing && <ExposureRow title={`Fecham nesta vela (até ${formatTime(closeMs)})`} b={data.closing} testId="otc-exposure-closing" />}
+            <ExposureRow title="Total em aberto no ativo" b={data.open} testId="otc-exposure-open" />
+          </div>
+          {house !== null && price !== null && (
+            <p className="text-sm" data-testid="otc-exposure-house">
+              <span className="text-muted">
+                Se fechar em {formatPrice(price, decimals)} ({priceLabel}), resultado da casa nas ordens desta vela:{' '}
+              </span>
+              <span className={cx('font-mono font-semibold tabular-nums', house > 0 ? 'text-up' : house < 0 ? 'text-down' : '')}>
+                {formatSignedMoney(house)}
+              </span>
+            </p>
+          )}
+          {error && <p className="text-xs text-warn">{error}</p>}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function ExposureRow({ title, b, testId }: { title: string; b: OtcExposureBucket; testId: string }) {
+  const total = b.call.stakeCents + b.put.stakeCents;
+  const callPct = total > 0 ? (b.call.stakeCents / total) * 100 : 50;
+  return (
+    <div className="flex flex-col gap-2 rounded-control border border-border p-3" data-testid={testId}>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs text-muted">{title}</span>
+        <span className="font-mono text-sm font-semibold tabular-nums">{formatMoney(total)}</span>
+      </div>
+      <div className="flex h-2 overflow-hidden rounded-full bg-border" aria-hidden>
+        {total > 0 && (
+          <>
+            <div className="bg-up" style={{ width: `${callPct}%` }} />
+            <div className="bg-down" style={{ width: `${100 - callPct}%` }} />
+          </>
+        )}
+      </div>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
+        <dt className="text-up">Compra (alta)</dt>
+        <dd className="text-right font-mono tabular-nums">
+          {formatMoney(b.call.stakeCents)} · {b.call.orders} {b.call.orders === 1 ? 'ordem' : 'ordens'}
+        </dd>
+        <dt className="text-down">Venda (baixa)</dt>
+        <dd className="text-right font-mono tabular-nums">
+          {formatMoney(b.put.stakeCents)} · {b.put.orders} {b.put.orders === 1 ? 'ordem' : 'ordens'}
+        </dd>
+        <dt className="text-muted">Clientes</dt>
+        <dd className="text-right font-mono tabular-nums">{b.traders}</dd>
+      </dl>
     </div>
   );
 }

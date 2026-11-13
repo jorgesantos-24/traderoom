@@ -110,6 +110,7 @@ export const unusedOtcOverride: OtcOverrideService = {
   apply: notUsed('otcOverride.apply'),
   release: notUsed('otcOverride.release'),
   publicState: notUsed('otcOverride.publicState'),
+  exposure: notUsed('otcOverride.exposure'),
 };
 
 export function fakeAssets(

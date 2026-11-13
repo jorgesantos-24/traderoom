@@ -925,3 +925,37 @@ describe('scheduled override (market, 1m)', () => {
     expect(saved).toEqual([]);
   });
 });
+
+describe('exposure (open bets on the asset)', () => {
+  it('splits by direction, separates the orders the candle decides, prices the house result, skips demo', async () => {
+    await pool.query('delete from orders where asset_id = $1', [ids.b]);
+    const closeMs = T0 + MIN;
+    const [u1, u2] = [await newUser('Exp 1'), await newUser('Exp 2')];
+    const order = (user: string, dir: 'call' | 'put', stake: number, open: string, expiresMs: number, account = 'real') =>
+      pool.query(
+        `insert into orders (user_id, asset_id, direction, stake_cents, payout_pct, duration_sec, open_price, opens_at, expires_at, idempotency_key, account)
+         values ($1, $2, $3, $4, 90, 60, $5, $6, $7, $8, $9)`,
+        [user, ids.b, dir, stake, open, new Date(T0), new Date(expiresMs), randomUUID(), account],
+      );
+    await order(u1, 'call', 1000, '100.00', closeMs); // decided at the close
+    await order(u2, 'put', 3000, '100.00', closeMs); // decided at the close
+    await order(u2, 'call', 500, '99.00', closeMs); // decided at the close
+    await order(u1, 'put', 2000, '100.00', closeMs + 5 * MIN); // later
+    await order(u1, 'call', 99999, '100.00', closeMs, 'demo'); // ignored
+    await pool.query(`insert into orders (user_id, asset_id, direction, stake_cents, payout_pct, duration_sec, open_price, opens_at, expires_at, idempotency_key, account, status)
+      values ($1, $2, 'call', 7777, 90, 60, '100.00', $3, $4, $5, 'real', 'won')`, [u1, ids.b, new Date(T0), new Date(closeMs), randomUUID()]); // settled: ignored
+
+    const e = await svc.exposure({ assetId: ids.b, closeMs, price: 100.5 });
+    expect(e.open).toEqual({ call: { orders: 2, stakeCents: 1500 }, put: { orders: 2, stakeCents: 5000 }, traders: 2 });
+    expect(e.closing).toEqual({ call: { orders: 2, stakeCents: 1500 }, put: { orders: 1, stakeCents: 3000 }, traders: 2 });
+    // At 100.50 both calls win (pay 900 + 450), the put loses (+3000).
+    expect(e.houseAtPriceCents).toBe(3000 - 900 - 450);
+    // On the open price itself: the 100.00 orders tie (refund), the 99.00 call wins.
+    expect((await svc.exposure({ assetId: ids.b, closeMs, price: 100 })).houseAtPriceCents).toBe(-450);
+
+    const bare = await svc.exposure({ assetId: ids.b });
+    expect(bare.closing).toBeNull();
+    expect(bare.houseAtPriceCents).toBeNull();
+    await pool.query('delete from orders where asset_id = $1', [ids.b]);
+  });
+});

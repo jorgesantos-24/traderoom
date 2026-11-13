@@ -237,3 +237,35 @@ export interface OtcOverrideState {
   /** Relógio do servidor, epoch ms, para a contagem regressiva. */
   serverNowMs: number;
 }
+
+/** GET /api/admin/otc-override/exposure: open bets on one asset, real accounts only. */
+export const OtcExposureQuery = z.object({
+  assetId: z.coerce.number().int().positive('Ativo inválido.'),
+  /** Close of the candle being edited, epoch ms: splits out the orders it decides. */
+  closeMs: z.coerce.number().int().positive().optional(),
+  /** Price to evaluate the house result at (target or current), for orders decided by closeMs. */
+  price: z.coerce.number().positive().optional(),
+});
+export type OtcExposureQuery = z.infer<typeof OtcExposureQuery>;
+
+export interface OtcExposureSide {
+  orders: number;
+  stakeCents: number;
+}
+
+export interface OtcExposureBucket {
+  call: OtcExposureSide;
+  put: OtcExposureSide;
+  /** Distinct clients. */
+  traders: number;
+}
+
+export interface OtcExposure {
+  /** Every open order on the asset. */
+  open: OtcExposureBucket;
+  /** Open orders that expire by closeMs (null without closeMs). */
+  closing: OtcExposureBucket | null;
+  /** House result (cents, + = house wins) if those orders settle at `price`; ties refund. Null without closeMs/price. */
+  houseAtPriceCents: number | null;
+  serverNowMs: number;
+}

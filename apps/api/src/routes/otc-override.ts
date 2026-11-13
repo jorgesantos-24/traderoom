@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { OtcOverrideInput, SymbolSchema, type Counter, type Registry } from '@traderoom/shared';
+import { OtcExposureQuery, OtcOverrideInput, SymbolSchema, type Counter, type Registry } from '@traderoom/shared';
 import { authOf } from '../plugins/security.js';
 import type { OtcOverrideService } from '../services/otc-override.js';
 
@@ -11,6 +11,11 @@ export function otcOverrideRoutes(app: FastifyInstance, deps: { otcOverride: Otc
 
   app.get('/api/admin/otc-override', guard, async (_req, reply) => {
     return reply.header('cache-control', noStore).send(await deps.otcOverride.get());
+  });
+
+  app.get('/api/admin/otc-override/exposure', guard, async (req, reply) => {
+    const q = OtcExposureQuery.parse(req.query);
+    return reply.header('cache-control', noStore).send(await deps.otcOverride.exposure(q));
   });
 
   app.post('/api/admin/otc-override', guard, async (req, reply) => {

@@ -34,6 +34,7 @@ import {
   type LedgerEntryView,
   type OrderStatus,
   type OrderView,
+  type OtcExposure,
   type OtcOverrideInput,
   type OtcOverrideState,
   type OtcOverrideView,
@@ -259,6 +260,12 @@ export const api = {
     },
     applyOtcOverride: async (input: OtcOverrideInput) =>
       (await request<{ override: OtcOverrideView }>('POST', '/api/admin/otc-override', { body: input })).override,
+    otcExposure: async (q: { assetId: number; closeMs?: number; price?: number }, signal?: AbortSignal) => {
+      const qs = new URLSearchParams({ assetId: String(q.assetId) });
+      if (q.closeMs !== undefined) qs.set('closeMs', String(q.closeMs));
+      if (q.price !== undefined) qs.set('price', String(q.price));
+      return request<OtcExposure>('GET', `/api/admin/otc-override/exposure?${qs}`, { signal });
+    },
     releaseOtcOverride: async () => (await request<{ released: boolean }>('DELETE', '/api/admin/otc-override')).released,
   },
 
