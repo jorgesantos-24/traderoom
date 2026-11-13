@@ -98,7 +98,7 @@ export function AssetTabs({ assets, tabs, active, onSelect, onClose, onOpen }: P
                   type="button"
                   aria-label={`Fechar ${a.display}`}
                   onClick={() => onClose(a.symbol)}
-                  className="absolute top-0.5 right-0.5 hidden rounded px-1 text-[10px] text-muted group-focus-within:block group-hover:block hover:text-text"
+                  className="flex h-full shrink-0 items-center rounded pr-2 pl-0.5 text-[12px] text-muted hover:text-text md:absolute md:top-0.5 md:right-0.5 md:hidden md:h-auto md:px-1 md:text-[10px] md:group-focus-within:block md:group-hover:block"
                 >
                   ✕
                 </button>
