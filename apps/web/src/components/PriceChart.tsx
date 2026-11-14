@@ -118,7 +118,7 @@ export function PriceChart({ symbol, display, interval, orders, results, toolbar
   const hostRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const drawings = useDrawings(symbol);
-  const indicators = useIndicators();
+  const indicators = useIndicators(symbol);
   const rendererRef = useRef<IndicatorRenderer | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editingIndicator, setEditingIndicator] = useState<IndicatorConfig | null>(null);

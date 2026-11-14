@@ -908,45 +908,60 @@ export function indicatorLabel(cfg: IndicatorConfig): string {
   return `${def.short} ${params.join(' ')}`;
 }
 
-// v2 (2026-11-14): everyone started over with no indicators; the v1 save is dropped on load.
-export const INDICATORS_KEY = 'kyden.indicators.v2';
+/**
+ * Saved per asset: { [symbol]: IndicatorConfig[] }. Each asset has its own indicators, so one
+ * added on BTC is not on ETH until it is added there too.
+ * v3 (2026-11-14) replaced the single list of v1/v2; those saves are dropped on load.
+ */
+export const INDICATORS_KEY = 'kyden.indicators.v3';
 const KEY = INDICATORS_KEY;
-const OLD_KEYS = ['kyden.indicators.v1'];
+const OLD_KEYS = ['kyden.indicators.v1', 'kyden.indicators.v2'];
 
-export function loadIndicators(): IndicatorConfig[] {
+export type IndicatorMap = Readonly<Record<string, readonly IndicatorConfig[]>>;
+
+/** One asset's saved list: known types only, each at most once, params clamped. */
+function parseList(list: unknown): IndicatorConfig[] {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set<string>();
+  return list.flatMap((v): IndicatorConfig[] => {
+    const c = v as IndicatorConfig;
+    const def = typeof c?.type === 'string' ? INDICATOR_BY_TYPE.get(c.type) : undefined;
+    if (!def || typeof c.id !== 'string' || seen.has(c.type)) return [];
+    seen.add(c.type);
+    // Fill params/colors added since it was saved, and clamp what was stored.
+    const params = Object.fromEntries(
+      def.params.map((p) => {
+        const n = Number(c.params?.[p.key]);
+        return [p.key, Number.isFinite(n) ? Math.min(p.max, Math.max(p.min, n)) : p.default];
+      }),
+    );
+    const colors = Object.fromEntries(
+      def.outputs.map((o) => [o.key, typeof c.colors?.[o.key] === 'string' ? c.colors[o.key]! : o.color]),
+    );
+    return [{ id: c.id, type: c.type, params, colors, visible: c.visible !== false }];
+  });
+}
+
+export function loadIndicators(): IndicatorMap {
   try {
     for (const k of OLD_KEYS) localStorage.removeItem(k);
     const raw = localStorage.getItem(KEY);
-    if (!raw) return [];
-    const list: unknown = JSON.parse(raw);
-    if (!Array.isArray(list)) return [];
-    // Each indicator at most once; older saves could hold the same one many times.
-    const seen = new Set<string>();
-    return list.flatMap((v): IndicatorConfig[] => {
-      const c = v as IndicatorConfig;
-      const def = typeof c?.type === 'string' ? INDICATOR_BY_TYPE.get(c.type) : undefined;
-      if (!def || typeof c.id !== 'string' || seen.has(c.type)) return [];
-      seen.add(c.type);
-      // Fill params/colors added since it was saved, and clamp what was stored.
-      const params = Object.fromEntries(
-        def.params.map((p) => {
-          const n = Number(c.params?.[p.key]);
-          return [p.key, Number.isFinite(n) ? Math.min(p.max, Math.max(p.min, n)) : p.default];
-        }),
-      );
-      const colors = Object.fromEntries(
-        def.outputs.map((o) => [o.key, typeof c.colors?.[o.key] === 'string' ? c.colors[o.key]! : o.color]),
-      );
-      return [{ id: c.id, type: c.type, params, colors, visible: c.visible !== false }];
-    });
+    if (!raw) return {};
+    const map: unknown = JSON.parse(raw);
+    if (!map || typeof map !== 'object' || Array.isArray(map)) return {};
+    return Object.fromEntries(
+      Object.entries(map as Record<string, unknown>)
+        .map(([symbol, list]) => [symbol, parseList(list)] as const)
+        .filter(([, list]) => list.length > 0),
+    );
   } catch {
-    return [];
+    return {};
   }
 }
 
-export function saveIndicators(list: readonly IndicatorConfig[]): void {
+export function saveIndicators(map: IndicatorMap): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(list));
+    localStorage.setItem(KEY, JSON.stringify(map));
   } catch {
     // storage blocked: indicators just won't survive a reload
   }

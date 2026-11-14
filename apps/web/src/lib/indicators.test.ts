@@ -225,36 +225,47 @@ describe('registry and settings', () => {
       { id: 'a', type: 'rsi', params: { length: 9999 }, colors: {}, visible: false },
       { id: 'b', type: 'nope', params: {}, colors: {} },
     ];
-    vi.stubGlobal('localStorage', { getItem: () => JSON.stringify(saved), setItem: () => {}, removeItem: () => {} });
-    expect(loadIndicators()).toEqual([{ id: 'a', type: 'rsi', params: { length: 500 }, colors: { v: '#7e57c2' }, visible: false }]);
+    vi.stubGlobal('localStorage', { getItem: () => JSON.stringify({ BTCUSDT: saved }), setItem: () => {}, removeItem: () => {} });
+    expect(loadIndicators()).toEqual({
+      BTCUSDT: [{ id: 'a', type: 'rsi', params: { length: 500 }, colors: { v: '#7e57c2' }, visible: false }],
+    });
   });
 });
 
 describe('saved indicators', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('keeps each indicator type only once when loading an old save', async () => {
+  it('keeps each asset apart and each indicator type only once per asset', async () => {
     const { INDICATORS_KEY, loadIndicators, newIndicator } = await import('./indicators');
     const a = newIndicator('stochrsi')!;
     const b = newIndicator('stochrsi')!;
     const c = newIndicator('macd')!;
-    const data = new Map([[INDICATORS_KEY, JSON.stringify([a, b, c, { ...b, id: 'x' }])]]);
+    const e = newIndicator('stochrsi')!;
+    const saved = { BTCUSDT: [a, b, c, { ...b, id: 'x' }], ETHUSDT: [e], SOLUSDT: [] };
+    const data = new Map([[INDICATORS_KEY, JSON.stringify(saved)]]);
     vi.stubGlobal('localStorage', { getItem: (k: string) => data.get(k) ?? null, setItem: () => {}, removeItem: () => {} });
-    expect(loadIndicators().map((x) => [x.id, x.type])).toEqual([
+    const map = loadIndicators();
+    expect(Object.keys(map)).toEqual(['BTCUSDT', 'ETHUSDT']);
+    expect(map.BTCUSDT!.map((x) => [x.id, x.type])).toEqual([
       [a.id, 'stochrsi'],
       [c.id, 'macd'],
     ]);
+    expect(map.ETHUSDT!.map((x) => x.id)).toEqual([e.id]);
   });
 
-  it('starts with no indicators and drops the old v1 save', async () => {
+  it('starts with no indicators and drops the old single-list saves', async () => {
     const { loadIndicators, newIndicator } = await import('./indicators');
-    const data = new Map([['kyden.indicators.v1', JSON.stringify([newIndicator('macd')])]]);
+    const old = JSON.stringify([newIndicator('macd')]);
+    const data = new Map([
+      ['kyden.indicators.v1', old],
+      ['kyden.indicators.v2', old],
+    ]);
     vi.stubGlobal('localStorage', {
       getItem: (k: string) => data.get(k) ?? null,
       setItem: () => {},
       removeItem: (k: string) => data.delete(k),
     });
-    expect(loadIndicators()).toEqual([]);
-    expect(data.has('kyden.indicators.v1')).toBe(false);
+    expect(loadIndicators()).toEqual({});
+    expect(data.size).toBe(0);
   });
 });
