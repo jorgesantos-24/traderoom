@@ -53,11 +53,10 @@ const EnvSchema = z.object({
   PAYMENT_SYNC_MS: z.coerce.number().int().min(0).default(60_000),
   /** Broker fee kept on each withdrawal, in percent of the amount the client asks for (100 asked → 2 kept, 98 sent). */
   WITHDRAW_FEE_PCT: z.coerce.number().min(0).max(50).default(2),
-  /** Fee on an instant withdrawal (no admin review, sent to the gateway right away). Empty = instant withdrawals off. */
-  // Missing = 7; present but empty = off. (A preprocess on an optional key never sees a missing key, hence the default.)
+  /** Fee on an instant withdrawal (no admin review, sent to the gateway right away). Missing or empty = instant withdrawals off. */
   WITHDRAW_INSTANT_FEE_PCT: z
     .string()
-    .default('7')
+    .default('')
     .transform((v) => (v.trim() === '' ? undefined : Number(v)))
     .pipe(z.number().min(0).max(50).optional()),
   /** Platform margin on the dollar quote, in percent per side (deposit pays more, withdrawal gets less). */

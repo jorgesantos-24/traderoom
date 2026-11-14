@@ -20,8 +20,8 @@ describe('loadConfig', () => {
     expect(loadConfig({ ...BASE, RESEND_API_KEY: ' re_123 ' }).RESEND_API_KEY).toBe('re_123');
   });
 
-  it('instant withdrawals: 7% when unset, off when empty', () => {
-    expect(loadConfig({ ...BASE }).WITHDRAW_INSTANT_FEE_PCT).toBe(7);
+  it('instant withdrawals: off when unset or empty', () => {
+    expect(loadConfig({ ...BASE }).WITHDRAW_INSTANT_FEE_PCT).toBeUndefined();
     expect(loadConfig({ ...BASE, WITHDRAW_INSTANT_FEE_PCT: '' }).WITHDRAW_INSTANT_FEE_PCT).toBeUndefined();
     expect(loadConfig({ ...BASE, WITHDRAW_INSTANT_FEE_PCT: '5.5' }).WITHDRAW_INSTANT_FEE_PCT).toBe(5.5);
     expect(() => loadConfig({ ...BASE, WITHDRAW_INSTANT_FEE_PCT: 'x' })).toThrow(/WITHDRAW_INSTANT_FEE_PCT/);
