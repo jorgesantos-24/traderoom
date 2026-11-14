@@ -908,11 +908,14 @@ export function indicatorLabel(cfg: IndicatorConfig): string {
   return `${def.short} ${params.join(' ')}`;
 }
 
-export const INDICATORS_KEY = 'kyden.indicators.v1';
+// v2 (2026-11-14): everyone started over with no indicators; the v1 save is dropped on load.
+export const INDICATORS_KEY = 'kyden.indicators.v2';
 const KEY = INDICATORS_KEY;
+const OLD_KEYS = ['kyden.indicators.v1'];
 
 export function loadIndicators(): IndicatorConfig[] {
   try {
+    for (const k of OLD_KEYS) localStorage.removeItem(k);
     const raw = localStorage.getItem(KEY);
     if (!raw) return [];
     const list: unknown = JSON.parse(raw);

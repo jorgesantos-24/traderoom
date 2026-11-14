@@ -234,15 +234,27 @@ describe('saved indicators', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('keeps each indicator type only once when loading an old save', async () => {
-    const { loadIndicators, newIndicator } = await import('./indicators');
+    const { INDICATORS_KEY, loadIndicators, newIndicator } = await import('./indicators');
     const a = newIndicator('stochrsi')!;
     const b = newIndicator('stochrsi')!;
     const c = newIndicator('macd')!;
-    const data = new Map([['kyden.indicators.v1', JSON.stringify([a, b, c, { ...b, id: 'x' }])]]);
-    vi.stubGlobal('localStorage', { getItem: (k: string) => data.get(k) ?? null, setItem: () => {} });
+    const data = new Map([[INDICATORS_KEY, JSON.stringify([a, b, c, { ...b, id: 'x' }])]]);
+    vi.stubGlobal('localStorage', { getItem: (k: string) => data.get(k) ?? null, setItem: () => {}, removeItem: () => {} });
     expect(loadIndicators().map((x) => [x.id, x.type])).toEqual([
       [a.id, 'stochrsi'],
       [c.id, 'macd'],
     ]);
+  });
+
+  it('starts with no indicators and drops the old v1 save', async () => {
+    const { loadIndicators, newIndicator } = await import('./indicators');
+    const data = new Map([['kyden.indicators.v1', JSON.stringify([newIndicator('macd')])]]);
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => data.get(k) ?? null,
+      setItem: () => {},
+      removeItem: (k: string) => data.delete(k),
+    });
+    expect(loadIndicators()).toEqual([]);
+    expect(data.has('kyden.indicators.v1')).toBe(false);
   });
 });
