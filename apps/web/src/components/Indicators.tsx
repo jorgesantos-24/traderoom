@@ -90,24 +90,25 @@ export function IndicatorsDialog({ open, onClose, state }: { open: boolean; onCl
                 {cat === 'Favoritos' ? '★ Favoritos' : cat}
               </div>
               {items.map((d) => {
-                const count = state.list.filter((c) => c.type === d.type).length;
+                const on = state.list.some((c) => c.type === d.type);
                 return (
                   <div key={d.type} className="flex items-center gap-1">
                     <StarButton on={favorites.has(d.type)} name={d.name} onToggle={() => favorites.toggle(d.type)} />
                     <button
                       type="button"
+                      disabled={on}
                       onClick={() => {
                         state.add(d.type);
                         setAdded(d.type);
                       }}
-                      className="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-control px-2 py-2 text-left text-sm hover:bg-field"
+                      className="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-control px-2 py-2 text-left text-sm hover:bg-field disabled:cursor-default disabled:hover:bg-transparent"
                     >
                       <span>
                         {d.name}
                         <span className="ml-2 text-xs text-muted">{d.pane === 'main' ? 'no gráfico' : 'painel próprio'}</span>
                       </span>
-                      <span className={cx('text-xs font-semibold', added === d.type ? 'text-up' : 'text-muted')}>
-                        {added === d.type ? 'Adicionado ✓' : count > 0 ? `${count} no gráfico` : '+'}
+                      <span className={cx('text-xs font-semibold', added === d.type || on ? 'text-up' : 'text-muted')}>
+                        {added === d.type ? 'Adicionado ✓' : on ? 'No gráfico ✓' : '+'}
                       </span>
                     </button>
                   </div>

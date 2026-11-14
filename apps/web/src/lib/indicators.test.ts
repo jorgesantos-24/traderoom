@@ -229,3 +229,20 @@ describe('registry and settings', () => {
     expect(loadIndicators()).toEqual([{ id: 'a', type: 'rsi', params: { length: 500 }, colors: { v: '#7e57c2' }, visible: false }]);
   });
 });
+
+describe('saved indicators', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('keeps each indicator type only once when loading an old save', async () => {
+    const { loadIndicators, newIndicator } = await import('./indicators');
+    const a = newIndicator('stochrsi')!;
+    const b = newIndicator('stochrsi')!;
+    const c = newIndicator('macd')!;
+    const data = new Map([['kyden.indicators.v1', JSON.stringify([a, b, c, { ...b, id: 'x' }])]]);
+    vi.stubGlobal('localStorage', { getItem: (k: string) => data.get(k) ?? null, setItem: () => {} });
+    expect(loadIndicators().map((x) => [x.id, x.type])).toEqual([
+      [a.id, 'stochrsi'],
+      [c.id, 'macd'],
+    ]);
+  });
+});

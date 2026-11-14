@@ -908,7 +908,8 @@ export function indicatorLabel(cfg: IndicatorConfig): string {
   return `${def.short} ${params.join(' ')}`;
 }
 
-const KEY = 'kyden.indicators.v1';
+export const INDICATORS_KEY = 'kyden.indicators.v1';
+const KEY = INDICATORS_KEY;
 
 export function loadIndicators(): IndicatorConfig[] {
   try {
@@ -916,10 +917,13 @@ export function loadIndicators(): IndicatorConfig[] {
     if (!raw) return [];
     const list: unknown = JSON.parse(raw);
     if (!Array.isArray(list)) return [];
+    // Each indicator at most once; older saves could hold the same one many times.
+    const seen = new Set<string>();
     return list.flatMap((v): IndicatorConfig[] => {
       const c = v as IndicatorConfig;
       const def = typeof c?.type === 'string' ? INDICATOR_BY_TYPE.get(c.type) : undefined;
-      if (!def || typeof c.id !== 'string') return [];
+      if (!def || typeof c.id !== 'string' || seen.has(c.type)) return [];
+      seen.add(c.type);
       // Fill params/colors added since it was saved, and clamp what was stored.
       const params = Object.fromEntries(
         def.params.map((p) => {

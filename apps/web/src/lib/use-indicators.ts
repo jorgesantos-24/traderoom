@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { PREMIUM_INDICATORS } from '@traderoom/shared';
 import { api } from './api';
-import { loadIndicators, newIndicator, saveIndicators, type IndicatorConfig } from './indicators';
+import { INDICATORS_KEY, loadIndicators, newIndicator, saveIndicators, type IndicatorConfig } from './indicators';
 
 const PREMIUM: ReadonlySet<string> = new Set(PREMIUM_INDICATORS);
 
@@ -37,28 +37,54 @@ function usePremiumAccess(): ReadonlySet<string> {
 /** Whether this user may use an indicator type (premium ones need an admin's grant). */
 export const indicatorAvailable = (type: string, allowed: ReadonlySet<string>) => !PREMIUM.has(type) || allowed.has(type);
 
-/** Indicators on the chart; the same set on every asset, kept in this browser. */
+/**
+ * One list of indicators for every asset, kept in this browser and shared by every chart and
+ * browser tab: switching assets, or adding one in another tab, shows the same set.
+ */
+let shared: IndicatorConfig[] | null = null;
+const listeners = new Set<() => void>();
+
+function current(): IndicatorConfig[] {
+  return (shared ??= loadIndicators());
+}
+
+function change(fn: (prev: IndicatorConfig[]) => IndicatorConfig[]) {
+  shared = fn(current());
+  saveIndicators(shared);
+  listeners.forEach((l) => l());
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  const onStorage = (e: StorageEvent) => {
+    if (e.key !== INDICATORS_KEY && e.key !== null) return;
+    shared = loadIndicators();
+    listeners.forEach((l) => l());
+  };
+  window.addEventListener('storage', onStorage);
+  return () => {
+    listeners.delete(listener);
+    window.removeEventListener('storage', onStorage);
+  };
+}
+
+/** Indicators on the chart; each type at most once. */
 export function useIndicators() {
-  const [stored, setList] = useState<IndicatorConfig[]>(loadIndicators);
+  const stored = useSyncExternalStore(subscribe, current);
   const allowed = usePremiumAccess();
   // A premium indicator without access stays saved (it comes back if access is granted) but is not drawn.
   const list = useMemo(() => stored.filter((c) => indicatorAvailable(c.type, allowed)), [stored, allowed]);
-
-  const change = useCallback((fn: (prev: IndicatorConfig[]) => IndicatorConfig[]) => {
-    setList((prev) => {
-      const next = fn(prev);
-      saveIndicators(next);
-      return next;
-    });
-  }, []);
 
   return {
     list,
     available: (type: string) => indicatorAvailable(type, allowed),
     add: (type: string) => {
       if (!indicatorAvailable(type, allowed)) return;
-      const cfg = newIndicator(type);
-      if (cfg) change((l) => [...l, cfg]);
+      change((l) => {
+        if (l.some((c) => c.type === type)) return l;
+        const cfg = newIndicator(type);
+        return cfg ? [...l, cfg] : l;
+      });
     },
     remove: (id: string) => change((l) => l.filter((c) => c.id !== id)),
     update: (cfg: IndicatorConfig) => change((l) => l.map((c) => (c.id === cfg.id ? cfg : c))),
