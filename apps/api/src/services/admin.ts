@@ -16,6 +16,7 @@ import {
 } from '@traderoom/shared';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 import { inTransaction } from '../lib/db.js';
+import { HIDDEN_FROM_LOGS } from '../lib/hidden-accounts.js';
 import { AppError } from '../lib/errors.js';
 import { isoUs } from './orders.js';
 
@@ -399,9 +400,10 @@ export function createAdminService(deps: AdminServiceDeps): AdminService {
            from admin_audit l join users u on u.id = l.admin_id
           where ($1::text is null or l.action = $1)
             and ($2::timestamptz is null or (l.created_at, l.id) < ($2::timestamptz, $3::bigint))
+            and lower(u.email::text) <> all($5::text[])
           order by l.created_at desc, l.id desc
           limit $4`,
-        [q.action ?? null, cursor?.at ?? null, cursor?.id ?? null, q.limit + 1],
+        [q.action ?? null, cursor?.at ?? null, cursor?.id ?? null, q.limit + 1, HIDDEN_FROM_LOGS],
       );
       const page = rows.slice(0, q.limit);
       const last = page.at(-1);

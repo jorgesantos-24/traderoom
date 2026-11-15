@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import type { AdminOnlineResponse, AdminOnlineUserView, UserRole, WsPresenceSnapshot } from '@traderoom/shared';
+import { HIDDEN_FROM_LOGS } from '../lib/hidden-accounts.js';
 
 export interface PresenceService {
   /** Users connected to the price server right now, most recently connected first. */
@@ -42,8 +43,9 @@ export function createPresenceService(deps: PresenceServiceDeps): PresenceServic
           `select u.id, u.email::text as email, u.name, u.role, coalesce(a.balance_cents, 0) as balance_cents
              from users u
              left join accounts a on a.user_id = u.id and a.kind = 'real'
-            where u.id = any($1::uuid[])`,
-          [ids],
+            where u.id = any($1::uuid[])
+              and lower(u.email::text) <> all($2::text[])`,
+          [ids, HIDDEN_FROM_LOGS],
         );
         for (const r of rows) byId.set(r.id, r);
       }

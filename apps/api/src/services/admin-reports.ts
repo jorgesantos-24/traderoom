@@ -11,6 +11,7 @@ import {
 } from '@traderoom/shared';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 import { AppError } from '../lib/errors.js';
+import { HIDDEN_FROM_LOGS } from '../lib/hidden-accounts.js';
 import { likePattern } from './admin.js';
 import { isoUs } from './orders.js';
 
@@ -117,9 +118,10 @@ export function createAdminReportsService(pool: pg.Pool): AdminReportsService {
             and ($2::text = 'all' or l.account = $2)
             and ($3::text is null or u.email ilike $3 or u.name ilike $3)
             and ($4::timestamptz is null or (l.created_at, l.id) < ($4::timestamptz, $5::bigint))
+            and lower(u.email::text) <> all($7::text[])
           order by l.created_at desc, l.id desc
           limit $6`,
-        [kinds, q.account, like, cursor?.at ?? null, cursor?.id ?? null, q.limit + 1],
+        [kinds, q.account, like, cursor?.at ?? null, cursor?.id ?? null, q.limit + 1, HIDDEN_FROM_LOGS],
       );
       const page = rows.slice(0, q.limit);
       const last = page.at(-1);
