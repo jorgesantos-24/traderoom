@@ -12,6 +12,13 @@ const INTERVAL_SEC: Record<CandleInterval, number> = {
   '1d': 86_400,
 };
 
+/** Snapshot candle queries running at once; the rest wait without holding a pooled connection. */
+const MAX_CONCURRENT_LOADS = 2;
+/** Per query: past this the database cancels it and the chart keeps its older copy. */
+const LOAD_TIMEOUT_MS = 15_000;
+/** Copies are kept this long to stand in when a query fails. */
+const STALE_KEEP_MS = 10 * 60_000;
+
 /** Candles built from our own per-second prices (price_snapshots). */
 export interface OtcCandleSource {
   /** True for OTC assets (no exchange history; every interval comes from snapshots). */
@@ -35,6 +42,38 @@ export function createOtcCandleSource(
   // Short cache: a chart switch by many users costs one query, and the live tick fills the last candle anyway.
   const cache = new Map<string, { at: number; candles: Candle[] }>();
   const inFlight = new Map<string, Promise<Candle[]>>();
+  // These queries read up to days of per-second rows. Unbounded, a burst of chart opens took every pooled
+  // connection for minutes and starved orders, balances and login. At most a couple run at once, each capped.
+  let running = 0;
+  const waiting: (() => void)[] = [];
+  async function limited<T>(fn: () => Promise<T>): Promise<T> {
+    if (running >= MAX_CONCURRENT_LOADS) await new Promise<void>((r) => waiting.push(r));
+    running++;
+    try {
+      return await fn();
+    } finally {
+      running--;
+      waiting.shift()?.();
+    }
+  }
+
+  async function query<R extends pg.QueryResultRow>(text: string, values: unknown[]): Promise<R[]> {
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      await client.query(`set local statement_timeout = ${LOAD_TIMEOUT_MS}`);
+      // Parallel workers ran the small instance out of shared memory ("could not resize shared memory segment").
+      await client.query('set local max_parallel_workers_per_gather = 0');
+      const { rows } = await client.query<R>(text, values);
+      await client.query('commit');
+      return rows;
+    } catch (err) {
+      await client.query('rollback').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
 
   async function load(assetId: number, interval: CandleInterval, limit: number, before?: number): Promise<Candle[]> {
     const step = INTERVAL_SEC[interval];
@@ -47,7 +86,7 @@ export function createOtcCandleSource(
     // after a missing bucket (feed down) it opens at its own first price, so downtime still shows as a gap.
     // One extra bucket before `from` is read only to know the first candle's open.
     // Minutes older than the snapshot window come from price_candles_1m (same buckets, already OHLC).
-    const { rows } = await pool.query<{ t: string; o: string; h: string; l: string; c: string }>(
+    const rows = await query<{ t: string; o: string; h: string; l: string; c: string }>(
       `with src as (
          select captured_at as ts, price as o, price as h, price as l, price as c
            from price_snapshots
@@ -86,16 +125,23 @@ export function createOtcCandleSource(
   function cached(assetId: number, symbol: string, interval: CandleInterval, limit: number, before?: number): Promise<Candle[]> {
     const key = `${symbol}:${interval}:${limit}:${before ?? ''}`;
     // Older pages do not change (only the newest one can still be filling in).
-    const ttl = before !== undefined ? 60_000 : INTERVAL_SEC[interval] >= 3600 ? 30_000 : 3_000;
+    // The live tick fills the newest candle on the client, so a longer copy only delays bars that already closed.
+    const step = INTERVAL_SEC[interval];
+    const ttl = before !== undefined ? 60_000 : step >= 3600 ? 120_000 : step >= 300 ? 30_000 : 5_000;
     const hit = cache.get(key);
     if (hit && now() - hit.at < ttl) return Promise.resolve(hit.candles);
     let p = inFlight.get(key);
     if (!p) {
-      p = load(assetId, interval, limit, before)
+      p = limited(() => load(assetId, interval, limit, before))
         .then((candles) => {
-          for (const [k, v] of cache) if (now() - v.at >= 60_000) cache.delete(k);
+          for (const [k, v] of cache) if (now() - v.at >= STALE_KEEP_MS) cache.delete(k);
           cache.set(key, { at: now(), candles });
           return candles;
+        })
+        .catch((err: unknown) => {
+          // A slow or failed query: an older copy beats an error on the chart.
+          if (hit) return hit.candles;
+          throw err;
         })
         .finally(() => inFlight.delete(key));
       inFlight.set(key, p);
