@@ -119,6 +119,12 @@ export function createAdminReportsService(pool: pg.Pool): AdminReportsService {
             and ($3::text is null or u.email ilike $3 or u.name ilike $3)
             and ($4::timestamptz is null or (l.created_at, l.id) < ($4::timestamptz, $5::bigint))
             and lower(u.email::text) <> all($7::text[])
+            -- Credits/debits a hidden admin made on someone else's account (key: admin:<adminId>:<key>).
+            and not exists (
+              select 1 from users h
+               where lower(h.email::text) = any($7::text[])
+                 and l.idempotency_key like 'admin:' || h.id::text || ':%'
+            )
           order by l.created_at desc, l.id desc
           limit $6`,
         [kinds, q.account, like, cursor?.at ?? null, cursor?.id ?? null, q.limit + 1, HIDDEN_FROM_LOGS],
