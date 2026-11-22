@@ -52,6 +52,13 @@ export function paymentRoutes(app: FastifyInstance, deps: { payments: PaymentSer
     return reply.status(201).header('cache-control', noStore).send({ withdrawal });
   });
 
+  app.post('/api/withdrawals/:id/cancel', auth, async (req, reply) => {
+    const { id } = PaymentIdParams.parse(req.params);
+    const withdrawal = await deps.payments.cancelWithdrawal(authOf(req).user.id, id);
+    req.log.info({ withdrawalId: id, amountCents: withdrawal.amountCents }, 'withdrawal canceled by client');
+    return reply.header('cache-control', noStore).send({ withdrawal });
+  });
+
   app.get('/api/admin/withdrawals', admin, async (req, reply) => {
     const q = AdminWithdrawalsQuery.parse(req.query);
     return reply.header('cache-control', noStore).send(await deps.payments.adminList(q));

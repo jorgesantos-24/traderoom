@@ -7,6 +7,7 @@ import {
   type PaymentsInfo,
   type PixKeyType,
   type WithdrawalSpeed,
+  type WithdrawalView,
 } from '@traderoom/shared';
 import { api, ApiError } from '../lib/api';
 import {
@@ -517,10 +518,11 @@ const STATUS_TONE: Record<string, string> = {
 
 /** Recent Pix deposits and withdrawals with their status, for the wallet page. */
 export function PaymentsHistory() {
-  const { accounts } = useSessionData();
+  const { accounts, refreshWallet } = useSessionData();
   const [data, setData] = useState<Awaited<ReturnType<typeof api.payments>> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'deposit' | 'withdraw' | null>(null);
+  const [canceling, setCanceling] = useState<WithdrawalView | null>(null);
   // Reload whenever balances change (a deposit confirmed, a withdrawal requested…).
   useEffect(() => {
     let cancelled = false;
@@ -544,6 +546,7 @@ export function PaymentsHistory() {
           status: d.status,
           label: DEPOSIT_STATUS_LABEL[d.status],
           note: null as string | null,
+          withdrawal: null as WithdrawalView | null,
         })),
         ...data.withdrawals.map((w) => ({
           id: w.id,
@@ -554,6 +557,7 @@ export function PaymentsHistory() {
           status: w.status,
           label: WITHDRAWAL_STATUS_LABEL[w.status],
           note: w.note,
+          withdrawal: w,
         })),
       ].sort((a, b) => b.at.localeCompare(a.at))
     : [];
@@ -590,6 +594,15 @@ export function PaymentsHistory() {
               <div className="text-right">
                 <div className={cx('tabular font-semibold', r.cents > 0 ? 'text-up' : 'text-text')}>{formatSignedMoney(r.cents)}</div>
                 <div className={cx('text-xs', STATUS_TONE[r.status] ?? 'text-muted')}>{r.label}</div>
+                {r.withdrawal?.cancelable && (
+                  <button
+                    type="button"
+                    className="mt-0.5 text-xs font-medium text-down underline-offset-2 hover:underline"
+                    onClick={() => setCanceling(r.withdrawal)}
+                  >
+                    Cancelar saque
+                  </button>
+                )}
               </div>
             </li>
           ))}
@@ -597,6 +610,66 @@ export function PaymentsHistory() {
       )}
       <DepositDialog open={dialog === 'deposit'} onClose={() => setDialog(null)} />
       <WithdrawDialog open={dialog === 'withdraw'} onClose={() => setDialog(null)} />
+      <CancelWithdrawalDialog
+        withdrawal={canceling}
+        onClose={() => setCanceling(null)}
+        onCanceled={() => {
+          setCanceling(null);
+          // The balance changes, which reloads this list too.
+          void refreshWallet();
+        }}
+      />
     </section>
+  );
+}
+
+/** Confirms taking back a withdrawal that has not gone to the bank yet; the full amount returns to the real balance. */
+function CancelWithdrawalDialog({
+  withdrawal,
+  onClose,
+  onCanceled,
+}: {
+  withdrawal: WithdrawalView | null;
+  onClose(): void;
+  onCanceled(): void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => setError(null), [withdrawal]);
+
+  const confirm = async () => {
+    if (!withdrawal) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.cancelWithdrawal(withdrawal.id);
+      onCanceled();
+    } catch (err) {
+      setError(errMsg(err, 'Não foi possível cancelar o saque.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={withdrawal !== null} title="Cancelar saque" onClose={onClose}>
+      {withdrawal && (
+        <div className="flex flex-col gap-3 text-sm">
+          <p>
+            Cancelar o saque de <strong className="tabular">{formatMoney(withdrawal.amountCents)}</strong> (
+            {formatBrl(withdrawal.pixAmountCents)} via Pix)? O valor total, taxa incluída, volta para o saldo da sua conta real.
+          </p>
+          {error && <FormMessage tone="error">{error}</FormMessage>}
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={onClose} disabled={busy}>
+              Voltar
+            </Button>
+            <Button variant="down" onClick={() => void confirm()} busy={busy} data-testid="confirm-cancel-withdrawal">
+              Cancelar saque
+            </Button>
+          </div>
+        </div>
+      )}
+    </Dialog>
   );
 }

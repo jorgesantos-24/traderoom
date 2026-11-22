@@ -3,7 +3,7 @@ import type { KycStatus } from './kyc.js';
 import { PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT } from './orders.js';
 
 export type DepositStatus = 'pending' | 'paid' | 'expired' | 'failed' | 'reversed';
-export type WithdrawalStatus = 'requested' | 'approved' | 'processing' | 'completed' | 'rejected' | 'failed' | 'returned';
+export type WithdrawalStatus = 'requested' | 'approved' | 'processing' | 'completed' | 'rejected' | 'failed' | 'returned' | 'canceled';
 /** standard: lower fee, reviewed by an admin, up to 3 business days. instant: higher fee, sent right away. */
 export const WITHDRAWAL_SPEEDS = ['standard', 'instant'] as const;
 export type WithdrawalSpeed = (typeof WITHDRAWAL_SPEEDS)[number];
@@ -154,6 +154,8 @@ export interface WithdrawalView {
   pixKeyType: PixKeyType;
   pixKey: string;
   status: WithdrawalStatus;
+  /** The client may still cancel it (not sent to the bank yet); the amount goes back to the balance. */
+  cancelable: boolean;
   note: string | null;
   createdAt: string;
   completedAt: string | null;

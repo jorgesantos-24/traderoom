@@ -138,6 +138,7 @@ export const WITHDRAWAL_STATUS_LABEL = {
   rejected: 'Recusado',
   failed: 'Falhou (devolvido)',
   returned: 'Devolvido pelo banco',
+  canceled: 'Cancelado',
 } as const;
 
 export const PIX_KEY_LABEL = { CPF: 'CPF', CNPJ: 'CNPJ', EMAIL: 'E-mail', PHONE: 'Celular', RANDOM: 'Chave aleatória' } as const;

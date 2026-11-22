@@ -72,6 +72,7 @@ export const unusedPayments: PaymentService = {
   listDeposits: notUsed('payments.listDeposits'),
   requestWithdrawal: notUsed('payments.requestWithdrawal'),
   listWithdrawals: notUsed('payments.listWithdrawals'),
+  cancelWithdrawal: notUsed('payments.cancelWithdrawal'),
   adminList: notUsed('payments.adminList'),
   approve: notUsed('payments.approve'),
   reject: notUsed('payments.reject'),

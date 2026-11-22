@@ -75,6 +75,8 @@ export interface PaymentService {
   listDeposits(userId: string): Promise<DepositView[]>;
   requestWithdrawal(userId: string, input: CreateWithdrawalInput): Promise<WithdrawalView>;
   listWithdrawals(userId: string): Promise<WithdrawalView[]>;
+  /** The client takes back a withdrawal not yet sent to the bank; the full amount (fee included) returns to the balance. */
+  cancelWithdrawal(userId: string, id: string): Promise<WithdrawalView>;
   adminList(q: AdminWithdrawalsQuery): Promise<Page<AdminWithdrawalView>>;
   approve(adminId: string, id: string): Promise<AdminWithdrawalView>;
   reject(adminId: string, id: string, note: string): Promise<AdminWithdrawalView>;
@@ -129,6 +131,15 @@ const toDeposit = (r: DepositRow): DepositView => ({
   paidAt: r.paid_at,
 });
 
+/** How long a payout request may be in flight; meanwhile the withdrawal cannot be refused or canceled. */
+const SEND_GRACE = "interval '2 minutes'";
+/**
+ * Not sent to the bank yet, so it may still be refused (admin) or canceled (client): waiting for review, or approved
+ * with no gateway id after a send that failed and is not still in flight.
+ */
+const REFUSABLE = (w: string) => `(${w}.status = 'requested' or (${w}.status = 'approved' and ${w}.provider_id is null
+  and not coalesce(${w}.send_started_at > now() - ${SEND_GRACE} and ${w}.last_error is null, false)))`;
+
 interface WithdrawalRow {
   id: string;
   user_id: string;
@@ -140,6 +151,7 @@ interface WithdrawalRow {
   pix_key_type: PixKeyType;
   speed: WithdrawalSpeed;
   status: WithdrawalStatus;
+  cancelable: boolean;
   provider: string | null;
   provider_id: string | null;
   provider_status: string | null;
@@ -152,7 +164,7 @@ interface WithdrawalRow {
   cpf?: string | null;
 }
 const W_COLS = `w.id, w.user_id, w.amount_cents, w.fee_cents, w.pix_amount_cents, w.fx_rate, w.pix_key, w.pix_key_type, w.speed, w.status, w.provider, w.provider_id, w.provider_status, w.note,
-  w.last_error, ${isoUs('w.created_at')} as created_at, ${isoUs('w.completed_at')} as completed_at`;
+  w.last_error, ${isoUs('w.created_at')} as created_at, ${isoUs('w.completed_at')} as completed_at, coalesce(${REFUSABLE('w')}, false) as cancelable`;
 const toWithdrawal = (r: WithdrawalRow): WithdrawalView => ({
   id: r.id,
   amountCents: Number(r.amount_cents),
@@ -163,6 +175,7 @@ const toWithdrawal = (r: WithdrawalRow): WithdrawalView => ({
   pixKeyType: r.pix_key_type,
   pixKey: r.pix_key,
   status: r.status,
+  cancelable: r.cancelable,
   note: r.note,
   createdAt: r.created_at,
   completedAt: r.completed_at,
@@ -210,8 +223,6 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
   const limits = deps.limits ?? DEFAULT_PAYMENT_LIMITS;
   const feePct = deps.withdrawFeePct ?? 0;
   const instantFeePct = deps.instantWithdrawFeePct ?? null;
-  /** How long a payout request may be in flight; meanwhile the withdrawal cannot be refused. */
-  const SEND_GRACE = "interval '2 minutes'";
 
   async function depositById(db: pg.Pool | pg.PoolClient, id: string, lock = false): Promise<DepositRow | null> {
     const { rows } = await db.query<DepositRow>(`select ${DEPOSIT_COLS} from deposits where id = $1${lock ? ' for update' : ''}`, [id]);
@@ -294,6 +305,26 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
       ]);
       throw err;
     }
+  }
+
+  /**
+   * Locks a withdrawal that is about to be refused or canceled. Null when missing (or, with userId, someone else's);
+   * 409 with `sentMsg` once it has gone to the bank.
+   */
+  async function lockRefusable(c: pg.PoolClient, id: string, sentMsg: string, userId?: string): Promise<WithdrawalRow | null> {
+    const { rows } = await c.query<WithdrawalRow & { in_flight: boolean }>(
+      `select ${W_COLS}, (w.send_started_at > now() - ${SEND_GRACE} and w.last_error is null) is true as in_flight
+         from withdrawals w where w.id = $1 for update`,
+      [id],
+    );
+    const row = rows[0];
+    if (!row || (userId && row.user_id !== userId)) return null;
+    // A send that has not reported back yet may still reach the bank: refusing now could pay twice.
+    if (row.in_flight && row.status === 'approved' && !row.provider_id) {
+      throw new AppError(409, ErrorCode.Conflict, 'O envio deste saque está em andamento. Aguarde alguns minutos e atualize.');
+    }
+    if (!row.cancelable) throw new AppError(409, ErrorCode.Conflict, sentMsg);
+    return row;
   }
 
   const service: PaymentService = {
@@ -474,6 +505,18 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
       return rows.map(toWithdrawal);
     },
 
+    async cancelWithdrawal(userId, id) {
+      await inTransaction(pool, async (c) => {
+        const row = await lockRefusable(c, id, 'Este saque já foi enviado ao banco e não pode mais ser cancelado.', userId);
+        if (!row) throw new AppError(404, ErrorCode.NotFound, 'Saque não encontrado.');
+        await c.query(`update withdrawals set status = 'canceled', note = 'Cancelado por você', updated_at = now() where id = $1`, [id]);
+        await moveReal(c, userId, Number(row.amount_cents), 'withdrawal_return', 'Saque cancelado pelo cliente; valor devolvido.', {
+          withdrawalId: id,
+        });
+      });
+      return toWithdrawal((await pool.query<WithdrawalRow>(`select ${W_COLS} from withdrawals w where w.id = $1`, [id])).rows[0]!);
+    },
+
     async adminList(q) {
       const cursor = decodeCursor(q.cursor);
       const { rows } = await pool.query<WithdrawalRow & { cursor_at: string }>(
@@ -507,20 +550,8 @@ export function createPaymentService(deps: PaymentServiceDeps): PaymentService {
 
     async reject(adminId, id, note) {
       await inTransaction(pool, async (c) => {
-        const { rows } = await c.query<WithdrawalRow>(`select ${W_COLS} from withdrawals w where w.id = $1 for update`, [id]);
-        const row = rows[0];
+        const row = await lockRefusable(c, id, 'Este saque já foi enviado ao banco e não pode mais ser recusado.');
         if (!row) throw new AppError(404, ErrorCode.NotFound, 'Saque não encontrado.');
-        if (!(row.status === 'requested' || (row.status === 'approved' && !row.provider_id))) {
-          throw new AppError(409, ErrorCode.Conflict, 'Este saque já foi enviado ao banco e não pode mais ser recusado.');
-        }
-        // A send that has not reported back yet may still reach the bank: refusing now could pay twice.
-        const inFlight = await c.query(
-          `select 1 from withdrawals where id = $1 and send_started_at > now() - ${SEND_GRACE} and last_error is null`,
-          [id],
-        );
-        if (inFlight.rowCount) {
-          throw new AppError(409, ErrorCode.Conflict, 'O envio deste saque está em andamento. Aguarde alguns minutos e atualize.');
-        }
         await c.query(`update withdrawals set status = 'rejected', note = $2, reviewed_by = $3, updated_at = now() where id = $1`, [
           id,
           note,

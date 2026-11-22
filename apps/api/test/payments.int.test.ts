@@ -208,6 +208,28 @@ describe('withdrawals', () => {
     expect(await kinds(user)).toEqual(['withdrawal', 'withdrawal_return']);
   });
 
+  it('the client can cancel a withdrawal until it is sent to the bank', async () => {
+    const user = await newUser(10_000);
+    const other = await newUser(0);
+    const admin = await newUser(0, 'admin');
+    const w = await svc.requestWithdrawal(user, { amountCents: 6000, pixKeyType: 'CPF', pixKey: VALID_CPF });
+    expect(w.cancelable).toBe(true);
+    expect(await real(user)).toBe(4000);
+
+    await expect(svc.cancelWithdrawal(other, w.id)).rejects.toMatchObject({ statusCode: 404 });
+    expect(await svc.cancelWithdrawal(user, w.id)).toMatchObject({ status: 'canceled', cancelable: false });
+    expect(await real(user)).toBe(10_000);
+    await expect(svc.cancelWithdrawal(user, w.id)).rejects.toMatchObject({ statusCode: 409 });
+    await expect(svc.approve(admin, w.id)).rejects.toMatchObject({ statusCode: 409 });
+    expect(await kinds(user)).toEqual(['withdrawal', 'withdrawal_return']);
+
+    // Once sent, it can no longer be canceled.
+    const sent = await svc.requestWithdrawal(user, { amountCents: 3000, pixKeyType: 'CPF', pixKey: VALID_CPF });
+    await svc.approve(admin, sent.id);
+    expect((await svc.listWithdrawals(user)).find((x) => x.id === sent.id)?.cancelable).toBe(false);
+    await expect(svc.cancelWithdrawal(user, sent.id)).rejects.toMatchObject({ statusCode: 409 });
+  });
+
   it('approval sends the payout; a failed send can be retried; completion is final', async () => {
     const user = await newUser(10_000);
     const admin = await newUser(0, 'admin');

@@ -201,6 +201,8 @@ export const api = {
   submitKyc: (input: KycSubmitRequest) => request<KycStateView>('POST', '/api/kyc/submit', { body: input }),
   createWithdrawal: async (input: CreateWithdrawalInput) =>
     (await request<{ withdrawal: WithdrawalView }>('POST', '/api/withdrawals', { body: input })).withdrawal,
+  cancelWithdrawal: async (id: string) =>
+    (await request<{ withdrawal: WithdrawalView }>('POST', `/api/withdrawals/${encodeURIComponent(id)}/cancel`)).withdrawal,
 
   /** Premium chart indicators (SMC, patterns) this user may use. */
   indicatorAccess: async () => (await request<IndicatorAccessResponse>('GET', '/api/indicators/access')).indicators,
