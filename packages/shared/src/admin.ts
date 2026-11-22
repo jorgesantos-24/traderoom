@@ -130,7 +130,7 @@ export interface AuditEntryView {
 export const PREMIUM_INDICATORS = ['smc', 'patterns'] as const;
 export type PremiumIndicator = (typeof PREMIUM_INDICATORS)[number];
 export const PREMIUM_INDICATOR_LABEL: Record<PremiumIndicator, string> = {
-  smc: 'Smart Money Concepts (SMC)',
+  smc: 'Tendências',
   patterns: 'Figuras geométricas (padrões gráficos)',
 };
 

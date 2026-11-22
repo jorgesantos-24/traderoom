@@ -23,6 +23,9 @@ interface Props {
 
 const NEUTRAL = '#b2b5be';
 const DAILY_REFRESH_MS = 10 * 60_000;
+/** On-chart names for the structure breaks: CT (continuação de tendência, BOS) and MT (mudança de tendência, CHoCH). */
+const STRUCTURE_LABEL = { BOS: 'CT', CHoCH: 'MT' } as const;
+
 /** Indicators drawn by this layer, in drawing order (the Ichimoku cloud at the bottom, SMC labels on top). */
 const OVERLAY_TYPES = ['ichimoku', 'patterns', 'fractals', 'smc'];
 
@@ -278,7 +281,7 @@ function drawSmc(c: CanvasRenderingContext2D, m: Mapper, cfg: IndicatorConfig, r
     const x1 = X(ev.from);
     const x2 = X(ev.to);
     hline(x1, x2, y, col, swing ? 1.5 : 1, swing ? [] : [4, 3]);
-    text(ev.kind, (x1 + x2) / 2, y + (ev.dir === 1 ? -7 : 8), col, { size: swing ? 11 : 9, weight: swing ? 700 : 600 });
+    text(STRUCTURE_LABEL[ev.kind], (x1 + x2) / 2, y + (ev.dir === 1 ? -7 : 8), col, { size: swing ? 11 : 9, weight: swing ? 700 : 600 });
   }
 
   // Swing points.

@@ -442,7 +442,7 @@ export interface IndicatorDef {
   name: string;
   /** Short name for the legend. */
   short: string;
-  category: 'Smart Money' | 'Padrões' | 'Tendência' | 'Osciladores' | 'Volatilidade';
+  category: 'Tendências' | 'Padrões' | 'Tendência' | 'Osciladores' | 'Volatilidade';
   /** Drawn over the candles, or in its own pane below. */
   pane: 'main' | 'own';
   params: ParamDef[];
@@ -494,9 +494,9 @@ const G = (group: string, p: ParamDef): ParamDef => ({ ...p, group });
 export const INDICATORS: IndicatorDef[] = [
   {
     type: 'smc',
-    name: 'Smart Money Concepts (SMC)',
-    short: 'SMC',
-    category: 'Smart Money',
+    name: 'Tendências',
+    short: 'Tendências',
+    category: 'Tendências',
     pane: 'main',
     overlay: true,
     priceScaled: true,

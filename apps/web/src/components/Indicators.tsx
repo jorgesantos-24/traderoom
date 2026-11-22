@@ -8,7 +8,7 @@ import { Dialog } from './Dialog';
 import { SearchField, StarButton } from './PickerControls';
 import { Button, cx } from './ui';
 
-const CATEGORIES = ['Smart Money', 'Padrões', 'Tendência', 'Osciladores', 'Volatilidade'] as const;
+const CATEGORIES = ['Tendências', 'Padrões', 'Tendência', 'Osciladores', 'Volatilidade'] as const;
 
 const svg = (d: string) => (
   <svg
