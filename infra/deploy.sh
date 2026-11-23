@@ -124,7 +124,8 @@ provision() {
   for role in roles/logging.logWriter roles/monitoring.metricWriter; do
     g projects add-iam-policy-binding "$GCP_PROJECT" --member "serviceAccount:$SA" --role "$role" --condition None >/dev/null
   done
-  for s in traderoom-db-password traderoom-resend-api-key traderoom-smtp-pass traderoom-novus-api-key traderoom-novus-webhook-secret     traderoom-eagle-client-id traderoom-eagle-public-key traderoom-eagle-secret-key; do
+  for s in traderoom-db-password traderoom-resend-api-key traderoom-smtp-pass traderoom-novus-api-key traderoom-novus-webhook-secret     traderoom-eagle-client-id traderoom-eagle-public-key traderoom-eagle-secret-key
+    traderoom-telegram-bot-token traderoom-telegram-channel-id; do
     if exists g secrets describe "$s"; then
       g secrets add-iam-policy-binding "$s" --member "serviceAccount:$SA" --role roles/secretmanager.secretAccessor >/dev/null
     fi
@@ -233,7 +234,7 @@ ${TRADEROOM_REDIRECT_FROM// /, } {
 }
 CADDY
   fi
-  # Non-secret settings. Secrets (DATABASE_URL, RESEND_API_KEY, SMTP_PASS, NOVUS_*, EAGLE_*) are built at boot by fetch-secrets.sh.
+  # Non-secret settings. Secrets (DATABASE_URL, RESEND_API_KEY, SMTP_PASS, NOVUS_*, EAGLE_*, TELEGRAM_*) are built at boot by fetch-secrets.sh.
   cat >"$stage/traderoom.env" <<EOF
 GCP_PROJECT=$GCP_PROJECT
 TRADEROOM_DOMAIN=$TRADEROOM_DOMAIN
