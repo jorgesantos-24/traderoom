@@ -15,6 +15,7 @@ import {
   reportText,
   resultText,
   signalText,
+  stopLossText,
   type Direction,
   type Links,
   type ScheduleOptions,
@@ -27,6 +28,8 @@ export interface SignalOptions extends ScheduleOptions {
   expirySec: number;
   gales: number;
   tickMs: number;
+  /** Losses that end a session early (0 = never). */
+  stopLoss: number;
   links: Links;
 }
 
@@ -101,6 +104,9 @@ export class TelegramSignals {
       }
       await this.resolve(now);
       for (const s of SESSIONS) {
+        if (now >= brtAt(day, s.hour)) await this.stopLoss(day, s.key, s.name);
+      }
+      for (const s of SESSIONS) {
         const lastEntry = brtAt(day, s.hour) + Math.max(...this.opts.entryOffsetsMin) * 60_000;
         if (now >= lastEntry) await this.report(day, s.key, s.name);
       }
@@ -146,6 +152,16 @@ export class TelegramSignals {
   private async post(day: string, session: string, seq: number, entryAt: number): Promise<void> {
     const exists = await this.deps.pool.query('select 1 from telegram_signals where day = $1 and session = $2 and seq = $3', [day, session, seq]);
     if (exists.rowCount) return;
+    // Stopped sessions post nothing more; and a signal waits for the previous one's result, so the stop
+    // loss is known before the next entry goes out.
+    const gate = await this.deps.pool.query<{ stopped: boolean; open: boolean; losses: number }>(
+      `select exists (select 1 from telegram_signal_sessions where day = $1 and session = $2 and stopped_at is not null) as stopped,
+              exists (select 1 from telegram_signals where day = $1 and session = $2 and seq < $3 and result is null) as open,
+              (select count(*)::int from telegram_signals where day = $1 and session = $2 and result = 'loss') as losses`,
+      [day, session, seq],
+    );
+    const g = gate.rows[0];
+    if (!g || g.stopped || g.open || (this.opts.stopLoss > 0 && g.losses >= this.opts.stopLoss)) return;
 
     const { rows: assets } = await this.deps.pool.query<{ id: number; display: string }>(
       'select id, display from assets where enabled and symbol = any($1::text[])',
@@ -245,7 +261,7 @@ export class TelegramSignals {
     }
   }
 
-  private async report(day: string, session: string, name: string): Promise<void> {
+  private async sessionRows(day: string, session: string) {
     const { rows } = await this.deps.pool.query<{
       display: string;
       entry_at: Date;
@@ -253,6 +269,29 @@ export class TelegramSignals {
       result: string | null;
       result_step: number | null;
     }>('select display, entry_at, direction, result, result_step from telegram_signals where day = $1 and session = $2 order by seq', [day, session]);
+    return rows;
+  }
+
+  private async stopLoss(day: string, session: string, name: string): Promise<void> {
+    if (this.opts.stopLoss <= 0) return;
+    const rows = await this.sessionRows(day, session);
+    const losses = rows.filter((r) => r.result === 'loss').length;
+    if (losses < this.opts.stopLoss) return;
+    const claim = await this.deps.pool.query(
+      `insert into telegram_signal_sessions (day, session, stopped_at, reported_at) values ($1, $2, now(), now())
+       on conflict (day, session) do update set stopped_at = now(), reported_at = coalesce(telegram_signal_sessions.reported_at, now())
+       where telegram_signal_sessions.stopped_at is null
+       returning 1`,
+      [day, session],
+    );
+    if (!claim.rowCount) return;
+    const done = rows.filter((r): r is (typeof rows)[number] & { result: string } => r.result !== null);
+    await this.send('stop_loss', stopLossText(name, day, done, losses, this.opts.links));
+    this.deps.log.info({ day, session, losses }, 'telegram signals: stop loss reached');
+  }
+
+  private async report(day: string, session: string, name: string): Promise<void> {
+    const rows = await this.sessionRows(day, session);
     if (rows.length === 0 || rows.some((r) => r.result === null)) return;
     const claim = await this.deps.pool.query(
       `insert into telegram_signal_sessions (day, session, reported_at) values ($1, $2, now())
@@ -268,7 +307,8 @@ export class TelegramSignals {
 export const SIGNAL_DEFAULTS = {
   ...SCHEDULE_DEFAULTS,
   symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT'],
-  expirySec: 300,
+  expirySec: 60,
   gales: 2,
+  stopLoss: 2,
   tickMs: 5_000,
 } as const;

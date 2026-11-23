@@ -52,7 +52,7 @@ afterAll(async () => {
 });
 
 describe('TelegramSignals', () => {
-  it('runs a whole session once: announcement, 3 signals, their results and the report', async () => {
+  it('runs a whole session once: reminder, announcement, 10 M1 signals, their results and the report', async () => {
     const sent: Array<{ id: number; text: string; replyTo: number | null }> = [];
     const telegram: TelegramClient = {
       send: async (text, o) => {
@@ -75,16 +75,48 @@ describe('TelegramSignals', () => {
     expect(sent[0]!.text).toContain('Em <b>15 minutos</b> começa a sessão da <b>Manhã</b>');
     expect(sent[1]!.text).toContain('Iniciando sessão da <b>Manhã</b>');
     const posted = sent.filter((m) => m.text.includes('OPERAÇÃO CONFIRMADA'));
-    expect(posted.map((m) => m.text.match(/Entrada às: <b>(\d\d:\d\d)/)![1])).toEqual(['08:10', '08:30', '08:50']);
-    expect(posted.every((m) => m.text.includes('COMPRA'))).toBe(true);
+    expect(posted.map((m) => m.text.match(/Entrada às: <b>(\d\d:\d\d)/)![1])).toEqual(['08:05', '08:10', '08:15', '08:20', '08:25', '08:30', '08:35', '08:40', '08:45', '08:50']);
+    expect(posted.every((m) => m.text.includes('COMPRA') && m.text.includes('1 MINUTO (M1)'))).toBe(true);
+    expect(posted[0]!.text).toContain('1ª Proteção às: 08:06');
+    expect(posted[0]!.text).toContain('2ª Proteção às: 08:07');
     const results = sent.filter((m) => m.text.includes('WIN') && !m.text.includes('Relatório'));
     expect(results.map((m) => m.replyTo)).toEqual(posted.map((m) => m.id));
     const report = sent.at(-1)!.text;
     expect(report).toContain('Relatório da Sessão Manhã');
-    expect(report).toContain('Wins: <b>3</b>');
+    expect(report).toContain('Wins: <b>10</b>');
     expect(report).toContain('Taxa de acerto: <b>100%</b>');
 
     const { rows } = await pool.query('select result, result_step, message_id from telegram_signals where day = $1 order by seq', [DAY]);
     expect(rows).toEqual(posted.map((m) => ({ result: 'win', result_step: 0, message_id: String(m.id) })));
+  });
+
+  it('stops the session at 2 losses: stop message, no more signals, no report', async () => {
+    await clean();
+    for (const seq of [1, 2]) {
+      await pool.query(
+        `insert into telegram_signals (day, session, seq, asset_id, display, direction, entry_at, expiry_sec, gales, result, result_step, resolved_at)
+         values ($1, 'manha', $2, $3, 'ZZSIG/USD', 'put', $4, 60, 2, 'loss', 2, now())`,
+        [DAY, seq, assetId, new Date(START + seq * 5 * 60_000)],
+      );
+    }
+    await pool.query(`insert into telegram_signal_sessions (day, session, reminded_at, announced_at) values ($1, 'manha', now(), now())`, [DAY]);
+    const sent: string[] = [];
+    let now = START + 13 * 60_000;
+    const signals = new TelegramSignals(
+      {
+        pool,
+        telegram: { send: async (text) => (sent.push(text), sent.length) },
+        log: Fastify({ logger: false }).log,
+        metrics: new Registry(),
+        now: () => now,
+      },
+      { ...SIGNAL_DEFAULTS, symbols: [SYMBOL], links: { signupUrl: 'https://x.test/register' } },
+    );
+    for (; now <= START + 75 * 60_000; now += 15_000) await signals.tick();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('STOP LOSS ATINGIDO');
+    expect(sent[0]).toContain('Loss: <b>2</b>');
+    const { rows } = await pool.query('select count(*)::int n from telegram_signals where day = $1', [DAY]);
+    expect(rows[0].n).toBe(2);
   });
 });

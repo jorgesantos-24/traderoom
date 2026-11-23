@@ -129,7 +129,8 @@ export interface ScheduleOptions {
   leadMs: number;
 }
 
-export const SCHEDULE_DEFAULTS: ScheduleOptions = { entryOffsetsMin: [10, 30, 50], leadMs: 5 * 60_000 };
+/** 10 entries, one every 5 minutes from 08:05 (room for a 1-minute entry plus 2 protections), each posted 2 minutes before. */
+export const SCHEDULE_DEFAULTS: ScheduleOptions = { entryOffsetsMin: [5, 10, 15, 20, 25, 30, 35, 40, 45, 50], leadMs: 2 * 60_000 };
 
 /** 'YYYY-MM-DD' of the Brasília day containing `ms`. */
 export function brtDay(ms: number): string {
@@ -169,6 +170,11 @@ export function reminderText(sessionName: string): string {
 Prepare sua banca e fique de olho no canal. 📊`;
 }
 
+function expiryLabel(sec: number): string {
+  const m = Math.round(sec / 60);
+  return m === 1 ? '1 MINUTO (M1)' : `${m} MINUTOS (M${m})`;
+}
+
 export function announceText(sessionName: string): string {
   return `⏳ Iniciando sessão da <b>${sessionName}</b> em alguns minutos...\n\nFique atento às entradas! 📊`;
 }
@@ -180,7 +186,7 @@ export function signalText(s: { display: string; direction: Direction; entryAt: 
     '',
     `📈 Ativo: <b>${escapeHtml(s.display)}</b>`,
     `⏰ Entrada às: <b>${brtHHMM(s.entryAt)}</b>`,
-    `⌛ Expiração: <b>${Math.round(s.expirySec / 60)} MINUTOS</b>`,
+    `⌛ Expiração: <b>${expiryLabel(s.expirySec)}</b>`,
     `📌 Análise: <b>${analysis}</b>`,
   ];
   if (s.gales > 0) {
@@ -205,16 +211,29 @@ export function resultText(r: { display: string; result: string; result_step: nu
   return `<b>${resultLabel(r)}</b> — ${escapeHtml(r.display)}`;
 }
 
-export function reportText(
-  sessionName: string,
-  day: string,
-  rows: ReadonlyArray<{ display: string; entry_at: Date; direction: Direction; result: string; result_step: number | null }>,
-  links: Links,
-): string {
+type ReportRow = { display: string; entry_at: Date; direction: Direction; result: string; result_step: number | null };
+
+export function reportText(sessionName: string, day: string, rows: ReadonlyArray<ReportRow>, links: Links): string {
+  return summary(`📋 <b>Relatório da Sessão ${sessionName}</b> — ${brtDDMM(day)}`, rows, links);
+}
+
+export function stopLossText(sessionName: string, day: string, rows: ReadonlyArray<ReportRow>, losses: number, links: Links): string {
+  const head = [
+    '🛑 <b>STOP LOSS ATINGIDO</b> 🛑',
+    '',
+    `Batemos ${losses} loss e a sessão da <b>${sessionName}</b> foi encerrada por aqui. Gerenciamento em primeiro lugar!`,
+    'Voltamos na próxima sessão. 💪',
+    '',
+    `📋 <b>Resumo da Sessão ${sessionName}</b> — ${brtDDMM(day)}`,
+  ].join('\n');
+  return summary(head, rows, links);
+}
+
+function summary(head: string, rows: ReadonlyArray<ReportRow>, links: Links): string {
   const wins = rows.filter((r) => r.result === 'win').length;
   const losses = rows.filter((r) => r.result === 'loss').length;
   const decided = wins + losses;
-  const lines = [`📋 <b>Relatório da Sessão ${sessionName}</b> — ${brtDDMM(day)}`, ''];
+  const lines = [head, ''];
   for (const r of rows) {
     const icon = r.result === 'win' ? '✅' : r.result === 'loss' ? '❌' : r.result === 'draw' ? '⚪' : '⚠️';
     const g = r.result === 'win' && r.result_step ? ` (${ORDINAL[r.result_step - 1]} prot.)` : '';
