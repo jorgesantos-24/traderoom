@@ -124,7 +124,7 @@ provision() {
   for role in roles/logging.logWriter roles/monitoring.metricWriter; do
     g projects add-iam-policy-binding "$GCP_PROJECT" --member "serviceAccount:$SA" --role "$role" --condition None >/dev/null
   done
-  for s in traderoom-db-password traderoom-resend-api-key traderoom-smtp-pass traderoom-novus-api-key traderoom-novus-webhook-secret     traderoom-eagle-client-id traderoom-eagle-public-key traderoom-eagle-secret-key
+  for s in traderoom-db-password traderoom-resend-api-key traderoom-smtp-pass traderoom-novus-api-key traderoom-novus-webhook-secret     traderoom-eagle-client-id traderoom-eagle-public-key traderoom-eagle-secret-key \
     traderoom-telegram-bot-token traderoom-telegram-channel-id; do
     if exists g secrets describe "$s"; then
       g secrets add-iam-policy-binding "$s" --member "serviceAccount:$SA" --role roles/secretmanager.secretAccessor >/dev/null
