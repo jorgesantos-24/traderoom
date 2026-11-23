@@ -4,6 +4,7 @@ import {
   brtAt,
   brtDay,
   brtHHMM,
+  brtWeekday,
   decideSignal,
   ema,
   pickSignal,
@@ -83,6 +84,8 @@ describe('schedule and texts', () => {
     expect(brtHHMM(at)).toBe('08:10');
     expect(brtDay(Date.parse('2030-01-03T02:59:00Z'))).toBe('2030-01-02');
     expect(brtDay(Date.parse('2030-01-03T03:00:00Z'))).toBe('2030-01-03');
+    expect(brtWeekday('2026-11-23')).toBe(1);
+    expect(brtWeekday('2030-01-02')).toBe(3);
   });
 
   it('formats a signal with its protections', () => {

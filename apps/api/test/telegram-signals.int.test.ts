@@ -8,7 +8,7 @@ import { Registry } from '@traderoom/shared';
 import { loadConfig } from '../src/config.js';
 import { createPool } from '../src/lib/db.js';
 import type { TelegramClient } from '../src/lib/telegram.js';
-import { brtAt } from '../src/worker/signal-strategy.js';
+import { WEEKLY_POSTS, brtAt } from '../src/worker/signal-strategy.js';
 import { SIGNAL_DEFAULTS, TelegramSignals } from '../src/worker/telegram-signals.js';
 
 const envFile = fileURLToPath(new URL('../../../.env', import.meta.url));
@@ -60,11 +60,14 @@ describe('TelegramSignals', () => {
         sent.push({ id, text, replyTo: o?.replyTo ?? null });
         return id;
       },
+      sendPhoto: async () => {
+        throw new Error('not used');
+      },
     };
     let now = START - 16 * 60_000;
     const signals = new TelegramSignals(
       { pool, telegram, log: Fastify({ logger: false }).log, metrics: new Registry(), now: () => now },
-      { ...SIGNAL_DEFAULTS, symbols: [SYMBOL], links: { signupUrl: 'https://x.test/register' } },
+      { ...SIGNAL_DEFAULTS, symbols: [SYMBOL], links: { signupUrl: 'https://x.test/register' }, publicOrigin: 'https://x.test', weeklyPosts: [] },
     );
     for (; now <= START + 75 * 60_000; now += 15_000) await signals.tick();
     // A restart replaying the same minutes posts nothing new.
@@ -105,12 +108,12 @@ describe('TelegramSignals', () => {
     const signals = new TelegramSignals(
       {
         pool,
-        telegram: { send: async (text) => (sent.push(text), sent.length) },
+        telegram: { send: async (text) => (sent.push(text), sent.length), sendPhoto: async () => 0 },
         log: Fastify({ logger: false }).log,
         metrics: new Registry(),
         now: () => now,
       },
-      { ...SIGNAL_DEFAULTS, symbols: [SYMBOL], links: { signupUrl: 'https://x.test/register' } },
+      { ...SIGNAL_DEFAULTS, symbols: [SYMBOL], links: { signupUrl: 'https://x.test/register' }, publicOrigin: 'https://x.test', weeklyPosts: [] },
     );
     for (; now <= START + 75 * 60_000; now += 15_000) await signals.tick();
     expect(sent).toHaveLength(1);
@@ -118,5 +121,28 @@ describe('TelegramSignals', () => {
     expect(sent[0]).toContain('Loss: <b>2</b>');
     const { rows } = await pool.query('select count(*)::int n from telegram_signals where day = $1', [DAY]);
     expect(rows[0].n).toBe(2);
+  });
+
+  it('posts the Corujão photo once at 21:00 on Monday, Wednesday and Thursday', async () => {
+    await clean();
+    await pool.query('delete from telegram_posts where day = $1', [DAY]);
+    const photos: Array<[string, string]> = [];
+    let now = brtAt(DAY, 20, 58); // 2030-01-02 is a Wednesday
+    const signals = new TelegramSignals(
+      {
+        pool,
+        telegram: { send: async () => 1, sendPhoto: async (url, caption) => (photos.push([url, caption]), photos.length) },
+        log: Fastify({ logger: false }).log,
+        metrics: new Registry(),
+        now: () => now,
+      },
+      { ...SIGNAL_DEFAULTS, symbols: [SYMBOL], links: { signupUrl: 'https://x.test/register' }, publicOrigin: 'https://x.test/', weeklyPosts: WEEKLY_POSTS },
+    );
+    for (; now <= brtAt(DAY, 21, 10); now += 15_000) await signals.tick();
+    expect(photos).toHaveLength(1);
+    expect(photos[0]![0]).toBe('https://x.test/telegram/corujao.jpg');
+    expect(photos[0]![1]).toContain('Daqui a <b>1 hora</b>');
+    expect(photos[0]![1]).toContain('@JorgeTrader25');
+    await pool.query('delete from telegram_posts where day = $1', [DAY]);
   });
 });

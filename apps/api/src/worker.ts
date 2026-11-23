@@ -51,6 +51,7 @@ const signals =
           symbols: env.TELEGRAM_SIGNAL_SYMBOLS?.split(',').map((x) => x.trim()).filter(Boolean) ?? SIGNAL_DEFAULTS.symbols,
           gales: env.TELEGRAM_SIGNAL_GALES,
           links: { signupUrl: env.TELEGRAM_SIGNUP_URL ?? `${env.PUBLIC_ORIGIN.replace(/\/$/, '')}/register` },
+          publicOrigin: env.PUBLIC_ORIGIN,
         },
       )
     : null;

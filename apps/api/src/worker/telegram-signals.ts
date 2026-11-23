@@ -5,6 +5,8 @@ import type { TelegramClient } from '../lib/telegram.js';
 import {
   SCHEDULE_DEFAULTS,
   SESSIONS,
+  WEEKLY_POSTS,
+  brtWeekday,
   analyze,
   announceText,
   reminderText,
@@ -20,6 +22,7 @@ import {
   type Links,
   type ScheduleOptions,
   type StepPrices,
+  type WeeklyPost,
 } from './signal-strategy.js';
 
 export interface SignalOptions extends ScheduleOptions {
@@ -31,6 +34,9 @@ export interface SignalOptions extends ScheduleOptions {
   /** Losses that end a session early (0 = never). */
   stopLoss: number;
   links: Links;
+  /** Site origin for photo URLs (https://kydeninvest.com). */
+  publicOrigin: string;
+  weeklyPosts: readonly WeeklyPost[];
 }
 
 export interface SignalDeps {
@@ -102,6 +108,10 @@ export class TelegramSignals {
           if (now >= entryAt - this.opts.leadMs && now < entryAt - MIN_NOTICE_MS) await this.post(day, s.key, i + 1, entryAt);
         }
       }
+      for (const p of this.opts.weeklyPosts) {
+        const at = brtAt(day, p.hour, p.minute);
+        if (p.weekdays.includes(brtWeekday(day)) && now >= at && now < at + ANNOUNCE_WINDOW_MS) await this.weekly(day, p);
+      }
       await this.resolve(now);
       for (const s of SESSIONS) {
         if (now >= brtAt(day, s.hour)) await this.stopLoss(day, s.key, s.name);
@@ -137,6 +147,22 @@ export class TelegramSignals {
       [day, session],
     );
     if (r.rowCount) await this.send('reminder', reminderText(name));
+  }
+
+  private async weekly(day: string, p: WeeklyPost): Promise<void> {
+    const r = await this.deps.pool.query('insert into telegram_posts (day, key) values ($1, $2) on conflict do nothing returning 1', [day, p.key]);
+    if (!r.rowCount) return;
+    if (p.photoPath) {
+      try {
+        await this.deps.telegram.sendPhoto(`${this.opts.publicOrigin.replace(/\/$/, '')}${p.photoPath}`, p.caption);
+        this.sent.inc({ kind: `post_${p.key}` });
+        return;
+      } catch (err) {
+        this.failed.inc({ kind: `post_${p.key}_photo` });
+        this.deps.log.warn({ err: (err as Error).message, key: p.key }, 'telegram photo failed; sending the text only');
+      }
+    }
+    await this.send(`post_${p.key}`, p.caption);
   }
 
   private async announce(day: string, session: string, name: string): Promise<void> {
@@ -311,4 +337,5 @@ export const SIGNAL_DEFAULTS = {
   gales: 2,
   stopLoss: 2,
   tickMs: 5_000,
+  weeklyPosts: WEEKLY_POSTS,
 } as const;

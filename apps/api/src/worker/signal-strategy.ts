@@ -175,6 +175,40 @@ function expiryLabel(sec: number): string {
   return m === 1 ? '1 MINUTO (M1)' : `${m} MINUTOS (M${m})`;
 }
 
+/** Fixed weekly posts: on these Brasília weekdays (0 = Sunday) at hour:minute, a photo with a caption. */
+export interface WeeklyPost {
+  key: string;
+  weekdays: readonly number[];
+  hour: number;
+  minute: number;
+  /** Path under the site origin, e.g. /telegram/corujao.jpg. */
+  photoPath: string | null;
+  caption: string;
+}
+
+export const WEEKLY_POSTS: readonly WeeklyPost[] = [
+  {
+    key: 'corujao',
+    weekdays: [1, 3, 4], // Monday, Wednesday, Thursday
+    hour: 21,
+    minute: 0,
+    photoPath: '/telegram/corujao.jpg',
+    caption: [
+      '🦉 <b>SESSÃO DO CORUJÃO</b> 🌙',
+      '',
+      'Daqui a <b>1 hora</b> começa a sessão do Corujão com o <b>Trader Jorge</b>! Vamos atrás das <b>melhores movimentações do mercado</b>. 📈',
+      '',
+      'Quer fazer parte? 👥',
+      'Manda mensagem agora para 👉 @JorgeTrader25',
+    ].join('\n'),
+  },
+];
+
+/** Brasília weekday (0 = Sunday) of a 'YYYY-MM-DD' day. */
+export function brtWeekday(day: string): number {
+  return new Date(`${day}T12:00:00Z`).getUTCDay();
+}
+
 export function announceText(sessionName: string): string {
   return `⏳ Iniciando sessão da <b>${sessionName}</b> em alguns minutos...\n\nFique atento às entradas! 📊`;
 }
