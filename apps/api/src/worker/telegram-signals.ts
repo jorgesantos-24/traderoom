@@ -100,7 +100,7 @@ export class TelegramSignals {
       const day = brtDay(now);
       for (const s of SESSIONS) {
         const start = brtAt(day, s.hour);
-        if (now >= start - REMINDER_BEFORE_MS && now < start - REMINDER_BEFORE_MS + ANNOUNCE_WINDOW_MS) await this.remind(day, s.key, s.name);
+        if (now >= start - REMINDER_BEFORE_MS && now < start - REMINDER_BEFORE_MS + ANNOUNCE_WINDOW_MS) await this.remind(day, s.key, s.name, s.reminderPhoto);
         if (now < start) continue;
         if (now < start + ANNOUNCE_WINDOW_MS) await this.announce(day, s.key, s.name);
         for (let i = 0; i < this.opts.entryOffsetsMin.length; i++) {
@@ -139,30 +139,35 @@ export class TelegramSignals {
     }
   }
 
-  private async remind(day: string, session: string, name: string): Promise<void> {
+  private async remind(day: string, session: string, name: string, photo?: string): Promise<void> {
     const r = await this.deps.pool.query(
       `insert into telegram_signal_sessions (day, session, reminded_at) values ($1, $2, now())
        on conflict (day, session) do update set reminded_at = now() where telegram_signal_sessions.reminded_at is null
        returning 1`,
       [day, session],
     );
-    if (r.rowCount) await this.send('reminder', reminderText(name));
+    if (r.rowCount) await this.photoOrText('reminder', photo ?? null, reminderText(name));
   }
 
   private async weekly(day: string, p: WeeklyPost): Promise<void> {
     const r = await this.deps.pool.query('insert into telegram_posts (day, key) values ($1, $2) on conflict do nothing returning 1', [day, p.key]);
     if (!r.rowCount) return;
-    if (p.photoPath) {
+    await this.photoOrText(`post_${p.key}`, p.photoPath, p.caption);
+  }
+
+  /** Photo with the text as caption; if the photo fails, the text alone. */
+  private async photoOrText(what: string, photoPath: string | null, text: string): Promise<void> {
+    if (photoPath) {
       try {
-        await this.deps.telegram.sendPhoto(`${this.opts.publicOrigin.replace(/\/$/, '')}${p.photoPath}`, p.caption);
-        this.sent.inc({ kind: `post_${p.key}` });
+        await this.deps.telegram.sendPhoto(`${this.opts.publicOrigin.replace(/\/$/, '')}${photoPath}`, text);
+        this.sent.inc({ kind: what });
         return;
       } catch (err) {
-        this.failed.inc({ kind: `post_${p.key}_photo` });
-        this.deps.log.warn({ err: (err as Error).message, key: p.key }, 'telegram photo failed; sending the text only');
+        this.failed.inc({ kind: `${what}_photo` });
+        this.deps.log.warn({ err: (err as Error).message, what }, 'telegram photo failed; sending the text only');
       }
     }
-    await this.send(`post_${p.key}`, p.caption);
+    await this.send(what, text);
   }
 
   private async announce(day: string, session: string, name: string): Promise<void> {

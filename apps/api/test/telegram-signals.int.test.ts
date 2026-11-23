@@ -60,8 +60,10 @@ describe('TelegramSignals', () => {
         sent.push({ id, text, replyTo: o?.replyTo ?? null });
         return id;
       },
-      sendPhoto: async () => {
-        throw new Error('not used');
+      sendPhoto: async (url, caption) => {
+        const id = sent.length + 1;
+        sent.push({ id, text: `[photo ${url}] ${caption}`, replyTo: null });
+        return id;
       },
     };
     let now = START - 16 * 60_000;
@@ -75,6 +77,7 @@ describe('TelegramSignals', () => {
     for (now = START - 16 * 60_000; now <= START + 75 * 60_000; now += 60_000) await signals.tick();
     expect(sent.length).toBe(before);
 
+    expect(sent[0]!.text).toContain('[photo https://x.test/telegram/manha.jpg] ');
     expect(sent[0]!.text).toContain('Em <b>15 minutos</b> começa a sessão da <b>Manhã</b>');
     expect(sent[1]!.text).toContain('Iniciando sessão da <b>Manhã</b>');
     const posted = sent.filter((m) => m.text.includes('OPERAÇÃO CONFIRMADA'));

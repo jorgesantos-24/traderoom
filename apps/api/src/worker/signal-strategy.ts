@@ -116,8 +116,9 @@ export function decideSignal(direction: Direction, gales: number, steps: Readonl
 
 const BRT_OFFSET_MS = -3 * 3_600_000;
 
-export const SESSIONS: ReadonlyArray<{ key: SessionKey; name: string; hour: number }> = [
-  { key: 'manha', name: 'Manhã', hour: 8 },
+/** reminderPhoto: path under the site origin of the image sent with the 15-minute reminder. */
+export const SESSIONS: ReadonlyArray<{ key: SessionKey; name: string; hour: number; reminderPhoto?: string }> = [
+  { key: 'manha', name: 'Manhã', hour: 8, reminderPhoto: '/telegram/manha.jpg' },
   { key: 'tarde', name: 'Tarde', hour: 12 },
   { key: 'noite', name: 'Noite', hour: 18 },
 ];
