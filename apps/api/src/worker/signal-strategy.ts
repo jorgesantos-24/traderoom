@@ -119,8 +119,8 @@ const BRT_OFFSET_MS = -3 * 3_600_000;
 /** reminderPhoto: path under the site origin of the image sent with the 15-minute reminder. */
 export const SESSIONS: ReadonlyArray<{ key: SessionKey; name: string; hour: number; reminderPhoto?: string }> = [
   { key: 'manha', name: 'Manhã', hour: 8, reminderPhoto: '/telegram/manha.jpg' },
-  { key: 'tarde', name: 'Tarde', hour: 12 },
-  { key: 'noite', name: 'Noite', hour: 18 },
+  { key: 'tarde', name: 'Tarde', hour: 12, reminderPhoto: '/telegram/tarde.jpg' },
+  { key: 'noite', name: 'Noite', hour: 18, reminderPhoto: '/telegram/noite.jpg' },
 ];
 
 export interface ScheduleOptions {
