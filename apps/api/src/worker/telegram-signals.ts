@@ -61,6 +61,8 @@ const REMINDER_BEFORE_MS = 15 * 60_000;
 const WIN_CHEER = '<b>Green</b> ✅✅✅✅✅';
 /** A signal is not posted when its entry is closer than this. */
 const MIN_NOTICE_MS = 60_000;
+/** Candles (of the signal's expiry) read for the analysis; it needs at least 30. */
+const ANALYSIS_CANDLES = 40;
 
 /**
  * Posts the daily signals to Telegram: per session an announcement, one signal before each entry,
@@ -207,13 +209,15 @@ export class TelegramSignals {
       return;
     }
     const now = this.now();
+    // Closes of candles as long as the expiry (M5 → 5-minute candles).
+    const bucketMs = this.opts.expirySec * 1000;
     const { rows: candles } = await this.deps.pool.query<{ asset_id: number; c: string }>(
       `select asset_id, (array_agg(price order by captured_at desc))[1]::text as c
          from price_snapshots
         where asset_id = any($1::int[]) and captured_at >= $2 and captured_at < $3
-        group by asset_id, date_bin(interval '1 minute', captured_at, timestamptz 'epoch')
-        order by asset_id, date_bin(interval '1 minute', captured_at, timestamptz 'epoch')`,
-      [assets.map((a) => a.id), new Date(now - 60 * 60_000), new Date(now)],
+        group by asset_id, date_bin(make_interval(secs => $4), captured_at, timestamptz 'epoch')
+        order by asset_id, date_bin(make_interval(secs => $4), captured_at, timestamptz 'epoch')`,
+      [assets.map((a) => a.id), new Date(now - ANALYSIS_CANDLES * bucketMs), new Date(now), this.opts.expirySec],
     );
     const closes = new Map<number, number[]>();
     for (const c of candles) {
@@ -359,7 +363,7 @@ export class TelegramSignals {
 export const SIGNAL_DEFAULTS = {
   ...SCHEDULE_DEFAULTS,
   symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT'],
-  expirySec: 60,
+  expirySec: 300,
   gales: 2,
   stopLoss: 2,
   tickMs: 5_000,

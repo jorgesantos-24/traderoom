@@ -118,9 +118,9 @@ const BRT_OFFSET_MS = -3 * 3_600_000;
 
 /** reminderPhoto: path under the site origin of the image sent with the 15-minute reminder. */
 export const SESSIONS: ReadonlyArray<{ key: SessionKey; name: string; hour: number; reminderPhoto?: string }> = [
-  { key: 'manha', name: 'Manhã', hour: 8, reminderPhoto: '/telegram/manha.jpg' },
-  { key: 'tarde', name: 'Tarde', hour: 12, reminderPhoto: '/telegram/tarde.jpg' },
-  { key: 'noite', name: 'Noite', hour: 18, reminderPhoto: '/telegram/noite.jpg' },
+  { key: 'manha', name: 'Manhã', hour: 9, reminderPhoto: '/telegram/manha.jpg' },
+  { key: 'tarde', name: 'Tarde', hour: 15, reminderPhoto: '/telegram/tarde.jpg' },
+  { key: 'noite', name: 'Noite', hour: 21, reminderPhoto: '/telegram/noite.jpg' },
 ];
 
 export interface ScheduleOptions {
@@ -130,8 +130,11 @@ export interface ScheduleOptions {
   leadMs: number;
 }
 
-/** 10 entries, one every 5 minutes from 08:05 (room for a 1-minute entry plus 2 protections), each posted 2 minutes before. */
-export const SCHEDULE_DEFAULTS: ScheduleOptions = { entryOffsetsMin: [5, 10, 15, 20, 25, 30, 35, 40, 45, 50], leadMs: 2 * 60_000 };
+/**
+ * 4 M5 entries, one every 20 minutes from 09:05, each posted 2 minutes before. An entry plus 2 protections
+ * takes 15 minutes, and the next signal waits for that result, so 20 minutes is the tightest spacing.
+ */
+export const SCHEDULE_DEFAULTS: ScheduleOptions = { entryOffsetsMin: [5, 25, 45, 65], leadMs: 2 * 60_000 };
 
 /** 'YYYY-MM-DD' of the Brasília day containing `ms`. */
 export function brtDay(ms: number): string {
