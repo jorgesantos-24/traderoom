@@ -86,7 +86,7 @@ describe('TelegramSignals', () => {
     expect(sent[0]!.text).toContain('Em <b>15 minutos</b> começa a sessão da <b>Manhã</b>');
     expect(sent[1]!.text).toContain('Iniciando sessão da <b>Manhã</b>');
     const posted = sent.filter((m) => m.text.includes('OPERAÇÃO CONFIRMADA'));
-    expect(posted.map((m) => m.text.match(/Entrada às: <b>(\d\d:\d\d)/)![1])).toEqual(['09:05', '09:25', '09:45', '10:05']);
+    expect(posted.map((m) => m.text.match(/Entrada às: <b>(\d\d:\d\d)/)![1])).toEqual(['09:05', '09:12', '09:19', '09:26']);
     expect(posted.every((m) => m.text.includes('COMPRA') && m.text.includes('5 MINUTOS (M5)'))).toBe(true);
     expect(posted[0]!.text).toContain('1ª Proteção às: 09:10');
     expect(posted[0]!.text).toContain('2ª Proteção às: 09:15');

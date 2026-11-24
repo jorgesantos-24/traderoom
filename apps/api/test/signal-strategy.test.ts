@@ -7,6 +7,7 @@ import {
   brtWeekday,
   decideSignal,
   ema,
+  nextEntryAt,
   pickSignal,
   reportText,
   rsi,
@@ -78,6 +79,13 @@ describe('decideSignal', () => {
 });
 
 describe('schedule and texts', () => {
+  it('puts the next entry 2 minutes after the previous result, or the next minute with notice when late', () => {
+    const base = brtAt('2030-01-02', 9, 12);
+    expect(nextEntryAt(base, base - 2 * 60_000 + 3_000, 2 * 60_000, 60_000)).toBe(base);
+    expect(nextEntryAt(base, base - 60_000, 2 * 60_000, 60_000)).toBe(base);
+    expect(brtHHMM(nextEntryAt(base, base - 30_000, 2 * 60_000, 60_000))).toBe('09:14');
+  });
+
   it('uses Brasília time', () => {
     const at = brtAt('2030-01-02', 8, 10);
     expect(new Date(at).toISOString()).toBe('2030-01-02T11:10:00.000Z');

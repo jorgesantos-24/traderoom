@@ -124,17 +124,31 @@ export const SESSIONS: ReadonlyArray<{ key: SessionKey; name: string; hour: numb
 ];
 
 export interface ScheduleOptions {
-  /** Minutes after the session start of each entry. */
-  entryOffsetsMin: readonly number[];
-  /** The signal is posted this long before its entry. */
+  /** Minutes after the session start of the first entry. */
+  firstEntryMin: number;
+  /** Entries per session (fewer when the stop loss hits). */
+  entriesPerSession: number;
+  /** The signal is posted this long before its entry; also the pause between a result and the next entry. */
   leadMs: number;
+  /** No new signal this long after the session start (a session that runs late is cut short). */
+  sessionMaxMin: number;
 }
 
 /**
- * 4 M5 entries, one every 20 minutes from 09:05, each posted 2 minutes before. An entry plus 2 protections
- * takes 15 minutes, and the next signal waits for that result, so 20 minutes is the tightest spacing.
+ * 4 entries per session: the first at 09:05, each next one 2 minutes after the previous result (win at
+ * the entry or at a protection, or loss), posted as soon as that result is out.
  */
-export const SCHEDULE_DEFAULTS: ScheduleOptions = { entryOffsetsMin: [5, 25, 45, 65], leadMs: 2 * 60_000 };
+export const SCHEDULE_DEFAULTS: ScheduleOptions = { firstEntryMin: 5, entriesPerSession: 4, leadMs: 2 * 60_000, sessionMaxMin: 90 };
+
+/**
+ * Entry time of a session's next signal: `base` (first entry, or the previous result + the pause) when
+ * there is still at least `minNoticeMs` before it, otherwise the next whole minute `leadMs` from now
+ * (the worker was late).
+ */
+export function nextEntryAt(base: number, now: number, leadMs: number, minNoticeMs: number): number {
+  if (now <= base - minNoticeMs) return base;
+  return Math.ceil((now + leadMs) / 60_000) * 60_000;
+}
 
 /** 'YYYY-MM-DD' of the Brasília day containing `ms`. */
 export function brtDay(ms: number): string {

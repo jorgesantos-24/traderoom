@@ -7,6 +7,7 @@ import {
   SESSIONS,
   WEEKLY_POSTS,
   brtWeekday,
+  nextEntryAt,
   analyze,
   announceText,
   reminderText,
@@ -109,10 +110,7 @@ export class TelegramSignals {
         if (now >= start - REMINDER_BEFORE_MS && now < start - REMINDER_BEFORE_MS + ANNOUNCE_WINDOW_MS) await this.remind(day, s.key, s.name, s.reminderPhoto);
         if (now < start) continue;
         if (now < start + ANNOUNCE_WINDOW_MS) await this.announce(day, s.key, s.name);
-        for (let i = 0; i < this.opts.entryOffsetsMin.length; i++) {
-          const entryAt = start + this.opts.entryOffsetsMin[i]! * 60_000;
-          if (now >= entryAt - this.opts.leadMs && now < entryAt - MIN_NOTICE_MS) await this.post(day, s.key, i + 1, entryAt);
-        }
+        if (now < start + this.opts.sessionMaxMin * 60_000) await this.next(day, s.key, start, now);
       }
       for (const p of this.opts.weeklyPosts) {
         const at = brtAt(day, p.hour, p.minute);
@@ -123,8 +121,7 @@ export class TelegramSignals {
         if (now >= brtAt(day, s.hour)) await this.stopLoss(day, s.key, s.name);
       }
       for (const s of SESSIONS) {
-        const lastEntry = brtAt(day, s.hour) + Math.max(...this.opts.entryOffsetsMin) * 60_000;
-        if (now >= lastEntry) await this.report(day, s.key, s.name);
+        if (now >= brtAt(day, s.hour)) await this.report(day, s.key, s.name, now >= brtAt(day, s.hour) + this.opts.sessionMaxMin * 60_000);
       }
     } catch (err) {
       this.deps.log.error({ err }, 'telegram signals tick failed');
@@ -184,6 +181,25 @@ export class TelegramSignals {
       [day, session],
     );
     if (r.rowCount) await this.send('announce', announceText(name));
+  }
+
+  /**
+   * Posts the session's next signal when it is due: the first one `leadMs` before start + firstEntryMin,
+   * each later one as soon as the previous result is out (entry `leadMs` after that result).
+   */
+  private async next(day: string, session: string, start: number, now: number): Promise<void> {
+    const { rows } = await this.deps.pool.query<{ entry_at: Date; expiry_sec: number; gales: number; result: string | null; result_step: number | null }>(
+      'select entry_at, expiry_sec, gales, result, result_step from telegram_signals where day = $1 and session = $2 order by seq',
+      [day, session],
+    );
+    if (rows.length >= this.opts.entriesPerSession || rows.some((r) => r.result === null)) return;
+    const last = rows.at(-1);
+    // The previous signal ended when its deciding step closed.
+    const base = last
+      ? last.entry_at.getTime() + ((last.result_step ?? last.gales) + 1) * last.expiry_sec * 1000 + this.opts.leadMs
+      : start + this.opts.firstEntryMin * 60_000;
+    if (now < base - this.opts.leadMs) return;
+    await this.post(day, session, rows.length + 1, nextEntryAt(base, now, this.opts.leadMs, MIN_NOTICE_MS));
   }
 
   private async post(day: string, session: string, seq: number, entryAt: number): Promise<void> {
@@ -346,9 +362,11 @@ export class TelegramSignals {
     this.deps.log.info({ day, session, losses }, 'telegram signals: stop loss reached');
   }
 
-  private async report(day: string, session: string, name: string): Promise<void> {
+  /** Once every entry is decided (all of them, or fewer when the session ran out of time). */
+  private async report(day: string, session: string, name: string, timeUp: boolean): Promise<void> {
     const rows = await this.sessionRows(day, session);
     if (rows.length === 0 || rows.some((r) => r.result === null)) return;
+    if (rows.length < this.opts.entriesPerSession && !timeUp) return;
     const claim = await this.deps.pool.query(
       `insert into telegram_signal_sessions (day, session, reported_at) values ($1, $2, now())
        on conflict (day, session) do update set reported_at = now() where telegram_signal_sessions.reported_at is null
