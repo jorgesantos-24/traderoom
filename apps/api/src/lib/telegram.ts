@@ -5,6 +5,8 @@ export interface TelegramClient {
   send(text: string, opts?: { replyTo?: number | null }): Promise<number>;
   /** Photo by public URL (Telegram downloads it) with an HTML caption of up to 1024 characters. */
   sendPhoto(photoUrl: string, caption: string): Promise<number>;
+  /** Sticker by file_id (one the bot has received), optionally as a reply. */
+  sendSticker(fileId: string, opts?: { replyTo?: number | null }): Promise<number>;
 }
 
 export function createTelegram(opts: { token: string; chatId: string; fetch?: typeof fetch; timeoutMs?: number }): TelegramClient {
@@ -26,6 +28,11 @@ export function createTelegram(opts: { token: string; chatId: string; fetch?: ty
   }
   return {
     sendPhoto: (photoUrl, caption) => call('sendPhoto', { chat_id: opts.chatId, photo: photoUrl, caption, parse_mode: 'HTML' }),
+    async sendSticker(fileId, o = {}) {
+      const body: Record<string, unknown> = { chat_id: opts.chatId, sticker: fileId };
+      if (o.replyTo) body.reply_parameters = { message_id: o.replyTo, allow_sending_without_reply: true };
+      return call('sendSticker', body);
+    },
     async send(text, o = {}) {
       const body: Record<string, unknown> = {
         chat_id: opts.chatId,

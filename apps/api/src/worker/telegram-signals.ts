@@ -37,6 +37,8 @@ export interface SignalOptions extends ScheduleOptions {
   /** Site origin for photo URLs (https://kydeninvest.com). */
   publicOrigin: string;
   weeklyPosts: readonly WeeklyPost[];
+  /** Sticker file_ids posted instead of the result text (draws and voids keep the text). */
+  resultStickers: { win: string; loss: string };
 }
 
 export interface SignalDeps {
@@ -55,6 +57,8 @@ const SETTLE_DELAY_MS = 3_000;
 const ANNOUNCE_WINDOW_MS = 4 * 60_000;
 /** The reminder goes out this long before a session starts. */
 const REMINDER_BEFORE_MS = 15 * 60_000;
+/** Sent right after the win sticker. */
+const WIN_CHEER = '<b>Green</b> ✅✅✅✅✅';
 /** A signal is not posted when its entry is closer than this. */
 const MIN_NOTICE_MS = 60_000;
 
@@ -287,9 +291,26 @@ export class TelegramSignals {
         [s.id, decided.result, decided.step],
       );
       if (!upd.rowCount) continue;
-      await this.send('result', resultText({ display: s.display, result: decided.result, result_step: decided.step }), s.message_id ? Number(s.message_id) : null);
+      await this.postResult(s.display, decided.result, decided.step, s.message_id ? Number(s.message_id) : null);
       this.deps.log.info({ id: s.id, display: s.display, ...decided }, 'telegram signal resolved');
     }
+  }
+
+  /** Win and loss go out as a sticker only (reply to the signal); if the sticker fails, the text. */
+  private async postResult(display: string, result: string, step: number | null, replyTo: number | null): Promise<void> {
+    const sticker = result === 'win' ? this.opts.resultStickers.win : result === 'loss' ? this.opts.resultStickers.loss : null;
+    if (sticker) {
+      try {
+        await this.deps.telegram.sendSticker(sticker, { replyTo });
+        this.sent.inc({ kind: 'result' });
+        if (result === 'win') await this.send('green', WIN_CHEER);
+        return;
+      } catch (err) {
+        this.failed.inc({ kind: 'result_sticker' });
+        this.deps.log.warn({ err: (err as Error).message, result }, 'telegram sticker failed; sending the text');
+      }
+    }
+    await this.send('result', resultText({ display, result, result_step: step }), replyTo);
   }
 
   private async sessionRows(day: string, session: string) {
@@ -343,4 +364,9 @@ export const SIGNAL_DEFAULTS = {
   stopLoss: 2,
   tickMs: 5_000,
   weeklyPosts: WEEKLY_POSTS,
+  resultStickers: {
+    // "VITÓRIA WIN" and "MERCADO TURBULENTO", file_ids as received by @kydeninvestbot (only valid for this bot).
+    win: 'CAACAgEAAxkBAAMGawUyzkfwvqXKtnHAKvBPROn6eegAAhUCAALDIzFH2mt5yl0JHtI9BA',
+    loss: 'CAACAgEAAxkBAAMEawUyaWHYBhuYvyturA5xq0dWpZAAAsYAA1sOOUeMHxZsWVH4eD0E',
+  },
 } as const;

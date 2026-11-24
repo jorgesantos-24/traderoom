@@ -65,6 +65,11 @@ describe('TelegramSignals', () => {
         sent.push({ id, text: `[photo ${url}] ${caption}`, replyTo: null });
         return id;
       },
+      sendSticker: async (fileId, o) => {
+        const id = sent.length + 1;
+        sent.push({ id, text: `[sticker ${fileId}]`, replyTo: o?.replyTo ?? null });
+        return id;
+      },
     };
     let now = START - 16 * 60_000;
     const signals = new TelegramSignals(
@@ -85,7 +90,10 @@ describe('TelegramSignals', () => {
     expect(posted.every((m) => m.text.includes('COMPRA') && m.text.includes('1 MINUTO (M1)'))).toBe(true);
     expect(posted[0]!.text).toContain('1ª Proteção às: 08:06');
     expect(posted[0]!.text).toContain('2ª Proteção às: 08:07');
-    const results = sent.filter((m) => m.text.includes('WIN') && !m.text.includes('Relatório'));
+    const results = sent.filter((m) => m.text.startsWith('[sticker '));
+    expect(results.every((m) => m.text === `[sticker ${SIGNAL_DEFAULTS.resultStickers.win}]`)).toBe(true);
+    // Each win sticker is followed by the "Green" cheer.
+    expect(results.every((m) => sent[m.id]!.text === '<b>Green</b> ✅✅✅✅✅')).toBe(true);
     expect(results.map((m) => m.replyTo)).toEqual(posted.map((m) => m.id));
     const report = sent.at(-1)!.text;
     expect(report).toContain('Relatório da Sessão Manhã');
@@ -111,7 +119,7 @@ describe('TelegramSignals', () => {
     const signals = new TelegramSignals(
       {
         pool,
-        telegram: { send: async (text) => (sent.push(text), sent.length), sendPhoto: async () => 0 },
+        telegram: { send: async (text) => (sent.push(text), sent.length), sendPhoto: async () => 0, sendSticker: async () => 0 },
         log: Fastify({ logger: false }).log,
         metrics: new Registry(),
         now: () => now,
@@ -134,7 +142,7 @@ describe('TelegramSignals', () => {
     const signals = new TelegramSignals(
       {
         pool,
-        telegram: { send: async () => 1, sendPhoto: async (url, caption) => (photos.push([url, caption]), photos.length) },
+        telegram: { send: async () => 1, sendPhoto: async (url, caption) => (photos.push([url, caption]), photos.length), sendSticker: async () => 1 },
         log: Fastify({ logger: false }).log,
         metrics: new Registry(),
         now: () => now,

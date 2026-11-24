@@ -119,5 +119,9 @@ describe('schedule and texts', () => {
     expect(txt).toContain('Total de operações: <b>4</b>');
     expect(txt).toContain('Taxa de acerto: <b>67%</b>');
     expect(txt).toContain('02/01');
+    // Lines show only the outcome: no direction, no protection step.
+    expect(txt).toContain('08:10 ETH/USDT ✅\n');
+    expect(txt).toContain('08:10 SOL/USDT ❌\n');
+    expect(txt).not.toMatch(/prot\.|🟢|🔴/);
   });
 });

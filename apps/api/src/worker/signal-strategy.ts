@@ -271,8 +271,8 @@ function summary(head: string, rows: ReadonlyArray<ReportRow>, links: Links): st
   const lines = [head, ''];
   for (const r of rows) {
     const icon = r.result === 'win' ? '✅' : r.result === 'loss' ? '❌' : r.result === 'draw' ? '⚪' : '⚠️';
-    const g = r.result === 'win' && r.result_step ? ` (${ORDINAL[r.result_step - 1]} prot.)` : '';
-    lines.push(`${brtHHMM(r.entry_at.getTime())} ${escapeHtml(r.display)} ${r.direction === 'call' ? '🟢' : '🔴'} ${icon}${g}`);
+    // Only the outcome: no direction, no protection step.
+    lines.push(`${brtHHMM(r.entry_at.getTime())} ${escapeHtml(r.display)} ${icon}`);
   }
   lines.push(
     '',
