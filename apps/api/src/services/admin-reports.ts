@@ -11,7 +11,7 @@ import {
 } from '@traderoom/shared';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 import { AppError } from '../lib/errors.js';
-import { HIDDEN_FROM_LOGS } from '../lib/hidden-accounts.js';
+import { HIDDEN_FROM_LOGS, HIDDEN_FROM_RESULTS } from '../lib/hidden-accounts.js';
 import { likePattern } from './admin.js';
 import { isoUs } from './orders.js';
 
@@ -164,8 +164,12 @@ export function createAdminReportsService(pool: pg.Pool): AdminReportsService {
 
     async results(tz) {
       if (!validZone(tz)) throw new AppError(400, ErrorCode.ValidationFailed, 'tz: fuso horário inválido.');
-      // Real money only, and admins' own test orders stay out of the house numbers.
-      const clientOrders = `orders o join users u on u.id = o.user_id and u.role = 'user'`;
+      // Real money only; admins and the HIDDEN_FROM_RESULTS accounts stay out of every number. `$h` is the
+      // query's parameter holding that e-mail list.
+      const client = (alias: string, h: string) =>
+        `users ${alias} on ${alias}.role = 'user' and lower(${alias}.email::text) <> all(${h}::text[])`;
+      const clientOrders = (h: string) => `orders o join ${client('u', h)} and u.id = o.user_id`;
+      const hidden = HIDDEN_FROM_RESULTS;
       const [periods, open, daily, winners, losers] = await Promise.all([
         pool.query<PeriodRow>(
           `with ${PERIODS}
@@ -183,25 +187,26 @@ export function createAdminReportsService(pool: pg.Pool): AdminReportsService {
                       count(*) filter (where o.status = 'void') as void, count(*) filter (where o.status = 'open') as open,
                       sum(o.stake_cents) filter (where o.status = 'lost') as collected,
                       sum(${PROFIT}) filter (where o.status = 'won') as paid
-                 from ${clientOrders}
+                 from ${clientOrders('$2')}
                 where o.account = 'real' and o.opens_at >= p.start
              ) t on true
              left join lateral (
                select sum(x.credited_cents) as total, count(*) as n
-                 from deposits x join users u on u.id = x.user_id and u.role = 'user'
+                 from deposits x join ${client('u', '$2')} and u.id = x.user_id
                 where x.status = 'paid' and x.paid_at >= p.start
              ) d on true
              left join lateral (
                select sum(x.amount_cents) as total, count(*) as n
-                 from withdrawals x join users u on u.id = x.user_id and u.role = 'user'
+                 from withdrawals x join ${client('u', '$2')} and u.id = x.user_id
                 where x.status = 'completed' and x.completed_at >= p.start
              ) w on true`,
-          [tz],
+          [tz, hidden],
         ),
         pool.query<{ orders: number; stake: string; max_payout: string }>(
           `select count(*)::int as orders, coalesce(sum(o.stake_cents), 0)::text as stake, coalesce(sum(${PROFIT}), 0)::text as max_payout
-             from ${clientOrders}
+             from ${clientOrders('$1')}
             where o.account = 'real' and o.status = 'open'`,
+          [hidden],
         ),
         pool.query<{ day: string; entries: number; volume: string; house: string }>(
           `with days as (
@@ -211,24 +216,24 @@ export function createAdminReportsService(pool: pg.Pool): AdminReportsService {
            select to_char(days.d, 'YYYY-MM-DD') as day, count(o.id)::int as entries,
                   coalesce(sum(o.stake_cents), 0)::text as volume, coalesce(sum(${HOUSE}), 0)::text as house
              from days
-             left join (${clientOrders}) on o.account = 'real'
+             left join (${clientOrders('$2')}) on o.account = 'real'
                   and o.opens_at >= days.d at time zone $1 and o.opens_at < (days.d + interval '1 day') at time zone $1
             group by days.d
             order by days.d`,
-          [tz],
+          [tz, hidden],
         ),
         ...(['desc', 'asc'] as const).map((dir) =>
           pool.query<ClientRow>(
             `select o.user_id, u.name, u.email::text as email, count(*)::int as entries,
                     sum(o.stake_cents)::text as volume, sum(-(${HOUSE}))::text as net
-               from ${clientOrders}
+               from ${clientOrders('$2')}
               where o.account = 'real' and o.status <> 'open'
                 and o.opens_at >= date_trunc('month', now() at time zone $1) at time zone $1
               group by o.user_id, u.name, u.email
              having sum(-(${HOUSE})) ${dir === 'desc' ? '> 0' : '< 0'}
               order by sum(-(${HOUSE})) ${dir}
               limit 10`,
-            [tz],
+            [tz, hidden],
           ),
         ),
       ]);
