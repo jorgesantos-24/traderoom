@@ -137,11 +137,11 @@ export const SESSIONS: ReadonlyArray<Session> = [
   { key: 'extra', name: 'Noite', hour: 22, days: ['2026-11-24'], reminderPhoto: '/telegram/noite.jpg', announcePhoto: '/telegram/noite.jpg' },
 ];
 
-/** Sessions of the "SALA DE SINAIS M1" channel (the VIP times; the other photos to come). */
+/** Sessions of the "SALA DE SINAIS M1" channel (the VIP times). */
 export const M1_SESSIONS: ReadonlyArray<Session> = [
   { key: 'm1_manha', name: 'Manhã', hour: 7, reminderPhoto: '/telegram/m1-manha.jpg' },
   { key: 'm1_tarde', name: 'Tarde', hour: 12, reminderPhoto: '/telegram/m1-tarde.jpg' },
-  { key: 'm1_noite', name: 'Noite', hour: 18 },
+  { key: 'm1_noite', name: 'Noite', hour: 18, reminderPhoto: '/telegram/m1-noite.jpg' },
 ];
 
 export interface ScheduleOptions {
