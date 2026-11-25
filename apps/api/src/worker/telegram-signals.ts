@@ -186,7 +186,8 @@ export class TelegramSignals {
 
   /**
    * Posts the session's next signal when it is due: the first one `leadMs` before start + firstEntryMin,
-   * each later one as soon as the previous result is out (entry `leadMs` after that result).
+   * each later one as soon as the previous result is out (entry on the next 5-minute mark at least
+   * `leadMs` after that result).
    */
   private async next(day: string, session: string, start: number, now: number): Promise<void> {
     const { rows } = await this.deps.pool.query<{ entry_at: Date; expiry_sec: number; gales: number; result: string | null; result_step: number | null }>(
@@ -195,12 +196,12 @@ export class TelegramSignals {
     );
     if (rows.length >= this.opts.entriesPerSession || rows.some((r) => r.result === null)) return;
     const last = rows.at(-1);
-    // The previous signal ended when its deciding step closed.
+    // The previous signal ended when its deciding step closed; the next one is posted right then.
     const base = last
       ? last.entry_at.getTime() + ((last.result_step ?? last.gales) + 1) * last.expiry_sec * 1000 + this.opts.leadMs
       : start + this.opts.firstEntryMin * 60_000;
     if (now < base - this.opts.leadMs) return;
-    await this.post(day, session, rows.length + 1, nextEntryAt(base, now, this.opts.leadMs, MIN_NOTICE_MS));
+    await this.post(day, session, rows.length + 1, nextEntryAt(base, now, this.opts.gridMs, MIN_NOTICE_MS));
   }
 
   private async post(day: string, session: string, seq: number, entryAt: number): Promise<void> {

@@ -142,26 +142,27 @@ export interface ScheduleOptions {
   firstEntryMin: number;
   /** Entries per session (fewer when the stop loss hits). */
   entriesPerSession: number;
-  /** The signal is posted this long before its entry; also the pause between a result and the next entry. */
+  /** The first signal is posted this long before its entry; also the least pause between a result and the next entry. */
   leadMs: number;
+  /** Entries fall on this grid (5 min: :00, :05, :10…). */
+  gridMs: number;
   /** No new signal this long after the session start (a session that runs late is cut short). */
   sessionMaxMin: number;
 }
 
 /**
- * 4 entries per session: the first at 09:05, each next one 2 minutes after the previous result (win at
- * the entry or at a protection, or loss), posted as soon as that result is out.
+ * 4 entries per session on the 5-minute grid: the first at 09:05, each next one at the first 5-minute
+ * mark at least 2 minutes after the previous result (win at 09:10 → 09:15), posted as soon as that
+ * result is out.
  */
-export const SCHEDULE_DEFAULTS: ScheduleOptions = { firstEntryMin: 5, entriesPerSession: 4, leadMs: 2 * 60_000, sessionMaxMin: 90 };
+export const SCHEDULE_DEFAULTS: ScheduleOptions = { firstEntryMin: 5, entriesPerSession: 4, leadMs: 2 * 60_000, gridMs: 5 * 60_000, sessionMaxMin: 90 };
 
 /**
- * Entry time of a session's next signal: `base` (first entry, or the previous result + the pause) when
- * there is still at least `minNoticeMs` before it, otherwise the next whole minute `leadMs` from now
- * (the worker was late).
+ * Entry time of a session's next signal: the first `gridMs` mark at or after `base` (first entry, or the
+ * previous result + the pause) that is still at least `minNoticeMs` away from now.
  */
-export function nextEntryAt(base: number, now: number, leadMs: number, minNoticeMs: number): number {
-  if (now <= base - minNoticeMs) return base;
-  return Math.ceil((now + leadMs) / 60_000) * 60_000;
+export function nextEntryAt(base: number, now: number, gridMs: number, minNoticeMs: number): number {
+  return Math.ceil(Math.max(base, now + minNoticeMs) / gridMs) * gridMs;
 }
 
 /** 'YYYY-MM-DD' of the Brasília day containing `ms`. */

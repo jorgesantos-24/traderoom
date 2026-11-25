@@ -79,11 +79,15 @@ describe('decideSignal', () => {
 });
 
 describe('schedule and texts', () => {
-  it('puts the next entry 2 minutes after the previous result, or the next minute with notice when late', () => {
-    const base = brtAt('2030-01-02', 9, 12);
-    expect(nextEntryAt(base, base - 2 * 60_000 + 3_000, 2 * 60_000, 60_000)).toBe(base);
-    expect(nextEntryAt(base, base - 60_000, 2 * 60_000, 60_000)).toBe(base);
-    expect(brtHHMM(nextEntryAt(base, base - 30_000, 2 * 60_000, 60_000))).toBe('09:14');
+  it('puts the next entry on the next 5-minute mark at least 2 minutes after the previous result', () => {
+    const grid = 5 * 60_000;
+    const at = (h: number, m: number, s = 0) => brtAt('2030-01-02', h, m) + s * 1000;
+    // Result at 09:10 (win at the entry) → base 09:12 → entry 09:15, posted at 09:10.
+    expect(brtHHMM(nextEntryAt(at(9, 12), at(9, 10, 3), grid, 60_000))).toBe('09:15');
+    // First entry already on the grid stays.
+    expect(brtHHMM(nextEntryAt(at(9, 5), at(9, 3, 3), grid, 60_000))).toBe('09:05');
+    // Late worker: less than a minute before the mark → the following mark.
+    expect(brtHHMM(nextEntryAt(at(9, 15), at(9, 14, 30), grid, 60_000))).toBe('09:20');
   });
 
   it('uses Brasília time', () => {
