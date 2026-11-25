@@ -417,11 +417,11 @@ export const SIGNAL_DEFAULTS = {
 } as const;
 
 /**
- * "SALA DE SINAIS M1" group: 07:00, 12:00 and 18:00, 10 M1 entries each with up to 2 protections, each
+ * "SALA DE SINAIS M1" channel: 07:00, 12:00 and 18:00, 10 M1 entries each with up to 2 protections, each
  * next entry on the next whole minute at least 2 minutes after the previous result. No weekly posts.
  */
 export const M1_ROOM = {
-  chatId: '-1006090872856',
+  chatId: '-1005834877864',
   options: {
     ...SIGNAL_DEFAULTS,
     room: 'm1',
