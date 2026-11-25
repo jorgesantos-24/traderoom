@@ -140,7 +140,7 @@ export const SESSIONS: ReadonlyArray<Session> = [
 /** Sessions of the "SALA DE SINAIS M1" channel (the VIP times; the other photos to come). */
 export const M1_SESSIONS: ReadonlyArray<Session> = [
   { key: 'm1_manha', name: 'Manhã', hour: 7, reminderPhoto: '/telegram/m1-manha.jpg' },
-  { key: 'm1_tarde', name: 'Tarde', hour: 12 },
+  { key: 'm1_tarde', name: 'Tarde', hour: 12, reminderPhoto: '/telegram/m1-tarde.jpg' },
   { key: 'm1_noite', name: 'Noite', hour: 18 },
 ];
 
