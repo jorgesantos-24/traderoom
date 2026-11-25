@@ -12,6 +12,8 @@ import {
   reportText,
   rsi,
   signalText,
+  SESSIONS,
+  WEEKLY_POSTS,
 } from '../src/worker/signal-strategy.js';
 
 const up = Array.from({ length: 60 }, (_, i) => 100 + i + (i % 3 === 0 ? -0.6 : 0));
@@ -135,5 +137,24 @@ describe('schedule and texts', () => {
     expect(txt).toContain('08:10 ETH/USDT ✅\n');
     expect(txt).toContain('08:10 SOL/USDT ❌\n');
     expect(txt).not.toMatch(/prot\.|🟢|🔴/);
+  });
+});
+
+describe('channel schedule', () => {
+  it('runs the open sessions at 09, 15 and 21 and only invites to the VIP sessions at 07, 12 and 18', () => {
+    expect(SESSIONS.filter((s) => !s.days).map((s) => s.hour)).toEqual([9, 15, 21]);
+    const at = (key: string) => {
+      const p = WEEKLY_POSTS.find((w) => w.key === key)!;
+      return `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
+    };
+    expect(['vip_07_soon', 'vip_07_now', 'vip_12_soon', 'vip_12_now', 'vip_18_soon', 'vip_18_now'].map(at)).toEqual([
+      '06:45', '07:00', '11:45', '12:00', '17:45', '18:00',
+    ]);
+    expect(['live_08', 'live_13', 'live_20'].map(at)).toEqual(['07:45', '12:45', '19:45']);
+    expect(at('corujao_now')).toBe('22:00');
+    for (const p of WEEKLY_POSTS.filter((w) => w.key.startsWith('vip_') || w.key.startsWith('corujao'))) {
+      expect(p.caption).toContain('@JorgeTrader25');
+    }
+    expect(new Set(WEEKLY_POSTS.map((w) => w.key)).size).toBe(WEEKLY_POSTS.length);
   });
 });

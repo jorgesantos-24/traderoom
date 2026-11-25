@@ -130,11 +130,8 @@ export interface Session {
 }
 
 export const SESSIONS: ReadonlyArray<Session> = [
-  { key: 'vip_manha', name: 'VIP Manhã', hour: 7, reminderPhoto: '/telegram/manha.jpg' },
   { key: 'manha', name: 'Manhã', hour: 9, reminderPhoto: '/telegram/manha.jpg' },
-  { key: 'vip_tarde', name: 'VIP Tarde', hour: 12, reminderPhoto: '/telegram/tarde.jpg' },
   { key: 'tarde', name: 'Tarde', hour: 15, reminderPhoto: '/telegram/tarde.jpg' },
-  { key: 'vip_noite', name: 'VIP Noite', hour: 18, reminderPhoto: '/telegram/noite.jpg' },
   { key: 'noite', name: 'Noite', hour: 21, reminderPhoto: '/telegram/noite.jpg' },
   // Extra night session on 24/11 (the 21:00 one was taken by the 18:00 session of the old schedule).
   { key: 'extra', name: 'Noite', hour: 22, days: ['2026-11-24'], reminderPhoto: '/telegram/noite.jpg', announcePhoto: '/telegram/noite.jpg' },
@@ -224,8 +221,19 @@ export interface WeeklyPost {
 
 const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6];
 const LIVE_REMINDER = ['🔴 Em <b>15 minutos</b> começa a nossa <b>LIVE</b>!', '', 'Fique de olho no canal. 📲'].join('\n');
+const CONTACT = ['Quer fazer parte? 👥', 'Manda mensagem agora para 👉 @JorgeTrader25'];
+const VIP_SOON = ['💎 Em <b>15 minutos</b> começa a <b>Sessão VIP</b> no nosso grupo privado!', '', 'Entradas exclusivas, só para membros VIP. 📊', '', ...CONTACT].join('\n');
+const VIP_NOW = ['🔥 A <b>Sessão VIP</b> começou agora no grupo privado! As entradas já estão saindo por lá. 📊', '', ...CONTACT].join('\n');
+const CORUJAO_NOW = ['🦉 A <b>Sessão do Corujão</b> começou agora com o <b>Trader Jorge</b>! As entradas já estão saindo no grupo. 🌙', '', ...CONTACT].join('\n');
 
 export const WEEKLY_POSTS: readonly WeeklyPost[] = [
+  // The VIP sessions (07:00, 12:00, 18:00) run in the private group; the channel only gets the invites.
+  { key: 'vip_07_soon', weekdays: EVERY_DAY, hour: 6, minute: 45, photoPath: null, caption: VIP_SOON },
+  { key: 'vip_07_now', weekdays: EVERY_DAY, hour: 7, minute: 0, photoPath: null, caption: VIP_NOW },
+  { key: 'vip_12_soon', weekdays: EVERY_DAY, hour: 11, minute: 45, photoPath: null, caption: VIP_SOON },
+  { key: 'vip_12_now', weekdays: EVERY_DAY, hour: 12, minute: 0, photoPath: null, caption: VIP_NOW },
+  { key: 'vip_18_soon', weekdays: EVERY_DAY, hour: 17, minute: 45, photoPath: null, caption: VIP_SOON },
+  { key: 'vip_18_now', weekdays: EVERY_DAY, hour: 18, minute: 0, photoPath: null, caption: VIP_NOW },
   // Reminders 15 minutes before the lives at 08:00, 13:00 and 20:00.
   { key: 'live_08', weekdays: EVERY_DAY, hour: 7, minute: 45, photoPath: null, caption: LIVE_REMINDER },
   { key: 'live_13', weekdays: EVERY_DAY, hour: 12, minute: 45, photoPath: null, caption: LIVE_REMINDER },
@@ -245,6 +253,7 @@ export const WEEKLY_POSTS: readonly WeeklyPost[] = [
       'Manda mensagem agora para 👉 @JorgeTrader25',
     ].join('\n'),
   },
+  { key: 'corujao_now', weekdays: [1, 3, 4], hour: 22, minute: 0, photoPath: null, caption: CORUJAO_NOW },
 ];
 
 /** Brasília weekday (0 = Sunday) of a 'YYYY-MM-DD' day. */
