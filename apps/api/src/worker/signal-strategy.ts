@@ -224,7 +224,7 @@ const LIVE_REMINDER = ['🔴 Em <b>15 minutos</b> começa a nossa <b>LIVE</b>!',
 const CONTACT = ['Quer fazer parte? 👥', 'Manda mensagem agora para 👉 @JorgeTrader25'];
 const VIP_SOON = ['💎 Em <b>15 minutos</b> começa a <b>Sessão VIP</b> no nosso grupo privado!', '', 'Entradas exclusivas, só para membros VIP. 📊', '', ...CONTACT].join('\n');
 const VIP_NOW = ['🔥 A <b>Sessão VIP</b> começou agora no grupo privado! As entradas já estão saindo por lá. 📊', '', ...CONTACT].join('\n');
-const CORUJAO_NOW = ['🦉 A <b>Sessão do Corujão</b> começou agora com o <b>Trader Jorge</b>! As entradas já estão saindo no grupo. 🌙', '', ...CONTACT].join('\n');
+const CORUJAO_NOW = ['🦉 A <b>live do Corujão</b> já começou! Você vai querer perder? 👀🌙', '', ...CONTACT].join('\n');
 
 export const WEEKLY_POSTS: readonly WeeklyPost[] = [
   // The VIP sessions (07:00, 12:00, 18:00) run in the private group; the channel only gets the invites.
