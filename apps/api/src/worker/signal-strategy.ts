@@ -4,7 +4,7 @@
 import { escapeHtml } from '../lib/telegram.js';
 
 export type Direction = 'call' | 'put';
-export type SessionKey = 'manha' | 'tarde' | 'noite';
+export type SessionKey = 'manha' | 'tarde' | 'noite' | 'extra';
 
 // ---------------------------------------------------------------------------------------------
 // Indicators
@@ -116,11 +116,25 @@ export function decideSignal(direction: Direction, gales: number, steps: Readonl
 
 const BRT_OFFSET_MS = -3 * 3_600_000;
 
-/** reminderPhoto: path under the site origin of the image sent with the 15-minute reminder. */
-export const SESSIONS: ReadonlyArray<{ key: SessionKey; name: string; hour: number; reminderPhoto?: string }> = [
+/**
+ * reminderPhoto: path under the site origin of the image sent with the 15-minute reminder.
+ * days: only on these Brasília days (one-off sessions); announcePhoto: image sent with the start message.
+ */
+export interface Session {
+  key: SessionKey;
+  name: string;
+  hour: number;
+  reminderPhoto?: string;
+  days?: readonly string[];
+  announcePhoto?: string;
+}
+
+export const SESSIONS: ReadonlyArray<Session> = [
   { key: 'manha', name: 'Manhã', hour: 9, reminderPhoto: '/telegram/manha.jpg' },
   { key: 'tarde', name: 'Tarde', hour: 15, reminderPhoto: '/telegram/tarde.jpg' },
   { key: 'noite', name: 'Noite', hour: 21, reminderPhoto: '/telegram/noite.jpg' },
+  // Extra night session on 24/11 (the 21:00 one was taken by the 18:00 session of the old schedule).
+  { key: 'extra', name: 'Noite', hour: 22, days: ['2026-11-24'], reminderPhoto: '/telegram/noite.jpg', announcePhoto: '/telegram/noite.jpg' },
 ];
 
 export interface ScheduleOptions {

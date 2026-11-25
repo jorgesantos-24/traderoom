@@ -105,11 +105,12 @@ export class TelegramSignals {
     try {
       const now = this.now();
       const day = brtDay(now);
-      for (const s of SESSIONS) {
+      const sessions = SESSIONS.filter((s) => !s.days || s.days.includes(day));
+      for (const s of sessions) {
         const start = brtAt(day, s.hour);
         if (now >= start - REMINDER_BEFORE_MS && now < start - REMINDER_BEFORE_MS + ANNOUNCE_WINDOW_MS) await this.remind(day, s.key, s.name, s.reminderPhoto);
         if (now < start) continue;
-        if (now < start + ANNOUNCE_WINDOW_MS) await this.announce(day, s.key, s.name);
+        if (now < start + ANNOUNCE_WINDOW_MS) await this.announce(day, s.key, s.name, s.announcePhoto);
         if (now < start + this.opts.sessionMaxMin * 60_000) await this.next(day, s.key, start, now);
       }
       for (const p of this.opts.weeklyPosts) {
@@ -117,10 +118,10 @@ export class TelegramSignals {
         if (p.weekdays.includes(brtWeekday(day)) && now >= at && now < at + ANNOUNCE_WINDOW_MS) await this.weekly(day, p);
       }
       await this.resolve(now);
-      for (const s of SESSIONS) {
+      for (const s of sessions) {
         if (now >= brtAt(day, s.hour)) await this.stopLoss(day, s.key, s.name);
       }
-      for (const s of SESSIONS) {
+      for (const s of sessions) {
         if (now >= brtAt(day, s.hour)) await this.report(day, s.key, s.name, now >= brtAt(day, s.hour) + this.opts.sessionMaxMin * 60_000);
       }
     } catch (err) {
@@ -173,14 +174,14 @@ export class TelegramSignals {
     await this.send(what, text);
   }
 
-  private async announce(day: string, session: string, name: string): Promise<void> {
+  private async announce(day: string, session: string, name: string, photo?: string): Promise<void> {
     const r = await this.deps.pool.query(
       `insert into telegram_signal_sessions (day, session, announced_at) values ($1, $2, now())
        on conflict (day, session) do update set announced_at = now() where telegram_signal_sessions.announced_at is null
        returning 1`,
       [day, session],
     );
-    if (r.rowCount) await this.send('announce', announceText(name));
+    if (r.rowCount) await this.photoOrText('announce', photo ?? null, announceText(name));
   }
 
   /**
