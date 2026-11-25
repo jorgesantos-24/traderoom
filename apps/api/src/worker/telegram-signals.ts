@@ -421,7 +421,7 @@ export const SIGNAL_DEFAULTS = {
  * next entry on the next whole minute at least 2 minutes after the previous result. No weekly posts.
  */
 export const M1_ROOM = {
-  chatId: '-5443746278',
+  chatId: '-1006090872856',
   options: {
     ...SIGNAL_DEFAULTS,
     room: 'm1',
