@@ -4,7 +4,7 @@
 import { escapeHtml } from '../lib/telegram.js';
 
 export type Direction = 'call' | 'put';
-export type SessionKey = 'manha' | 'tarde' | 'noite' | 'extra' | 'vip_manha' | 'vip_tarde' | 'vip_noite';
+export type SessionKey = 'manha' | 'tarde' | 'noite' | 'extra' | 'vip_manha' | 'vip_tarde' | 'vip_noite' | 'm1_manha' | 'm1_tarde' | 'm1_noite';
 
 // ---------------------------------------------------------------------------------------------
 // Indicators
@@ -135,6 +135,13 @@ export const SESSIONS: ReadonlyArray<Session> = [
   { key: 'noite', name: 'Noite', hour: 21, reminderPhoto: '/telegram/noite.jpg' },
   // Extra night session on 24/11 (the 21:00 one was taken by the 18:00 session of the old schedule).
   { key: 'extra', name: 'Noite', hour: 22, days: ['2026-11-24'], reminderPhoto: '/telegram/noite.jpg', announcePhoto: '/telegram/noite.jpg' },
+];
+
+/** Sessions of the "SALA DE SINAIS M1" group (the VIP times; photos to come). */
+export const M1_SESSIONS: ReadonlyArray<Session> = [
+  { key: 'm1_manha', name: 'Manhã', hour: 7 },
+  { key: 'm1_tarde', name: 'Tarde', hour: 12 },
+  { key: 'm1_noite', name: 'Noite', hour: 18 },
 ];
 
 export interface ScheduleOptions {

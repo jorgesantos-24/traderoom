@@ -6,6 +6,7 @@ import {
   SCHEDULE_DEFAULTS,
   SESSIONS,
   WEEKLY_POSTS,
+  M1_SESSIONS,
   brtWeekday,
   nextEntryAt,
   analyze,
@@ -22,11 +23,16 @@ import {
   type Direction,
   type Links,
   type ScheduleOptions,
+  type Session,
   type StepPrices,
   type WeeklyPost,
 } from './signal-strategy.js';
 
 export interface SignalOptions extends ScheduleOptions {
+  /** Name of the chat in logs and metrics (one instance per chat). */
+  room: string;
+  /** Sessions of this chat; their keys must be unique across chats (they key the state tables). */
+  sessions: readonly Session[];
   /** Symbols the signals may use (enabled ones only). */
   symbols: readonly string[];
   expirySec: number;
@@ -76,13 +82,23 @@ export class TelegramSignals {
   private running = false;
   private readonly sent: Counter;
   private readonly failed: Counter;
+  private readonly keys: string[];
 
   constructor(
     private readonly deps: SignalDeps,
     private readonly opts: SignalOptions,
   ) {
-    this.sent = deps.metrics.counter('telegram_messages_sent_total', 'Messages posted to the Telegram signals channel.');
-    this.failed = deps.metrics.counter('telegram_messages_failed_total', 'Telegram signal messages that failed to send.');
+    let c = COUNTERS.get(deps.metrics);
+    if (!c) {
+      c = {
+        sent: deps.metrics.counter('telegram_messages_sent_total', 'Messages posted to the Telegram signals chats.'),
+        failed: deps.metrics.counter('telegram_messages_failed_total', 'Telegram signal messages that failed to send.'),
+      };
+      COUNTERS.set(deps.metrics, c);
+    }
+    this.sent = c.sent;
+    this.failed = c.failed;
+    this.keys = opts.sessions.map((s) => s.key);
   }
 
   start(): void {
@@ -105,7 +121,7 @@ export class TelegramSignals {
     try {
       const now = this.now();
       const day = brtDay(now);
-      const sessions = SESSIONS.filter((s) => !s.days || s.days.includes(day));
+      const sessions = this.opts.sessions.filter((s) => !s.days || s.days.includes(day));
       for (const s of sessions) {
         const start = brtAt(day, s.hour);
         if (now >= start - REMINDER_BEFORE_MS && now < start - REMINDER_BEFORE_MS + ANNOUNCE_WINDOW_MS) await this.remind(day, s.key, s.name, s.reminderPhoto);
@@ -134,11 +150,11 @@ export class TelegramSignals {
   private async send(what: string, text: string, replyTo?: number | null): Promise<number | null> {
     try {
       const id = await this.deps.telegram.send(text, { replyTo });
-      this.sent.inc({ kind: what });
+      this.sent.inc({ kind: what, room: this.opts.room });
       return id;
     } catch (err) {
-      this.failed.inc({ kind: what });
-      this.deps.log.error({ err: (err as Error).message, what }, 'telegram send failed');
+      this.failed.inc({ kind: what, room: this.opts.room });
+      this.deps.log.error({ err: (err as Error).message, what, room: this.opts.room }, 'telegram send failed');
       return null;
     }
   }
@@ -164,10 +180,10 @@ export class TelegramSignals {
     if (photoPath) {
       try {
         await this.deps.telegram.sendPhoto(`${this.opts.publicOrigin.replace(/\/$/, '')}${photoPath}`, text);
-        this.sent.inc({ kind: what });
+        this.sent.inc({ kind: what, room: this.opts.room });
         return;
       } catch (err) {
-        this.failed.inc({ kind: `${what}_photo` });
+        this.failed.inc({ kind: `${what}_photo`, room: this.opts.room });
         this.deps.log.warn({ err: (err as Error).message, what }, 'telegram photo failed; sending the text only');
       }
     }
@@ -267,7 +283,7 @@ export class TelegramSignals {
     const text = signalText({ display, direction: pick.direction, entryAt, expirySec: this.opts.expirySec, gales: this.opts.gales }, this.opts.links);
     const messageId = await this.send('signal', text);
     if (messageId !== null) await this.deps.pool.query('update telegram_signals set message_id = $2 where id = $1', [id, messageId]);
-    this.deps.log.info({ day, session, seq, display, direction: pick.direction, strength: pick.strength, confirmed: pick.confirmed }, 'telegram signal posted');
+    this.deps.log.info({ room: this.opts.room, day, session, seq, display, direction: pick.direction, strength: pick.strength, confirmed: pick.confirmed }, 'telegram signal posted');
   }
 
   private async priceAt(assetId: number, t: number): Promise<number | null> {
@@ -292,8 +308,8 @@ export class TelegramSignals {
       message_id: string | null;
     }>(
       `select id, asset_id, display, direction, entry_at, expiry_sec, gales, message_id
-         from telegram_signals where result is null and entry_at <= $1 order by entry_at`,
-      [new Date(now)],
+         from telegram_signals where result is null and entry_at <= $1 and session = any($2::text[]) order by entry_at`,
+      [new Date(now), this.keys],
     );
     for (const s of rows) {
       const entry = s.entry_at.getTime();
@@ -324,11 +340,11 @@ export class TelegramSignals {
     if (sticker) {
       try {
         await this.deps.telegram.sendSticker(sticker, { replyTo });
-        this.sent.inc({ kind: 'result' });
+        this.sent.inc({ kind: 'result', room: this.opts.room });
         if (result === 'win') await this.send('green', WIN_CHEER);
         return;
       } catch (err) {
-        this.failed.inc({ kind: 'result_sticker' });
+        this.failed.inc({ kind: 'result_sticker', room: this.opts.room });
         this.deps.log.warn({ err: (err as Error).message, result }, 'telegram sticker failed; sending the text');
       }
     }
@@ -380,8 +396,13 @@ export class TelegramSignals {
   }
 }
 
+/** Metric counters are registered once per registry and shared by every chat's instance. */
+const COUNTERS = new WeakMap<Registry, { sent: Counter; failed: Counter }>();
+
 export const SIGNAL_DEFAULTS = {
   ...SCHEDULE_DEFAULTS,
+  room: 'channel',
+  sessions: SESSIONS,
   symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT'],
   expirySec: 300,
   gales: 2,
@@ -392,5 +413,23 @@ export const SIGNAL_DEFAULTS = {
     // "VITÓRIA WIN" and "MERCADO TURBULENTO", file_ids as received by @kydeninvestbot (only valid for this bot).
     win: 'CAACAgEAAxkBAAMGawUyzkfwvqXKtnHAKvBPROn6eegAAhUCAALDIzFH2mt5yl0JHtI9BA',
     loss: 'CAACAgEAAxkBAAMEawUyaWHYBhuYvyturA5xq0dWpZAAAsYAA1sOOUeMHxZsWVH4eD0E',
+  },
+} as const;
+
+/**
+ * "SALA DE SINAIS M1" group: 07:00, 12:00 and 18:00, 10 M1 entries each with up to 2 protections, each
+ * next entry on the next whole minute at least 2 minutes after the previous result. No weekly posts.
+ */
+export const M1_ROOM = {
+  chatId: '-5443746278',
+  options: {
+    ...SIGNAL_DEFAULTS,
+    room: 'm1',
+    sessions: M1_SESSIONS,
+    expirySec: 60,
+    gales: 2,
+    entriesPerSession: 10,
+    gridMs: 60_000,
+    weeklyPosts: [],
   },
 } as const;

@@ -8,7 +8,7 @@ import { createRedis } from './lib/redis.js';
 import { redisDueQueue, SettlementWorker, WORKER_DEFAULTS } from './worker/settlement-worker.js';
 import { RETENTION_DEFAULTS, SnapshotRetention } from './worker/snapshot-retention.js';
 import { createTelegram } from './lib/telegram.js';
-import { SIGNAL_DEFAULTS, TelegramSignals } from './worker/telegram-signals.js';
+import { M1_ROOM, SIGNAL_DEFAULTS, TelegramSignals } from './worker/telegram-signals.js';
 
 const Env = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -42,19 +42,25 @@ const metrics = new Registry();
 metrics.gauge('process_resident_memory_bytes', 'Resident memory of the worker process.', () => [[{}, process.memoryUsage().rss]]);
 const worker = new SettlementWorker({ pool, queue: redisDueQueue(redis), log, metrics }, WORKER_DEFAULTS);
 const retention = new SnapshotRetention({ pool, log, metrics }, { ...RETENTION_DEFAULTS, retentionDays: env.SNAPSHOT_RETENTION_DAYS });
-const signals =
+const signalCommon = {
+  symbols: env.TELEGRAM_SIGNAL_SYMBOLS?.split(',').map((x) => x.trim()).filter(Boolean) ?? SIGNAL_DEFAULTS.symbols,
+  links: { signupUrl: env.TELEGRAM_SIGNUP_URL ?? `${env.PUBLIC_ORIGIN.replace(/\/$/, '')}/register` },
+  publicOrigin: env.PUBLIC_ORIGIN,
+};
+// One instance per chat, same bot: the main channel (M5) and the "SALA DE SINAIS M1" group.
+const signalRooms =
   env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHANNEL_ID
-    ? new TelegramSignals(
-        { pool, telegram: createTelegram({ token: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHANNEL_ID }), log, metrics },
-        {
-          ...SIGNAL_DEFAULTS,
-          symbols: env.TELEGRAM_SIGNAL_SYMBOLS?.split(',').map((x) => x.trim()).filter(Boolean) ?? SIGNAL_DEFAULTS.symbols,
-          gales: env.TELEGRAM_SIGNAL_GALES,
-          links: { signupUrl: env.TELEGRAM_SIGNUP_URL ?? `${env.PUBLIC_ORIGIN.replace(/\/$/, '')}/register` },
-          publicOrigin: env.PUBLIC_ORIGIN,
-        },
-      )
-    : null;
+    ? [
+        new TelegramSignals(
+          { pool, telegram: createTelegram({ token: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHANNEL_ID }), log, metrics },
+          { ...SIGNAL_DEFAULTS, ...signalCommon, gales: env.TELEGRAM_SIGNAL_GALES },
+        ),
+        new TelegramSignals(
+          { pool, telegram: createTelegram({ token: env.TELEGRAM_BOT_TOKEN, chatId: M1_ROOM.chatId }), log, metrics },
+          { ...M1_ROOM.options, ...signalCommon },
+        ),
+      ]
+    : [];
 
 const server = createServer((req, res) => {
   const path = (req.url ?? '/').split('?')[0];
@@ -79,7 +85,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   log.info({ signal }, 'shutting down');
   retention.stop();
-  signals?.stop();
+  for (const s of signalRooms) s.stop();
   await worker.stop();
   await new Promise<void>((r) => server.close(() => r()));
   await Promise.allSettled([pool.end(), redis.quit()]);
@@ -90,7 +96,7 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 
 worker.start();
 retention.start();
-signals?.start();
-log.info({ telegramSignals: signals !== null }, 'telegram signals');
+for (const s of signalRooms) s.start();
+log.info({ telegramSignals: signalRooms.length > 0, rooms: signalRooms.length }, 'telegram signals');
 await new Promise<void>((r) => server.listen(env.WORKER_PORT, env.WORKER_HOST, r));
 log.info({ host: env.WORKER_HOST, port: env.WORKER_PORT }, 'settlement worker running');
