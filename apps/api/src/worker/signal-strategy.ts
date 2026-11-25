@@ -4,7 +4,7 @@
 import { escapeHtml } from '../lib/telegram.js';
 
 export type Direction = 'call' | 'put';
-export type SessionKey = 'manha' | 'tarde' | 'noite' | 'extra';
+export type SessionKey = 'manha' | 'tarde' | 'noite' | 'extra' | 'vip_manha' | 'vip_tarde' | 'vip_noite';
 
 // ---------------------------------------------------------------------------------------------
 // Indicators
@@ -130,8 +130,11 @@ export interface Session {
 }
 
 export const SESSIONS: ReadonlyArray<Session> = [
+  { key: 'vip_manha', name: 'VIP Manhã', hour: 7, reminderPhoto: '/telegram/manha.jpg' },
   { key: 'manha', name: 'Manhã', hour: 9, reminderPhoto: '/telegram/manha.jpg' },
+  { key: 'vip_tarde', name: 'VIP Tarde', hour: 12, reminderPhoto: '/telegram/tarde.jpg' },
   { key: 'tarde', name: 'Tarde', hour: 15, reminderPhoto: '/telegram/tarde.jpg' },
+  { key: 'vip_noite', name: 'VIP Noite', hour: 18, reminderPhoto: '/telegram/noite.jpg' },
   { key: 'noite', name: 'Noite', hour: 21, reminderPhoto: '/telegram/noite.jpg' },
   // Extra night session on 24/11 (the 21:00 one was taken by the 18:00 session of the old schedule).
   { key: 'extra', name: 'Noite', hour: 22, days: ['2026-11-24'], reminderPhoto: '/telegram/noite.jpg', announcePhoto: '/telegram/noite.jpg' },
@@ -219,7 +222,14 @@ export interface WeeklyPost {
   caption: string;
 }
 
+const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6];
+const LIVE_REMINDER = ['🔴 Em <b>15 minutos</b> começa a nossa <b>LIVE</b>!', '', 'Fique de olho no canal. 📲'].join('\n');
+
 export const WEEKLY_POSTS: readonly WeeklyPost[] = [
+  // Reminders 15 minutes before the lives at 08:00, 13:00 and 20:00.
+  { key: 'live_08', weekdays: EVERY_DAY, hour: 7, minute: 45, photoPath: null, caption: LIVE_REMINDER },
+  { key: 'live_13', weekdays: EVERY_DAY, hour: 12, minute: 45, photoPath: null, caption: LIVE_REMINDER },
+  { key: 'live_20', weekdays: EVERY_DAY, hour: 19, minute: 45, photoPath: null, caption: LIVE_REMINDER },
   {
     key: 'corujao',
     weekdays: [1, 3, 4], // Monday, Wednesday, Thursday
