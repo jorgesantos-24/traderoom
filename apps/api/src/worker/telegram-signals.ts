@@ -138,7 +138,7 @@ export class TelegramSignals {
       }
       for (const p of this.opts.weeklyPosts) {
         const at = brtAt(day, p.hour, p.minute);
-        if (p.weekdays.includes(brtWeekday(day)) && now >= at && now < at + ANNOUNCE_WINDOW_MS) await this.weekly(day, p);
+        if (p.weekdays.includes(brtWeekday(day)) && (!p.days || p.days.includes(day)) && now >= at && now < at + ANNOUNCE_WINDOW_MS) await this.weekly(day, p);
       }
       await this.resolve(now);
       for (const { s, day: d, start } of runs) {

@@ -221,6 +221,8 @@ function expiryLabel(sec: number): string {
 export interface WeeklyPost {
   key: string;
   weekdays: readonly number[];
+  /** Only on these Brasília days (one-off posts). */
+  days?: readonly string[];
   hour: number;
   minute: number;
   /** Path under the site origin, e.g. /telegram/corujao.jpg. */
@@ -263,6 +265,36 @@ export const WEEKLY_POSTS: readonly WeeklyPost[] = [
     ].join('\n'),
   },
   { key: 'corujao_now', weekdays: [1, 3, 4], hour: 22, minute: 0, photoPath: null, caption: CORUJAO_NOW },
+  // One-off: launch of the 00:00 VIP session (40 operations a day).
+  {
+    key: 'vip_madrugada_launch',
+    weekdays: EVERY_DAY,
+    days: ['2026-11-26'],
+    hour: 22,
+    minute: 0,
+    photoPath: '/telegram/m1-madrugada.jpg',
+    caption: [
+      '🚨 <b>NOVIDADE NO VIP: AGORA SÃO 40 OPERAÇÕES POR DIA</b> 🚨',
+      '',
+      'Quem está no nosso grupo VIP já sabe: o ritmo lá dentro é outro. E agora ficou ainda melhor. 👀',
+      '',
+      '🌙 Lançamos a <b>SESSÃO DA MADRUGADA</b>, à <b>meia-noite (horário de Brasília)</b>!',
+      '',
+      'Os horários do VIP ficam assim:',
+      '☀️ 07h',
+      '🌤 12h',
+      '🌆 18h',
+      '🌙 <b>00h (NOVA)</b>',
+      '',
+      'São <b>10 operações por sessão</b>, com até 2 proteções e resultado real postado. São <b>40 oportunidades por dia</b> para você operar no horário que encaixa na sua rotina. Trabalha de dia? A madrugada é sua. 💸',
+      '',
+      'Enquanto aqui no canal saem algumas entradas por dia, lá dentro o mercado não para. Cada sessão que você perde é uma chance que fica para trás.',
+      '',
+      '⚠️ A primeira Sessão da Madrugada é <b>HOJE, à meia-noite</b>.',
+      '',
+      ...CONTACT,
+    ].join('\n'),
+  },
 ];
 
 /** Brasília weekday (0 = Sunday) of a 'YYYY-MM-DD' day. */
