@@ -160,9 +160,9 @@ describe('channel schedule', () => {
 });
 
 describe('M1 room', () => {
-  it('runs 10 M1 entries with 2 protections at 07, 12 and 18 on the 1-minute grid, with its own session keys', async () => {
+  it('runs 10 M1 entries with 2 protections at 07, 12, 18 and 00 on the 1-minute grid, with its own session keys', async () => {
     const { M1_ROOM, SIGNAL_DEFAULTS } = await import('../src/worker/telegram-signals.js');
-    expect(M1_ROOM.options.sessions.map((s) => s.hour)).toEqual([7, 12, 18]);
+    expect(M1_ROOM.options.sessions.map((s) => s.hour)).toEqual([7, 12, 18, 0]);
     expect(M1_ROOM.options).toMatchObject({ expirySec: 60, gales: 2, entriesPerSession: 10, gridMs: 60_000, room: 'm1' });
     expect(M1_ROOM.options.weeklyPosts).toEqual([]);
     const channelKeys = new Set(SIGNAL_DEFAULTS.sessions.map((s) => s.key));

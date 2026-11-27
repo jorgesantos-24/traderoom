@@ -121,24 +121,31 @@ export class TelegramSignals {
     try {
       const now = this.now();
       const day = brtDay(now);
-      const sessions = this.opts.sessions.filter((s) => !s.days || s.days.includes(day));
-      for (const s of sessions) {
-        const start = brtAt(day, s.hour);
-        if (now >= start - REMINDER_BEFORE_MS && now < start - REMINDER_BEFORE_MS + ANNOUNCE_WINDOW_MS) await this.remind(day, s.key, s.name, s.reminderPhoto);
+      // Today's sessions, plus yesterday's still running past midnight and tomorrow's 00:00 one whose
+      // reminder goes out at 23:45 today.
+      const slackMs = (this.opts.sessionMaxMin + 60) * 60_000;
+      const sessionsOn = (d: string) => this.opts.sessions.filter((s) => !s.days || s.days.includes(d)).map((s) => ({ s, day: d, start: brtAt(d, s.hour) }));
+      const runs = [
+        ...sessionsOn(brtDay(now - 86_400_000)).filter((r) => now < r.start + slackMs),
+        ...sessionsOn(day),
+        ...sessionsOn(brtDay(now + 86_400_000)).filter((r) => now >= r.start - REMINDER_BEFORE_MS),
+      ];
+      for (const { s, day: d, start } of runs) {
+        if (now >= start - REMINDER_BEFORE_MS && now < start - REMINDER_BEFORE_MS + ANNOUNCE_WINDOW_MS) await this.remind(d, s.key, s.name, s.reminderPhoto);
         if (now < start) continue;
-        if (now < start + ANNOUNCE_WINDOW_MS) await this.announce(day, s.key, s.name, s.announcePhoto);
-        if (now < start + this.opts.sessionMaxMin * 60_000) await this.next(day, s.key, start, now);
+        if (now < start + ANNOUNCE_WINDOW_MS) await this.announce(d, s.key, s.name, s.announcePhoto);
+        if (now < start + this.opts.sessionMaxMin * 60_000) await this.next(d, s.key, start, now);
       }
       for (const p of this.opts.weeklyPosts) {
         const at = brtAt(day, p.hour, p.minute);
         if (p.weekdays.includes(brtWeekday(day)) && now >= at && now < at + ANNOUNCE_WINDOW_MS) await this.weekly(day, p);
       }
       await this.resolve(now);
-      for (const s of sessions) {
-        if (now >= brtAt(day, s.hour)) await this.stopLoss(day, s.key, s.name);
+      for (const { s, day: d, start } of runs) {
+        if (now >= start) await this.stopLoss(d, s.key, s.name);
       }
-      for (const s of sessions) {
-        if (now >= brtAt(day, s.hour)) await this.report(day, s.key, s.name, now >= brtAt(day, s.hour) + this.opts.sessionMaxMin * 60_000);
+      for (const { s, day: d, start } of runs) {
+        if (now >= start) await this.report(d, s.key, s.name, now >= start + this.opts.sessionMaxMin * 60_000);
       }
     } catch (err) {
       this.deps.log.error({ err }, 'telegram signals tick failed');
@@ -417,7 +424,7 @@ export const SIGNAL_DEFAULTS = {
 } as const;
 
 /**
- * "SALA DE SINAIS M1" channel: 07:00, 12:00 and 18:00, 10 M1 entries each with up to 2 protections, each
+ * "SALA DE SINAIS M1" channel: 07:00, 12:00, 18:00 and 00:00, 10 M1 entries each with up to 2 protections, each
  * next entry on the next whole minute at least 2 minutes after the previous result. No weekly posts.
  */
 export const M1_ROOM = {

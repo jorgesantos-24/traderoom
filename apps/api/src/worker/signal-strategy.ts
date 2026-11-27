@@ -4,7 +4,7 @@
 import { escapeHtml } from '../lib/telegram.js';
 
 export type Direction = 'call' | 'put';
-export type SessionKey = 'manha' | 'tarde' | 'noite' | 'extra' | 'vip_manha' | 'vip_tarde' | 'vip_noite' | 'm1_manha' | 'm1_tarde' | 'm1_noite';
+export type SessionKey = 'manha' | 'tarde' | 'noite' | 'extra' | 'vip_manha' | 'vip_tarde' | 'vip_noite' | 'm1_manha' | 'm1_tarde' | 'm1_noite' | 'm1_madrugada';
 
 // ---------------------------------------------------------------------------------------------
 // Indicators
@@ -142,6 +142,8 @@ export const M1_SESSIONS: ReadonlyArray<Session> = [
   { key: 'm1_manha', name: 'Manhã', hour: 7, reminderPhoto: '/telegram/m1-manha.jpg' },
   { key: 'm1_tarde', name: 'Tarde', hour: 12, reminderPhoto: '/telegram/m1-tarde.jpg' },
   { key: 'm1_noite', name: 'Noite', hour: 18, reminderPhoto: '/telegram/m1-noite.jpg' },
+  // 00:00: its reminder goes out at 23:45 of the day before.
+  { key: 'm1_madrugada', name: 'Madrugada', hour: 0, reminderPhoto: '/telegram/m1-madrugada.jpg' },
 ];
 
 export interface ScheduleOptions {
